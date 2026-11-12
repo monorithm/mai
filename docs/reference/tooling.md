@@ -10,8 +10,10 @@
 | Secrets check | `scripts/check_secrets.py` | Finds tokens and private keys before a commit. |
 | Commit check | `scripts/check_commit.py` | Makes sure that a commit message obeys Conventional Commits. |
 | Layer audit | `.agents/skills/mai-dev/scripts/audit.py` | Examines the imports between the layers and the public names of each module. |
-| CI | `.github/workflows/ci.yml` | Runs the checks, the tests and the image test. |
+| Go | `cli/go.mod` | Builds the host CLI. `go vet` and `go test` examine it. |
+| CI | `.github/workflows/ci.yml` | Runs the checks, the tests, the image test, and the job "CLI (os)" on Linux, macOS, and Windows. |
 | Release | `.github/workflows/release.yml` | Publishes a version on a tag `vX.Y.Z`. |
+| GoReleaser | `.goreleaser.yaml` | Builds the six binaries of the CLI, the checksums, the Homebrew formula, and the Scoop manifest. |
 | Dependabot | `.github/dependabot.yml` | Opens update requests each week. |
 
 ## Hooks
