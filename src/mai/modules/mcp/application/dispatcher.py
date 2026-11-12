@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from mai.platform import supervisor
 from mai.platform.contract import Ctx, ToolError
 
+from ..domain import agent_guide
 from ..domain import tool_schemas as schemas
 from .json_rpc import (
     CAPABILITIES,
@@ -129,6 +130,23 @@ class Dispatcher:
             )
         if method == "ping":
             return 200, ok(request_id, {})
+        if method == "resources/list":
+            # No session: the resources have only text of the server, not mail.
+            return 200, ok(
+                request_id, dict(extra, resources=list(agent_guide.RESOURCES))
+            )
+        if method == "resources/templates/list":
+            return 200, ok(request_id, dict(extra, resourceTemplates=[]))
+        if method == "resources/read":
+            uri = params.get("uri")
+            if not isinstance(uri, str) or not uri:
+                return 200, error(request_id, -32602, "uri must be a string")
+            contents = agent_guide.read_resource(uri)
+            if contents is None:
+                return 200, error(
+                    request_id, -32002, "Resource not found", {"uri": uri[:200]}
+                )
+            return 200, ok(request_id, dict(contents, **extra))
         if method == "tools/list":
             tools = await self.list_tools(session_state, transport)
             return 200, ok(request_id, dict(extra, tools=tools))

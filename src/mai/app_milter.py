@@ -1,7 +1,7 @@
 """Entry point of the Postfix milter that checks the From header.
 
 The controller starts it as the postfix user:
-    python -m mai.app_milter --socket /data/postfix/private/mai-milter
+    python -m mai.app_milter --socket /var/lib/mai/spool/queue/private/mai-milter
 """
 
 from __future__ import annotations

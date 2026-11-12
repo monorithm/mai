@@ -201,6 +201,14 @@ If you cloned the repository before the `.gitattributes` file was in it,
 remove that clone. Then clone the repository again. Before you remove that
 clone, push or copy your local changes.
 
+## Keep the data in a folder
+
+You can set `MAI_DATA_DIR` to a folder for the data. On Windows, use a folder in the
+Linux file system of WSL 2, for example `\\wsl$\Ubuntu\home\<you>\mai-data`. A
+folder on an NTFS drive, for example `C:\Users\<you>`, can refuse the file modes of
+PostgreSQL. Claude did not test a folder on Windows. If you are not sure, keep the
+named volume `mai-data`, which is the default.
+
 ## Troubleshooting
 
 | Problem | Possible cause | Correction |

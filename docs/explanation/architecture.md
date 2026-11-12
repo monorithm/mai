@@ -99,6 +99,11 @@ Each storage port has two adapters. The memory adapter is for tests. The
 PostgreSQL adapter is for production. Dovecot and Postfix read the tables and
 views of the schema `mail_auth`. Thus production must use PostgreSQL.
 
+`/data` holds the database, the mail, the secrets, the TLS files, and the
+backups. It can be a named volume or a folder on the host (`MAI_DATA_DIR`). The
+Postfix queue is on the volume `mai-spool`, not in `/data`. The queue has Unix
+sockets, and a host folder on macOS or Windows can hold none.
+
 Each module declares its migrations. Each module has its own range of
 versions:
 

@@ -37,9 +37,40 @@ DOVECOT_DIST = Path("/opt/dovecot-dist")
 MAX_BACKOFF = 60.0
 STOP_ORDER = ("app", "postfix", "milter", "dovecot", "postgres")
 START_ORDER = ("postgres", "dovecot", "milter", "postfix", "app")
+# The Postfix spool: the queue with the Unix sockets of Postfix, Dovecot, and the milter,
+# and the Postfix data folder. It is not in /data, because a host folder (MAI_DATA_DIR)
+# can hold no Unix socket on macOS or Windows. Compose mounts the volume mai-spool here.
+SPOOL_DIR = Path(os.environ.get("MAI_SPOOL_DIR", "/var/lib/mai/spool"))
+# With no volume on a read-only root, the spool goes to the tmpfs /run: it then works, but
+# the queue does not stay across a restart.
+SPOOL_FALLBACK = Path("/run/mai/spool")
+SPOOL = SPOOL_DIR
 MILTER_SOCKET = Path(
-    os.environ.get("MILTER_SOCKET", "/data/postfix/private/mai-milter")
+    os.environ.get("MILTER_SOCKET", str(SPOOL_DIR / "queue" / "private" / "mai-milter"))
 )
+
+
+def select_spool() -> Path:
+    """Use SPOOL_DIR if it is writable, else the tmpfs fallback. Set SPOOL and MILTER_SOCKET."""
+    global SPOOL, MILTER_SOCKET
+    spool = SPOOL_DIR
+    try:
+        spool.mkdir(parents=True, exist_ok=True)
+        probe = spool / ".mai-write-test"
+        probe.write_text("")
+        probe.unlink()
+    except OSError:
+        log.warning(
+            "no volume at %s: the mail queue is in %s and does not stay across a restart",
+            SPOOL_DIR,
+            SPOOL_FALLBACK,
+        )
+        spool = SPOOL_FALLBACK
+    SPOOL = spool
+    if "MILTER_SOCKET" not in os.environ:
+        MILTER_SOCKET = spool / "queue" / "private" / "mai-milter"
+    return spool
+
 
 PG_HBA = """\
 # Unix socket only. Each OS user maps to its own role; root may act
@@ -78,8 +109,6 @@ def make_dirs() -> None:
     for name in (
         "pg",
         "mail",
-        "postfix",
-        "postfix-data",
         "tls",
         "backup",
         "secrets",
@@ -88,18 +117,27 @@ def make_dirs() -> None:
         (DATA / name).mkdir(parents=True, exist_ok=True)
     _chown(DATA / "pg", "postgres", "postgres", 0o700)
     _chown(DATA / "mail", "vmail", "vmail", 0o750)
-    _chown(DATA / "postfix", "root", "root", 0o755)
+    queue, pdata = SPOOL / "queue", SPOOL / "data"
+    for d in (queue, pdata):
+        d.mkdir(parents=True, exist_ok=True)
+    _chown(SPOOL, "root", "root", 0o755)
+    _chown(queue, "root", "root", 0o755)
     # Dovecot binds its LMTP and auth sockets in the Postfix queue, so the
     # private directory must exist before Postfix first runs.
-    (DATA / "postfix" / "private").mkdir(exist_ok=True)
-    _chown(DATA / "postfix" / "private", "postfix", "root", 0o700)
-    _chown(DATA / "postfix-data", "postfix", "postfix", 0o700)
+    (queue / "private").mkdir(exist_ok=True)
+    _chown(queue / "private", "postfix", "root", 0o700)
+    _chown(pdata, "postfix", "postfix", 0o700)
     _chown(DATA / "dovecot", "vmail", "vmail", 0o750)
     _chown(DATA / "secrets", "mai", "mai", 0o700)
     _chown(DATA / "tls", "root", "root", 0o755)
     PGSOCK.mkdir(parents=True, exist_ok=True)
     _chown(PGSOCK, "postgres", "postgres", 0o775)
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _copy_with_spool(src: Path, dst: Path) -> None:
+    """Copy a template, with @MAI_SPOOL@ replaced by the spool of this start."""
+    dst.write_text(src.read_text().replace("@MAI_SPOOL@", str(SPOOL)))
 
 
 def render_configs() -> None:
@@ -115,13 +153,13 @@ def render_configs() -> None:
             shutil.copytree(dist, dest, dirs_exist_ok=True, symlinks=True)
     for src in (ETC / "postfix").glob("*"):
         dst = Path("/etc/postfix") / src.name
-        shutil.copyfile(src, dst)
+        _copy_with_spool(src, dst)
         if src.name.startswith("pgsql-"):
             _chown(dst, "root", "postfix", 0o640)
         else:
             os.chmod(dst, 0o644)
     conf = Path("/etc/dovecot/dovecot.conf")
-    shutil.copyfile(ETC / "dovecot" / "dovecot.conf", conf)
+    _copy_with_spool(ETC / "dovecot" / "dovecot.conf", conf)
     os.chmod(conf, 0o644)
     # Package snippets of 2.3 style would break the 2.4 parser.
     confd = Path("/etc/dovecot/conf.d")
@@ -589,6 +627,7 @@ def run() -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
 
+    select_spool()
     make_dirs()
     supervisor.mark_controller()
     init_postgres()

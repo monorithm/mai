@@ -10,7 +10,7 @@ volume=mai-it-data
 port=18765
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
-  docker volume rm "$volume" >/dev/null 2>&1 || true
+  docker volume rm "$volume" "$volume-spool" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 cleanup
@@ -21,7 +21,7 @@ docker run -d --pull=never --name "$name" --read-only \
   --tmpfs /run --tmpfs /tmp --tmpfs /etc/postfix --tmpfs /etc/dovecot \
   -e MAI_HOSTS="127.0.0.1:$port,localhost:$port" -p "127.0.0.1:$port:8080" \
   -e THREADS_AGENT_REFRESH=2 \
-  -v "$volume:/data" "$image" >/dev/null
+  -v "$volume:/data" -v "$volume-spool:/var/lib/mai/spool" "$image" >/dev/null
 i=0
 until docker exec "$name" mai health >/dev/null 2>&1; do
   i=$((i + 1))

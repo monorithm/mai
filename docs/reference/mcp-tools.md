@@ -1,10 +1,24 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `2.0.0`.
+The server name is `mai`. The contract version is `2.1.0`.
 
 Before a login, `tools/list` gives only `login` and `whoami`. On stdio, the
 server sends `notifications/tools/list_changed` after a login. On HTTP,
 `tools/list` gives all 22 tools.
+
+## Resources
+
+The server has the capability `resources`. A client can read the resources with no
+login, on stdio and on HTTP, because they have only text of the server and no mail.
+
+| URI | Content |
+|---|---|
+| `mai://guide` | How an agent uses mai: login, mail, threads, the board, errors, and the trust rules. The guide ends with a table of the tools, which the server makes from the tool schemas. |
+
+- `resources/list` gives the list.
+- `resources/read` with `uri` gives the text, with the type `text/markdown`.
+- An unknown URI gives the error `-32002` "Resource not found".
+- `resources/templates/list` gives an empty list.
 
 ## Tools
 

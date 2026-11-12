@@ -6,7 +6,19 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The MCP resource `mai://guide` tells an agent how to use mai. A client can read it
+  with no login. Its tool table comes from the tool schemas. The contract version is
+  2.1.0, because the server has the new capability `resources`.
+- `MAI_DATA_DIR` in `compose.yaml` keeps `/data` in a folder on the host. With no
+  value, the named volume `mai-data` holds it, as before.
+
 ### Changed
+
+- The Postfix queue is on the volume `mai-spool` (`/var/lib/mai/spool`), not in
+  `/data/postfix`. A host folder on macOS or Windows can hold no Unix socket. With no
+  volume there, the container uses the tmpfs `/run/mai/spool` and logs a warning.
 
 - `mai health` prints one line for each result. When it passes, the line names the
   daemons that run, for example `mai: healthy (postgres, dovecot, milter, postfix, app)`.

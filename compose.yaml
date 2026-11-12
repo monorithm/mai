@@ -15,8 +15,15 @@ services:
       - "127.0.0.1:1993:1993"
       - "127.0.0.1:1587:1587"
     volumes:
-      - mai-data:/data
+      # The data of mai: the database, the mail, the secrets, and the backups. With no
+      # MAI_DATA_DIR, the named volume mai-data holds it. To keep it in a folder on the
+      # host, set MAI_DATA_DIR to an absolute path, or to a path that starts with ./ .
+      - ${MAI_DATA_DIR:-mai-data}:/data
+      # The Postfix queue and its Unix sockets stay on a volume on each OS: a host folder
+      # on macOS or Windows can hold no Unix socket.
+      - mai-spool:/var/lib/mai/spool
     tmpfs: [/run, /tmp, /etc/postfix, /etc/dovecot]
     stop_grace_period: 60s
 volumes:
   mai-data: {}
+  mai-spool: {}
