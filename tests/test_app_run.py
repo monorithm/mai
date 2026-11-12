@@ -206,3 +206,72 @@ def test_a_stale_hold_is_not_removed_while_a_restore_holds_the_lock(monkeypatch)
     monkeypatch.setattr(controller.supervisor, "release", lambda: released.append(True))
     controller.release_stale_hold()
     assert released == []
+
+
+def _serve(status):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(status)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_port}/healthz"
+
+
+def test_health_prints_a_summary_when_it_passes(tmp_path, monkeypatch, capsys):
+    import json
+
+    monkeypatch.setattr(controller, "STATE_FILE", tmp_path / "state.json")
+    names = ["app", "postfix", "milter", "dovecot", "postgres"]
+    (tmp_path / "state.json").write_text(
+        json.dumps({n: {"running": True} for n in names})
+    )
+    server, url = _serve(200)
+    try:
+        assert controller.health(url=url, timeout=2) == 0
+    finally:
+        server.shutdown()
+    assert (
+        capsys.readouterr().out.strip()
+        == "mai: healthy (postgres, dovecot, milter, postfix, app)"
+    )
+
+
+def test_health_names_each_daemon_that_does_not_run(tmp_path, monkeypatch, capsys):
+    import json
+
+    monkeypatch.setattr(controller, "STATE_FILE", tmp_path / "state.json")
+    state = {
+        "app": {"running": True},
+        "postfix": {"running": False},
+        "dovecot": {"running": False},
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state))
+    assert controller.health(url="http://127.0.0.1:9/healthz", timeout=0.5) == 1
+    assert (
+        capsys.readouterr().out.strip()
+        == "mai: not healthy: not running: dovecot, postfix"
+    )
+
+
+def test_health_reports_an_error_status_of_healthz(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(controller, "STATE_FILE", tmp_path / "absent.json")
+    server, url = _serve(503)
+    try:
+        assert controller.health(url=url, timeout=2) == 1
+    finally:
+        server.shutdown()
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("mai: not healthy: /healthz")
+
+
+def test_start_order_takes_a_generator():
+    names = (n for n in ["app", "extra", "postgres"])
+    assert controller._in_start_order(names) == ["postgres", "app", "extra"]

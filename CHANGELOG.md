@@ -6,6 +6,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `mai health` prints one line for each result. When it passes, the line names the
+  daemons that run, for example `mai: healthy (postgres, dovecot, milter, postfix, app)`.
+  When it does not pass, the line names the daemons that do not run, or the error of
+  `/healthz`. The exit code does not change.
+
 ## [2.0.1] - 2026-11-12
 
 ### Changed

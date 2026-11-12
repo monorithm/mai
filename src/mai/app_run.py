@@ -654,18 +654,34 @@ def run() -> int:
     return 0
 
 
+def _in_start_order(names) -> list[str]:
+    names = set(names)  # a generator would be used up by the first "in"
+    known = [n for n in START_ORDER if n in names]
+    return known + sorted(n for n in names if n not in START_ORDER)
+
+
 def health(url: str = "http://127.0.0.1:8080/healthz", timeout: float = 5.0) -> int:
-    """0 when every child runs and the app answers /healthz, else 1."""
+    """0 when every child runs and the app answers /healthz, else 1.
+
+    It prints one line in each case, thus a person sees the result. The Docker
+    health check reads only the exit code.
+    """
     states = child_states()
-    if states and not all(s.get("running") for s in states.values()):
-        print(json.dumps(states))
+    down = _in_start_order(n for n, s in states.items() if not s.get("running"))
+    if down:
+        print(f"mai: not healthy: not running: {', '.join(down)}")
         return 1
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
-            return 0 if r.status == 200 else 1
+            if r.status != 200:
+                print(f"mai: not healthy: /healthz gave HTTP {r.status}")
+                return 1
     except Exception as e:  # noqa: BLE001 - any failure means unhealthy
-        print(f"healthz failed: {e}")
+        print(f"mai: not healthy: /healthz failed: {e}")
         return 1
+    running = _in_start_order(states)
+    print(f"mai: healthy ({', '.join(running)})" if running else "mai: healthy")
+    return 0
 
 
 if __name__ == "__main__":
