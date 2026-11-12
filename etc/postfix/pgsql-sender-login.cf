@@ -1,0 +1,4 @@
+hosts = postgresql:///mai?host=/run/postgresql
+user = postfix
+dbname = mai
+query = SELECT login FROM mail_auth.sender_login WHERE address = '%s'

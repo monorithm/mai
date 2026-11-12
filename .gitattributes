@@ -1,0 +1,11 @@
+# LF for all text, on each OS. A clone on Windows with core.autocrlf=true then keeps the
+# configuration templates of Postfix and Dovecot, the Dockerfile, and the sh shim correct
+# in the Linux container.
+* text=auto eol=lf
+
+# The Windows shims use CRLF.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.svg text eol=lf

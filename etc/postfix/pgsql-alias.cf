@@ -1,0 +1,4 @@
+hosts = postgresql:///mai?host=/run/postgresql
+user = postfix
+dbname = mai
+query = SELECT login || '@mai.internal' FROM mail_auth.alias WHERE address = '%u' AND '%d' = 'mai.internal'

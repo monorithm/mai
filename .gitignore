@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Caches of the tools
+.pytest_cache/
+.ruff_cache/
+
+# Local settings with secrets
+/.env
+/.env.*
+!/.env.example
+
+# Session credential files and backups
+*.cred
+/backups/
+/var/
+
+# Personal lefthook additions
+lefthook-local.yml

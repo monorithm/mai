@@ -1,0 +1,22 @@
+name: mai
+services:
+  mai:
+    # "docker compose pull" gets this image from the registry.
+    # "docker compose build" makes it locally from the Dockerfile.
+    image: ghcr.io/monorithm/mai:${MAI_TAG:-latest}
+    container_name: mai
+    build: .
+    init: false
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, KILL]
+    ports:
+      - "127.0.0.1:8765:8080"
+      - "127.0.0.1:1993:1993"
+      - "127.0.0.1:1587:1587"
+    volumes:
+      - mai-data:/data
+    tmpfs: [/run, /tmp, /etc/postfix, /etc/dovecot]
+    stop_grace_period: 60s
+volumes:
+  mai-data: {}

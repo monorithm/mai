@@ -1,0 +1,44 @@
+# Postfix for mai. Rendered by the controller at each start.
+compatibility_level = 3.11
+queue_directory = /data/postfix
+data_directory = /data/postfix-data
+mail_owner = postfix
+setgid_group = postdrop
+myhostname = mail.mai.internal
+mydomain = mai.internal
+myorigin = mai.internal
+mydestination =
+local_transport = error:5.1.1 no local delivery
+alias_maps =
+alias_database =
+inet_interfaces = all
+inet_protocols = ipv4
+mynetworks = 127.0.0.0/8
+maillog_file = /dev/stdout
+smtputf8_enable = no
+biff = no
+message_size_limit = 26214400
+
+virtual_mailbox_domains = mai.internal
+virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-mailbox.cf
+virtual_alias_maps = pgsql:/etc/postfix/pgsql-alias.cf
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+default_transport = error:5.7.1 no delivery outside mai.internal
+relay_transport = error:5.7.1 no delivery outside mai.internal
+relay_domains =
+
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = no
+smtpd_sender_login_maps = pgsql:/etc/postfix/pgsql-sender-login.cf
+smtpd_relay_restrictions = reject_unauth_destination, permit_sasl_authenticated, reject
+smtpd_recipient_restrictions = reject_unlisted_recipient, permit_sasl_authenticated, reject
+smtpd_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated, reject
+smtpd_client_restrictions =
+
+smtpd_tls_cert_file = /data/tls/cert.pem
+smtpd_tls_key_file = /data/tls/key.pem
+smtpd_tls_security_level = may
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+smtp_tls_security_level = none
+smtpd_sasl_authenticated_header = yes

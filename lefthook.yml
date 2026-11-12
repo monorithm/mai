@@ -1,0 +1,43 @@
+# Git hooks of the repository, run by lefthook (https://lefthook.dev).
+# Install them one time in each clone: lefthook install
+# Run a hook without git: lefthook run pre-commit --all-files
+# Personal additions go in lefthook-local.yml, which git ignores.
+# The commands are the same as in .github/workflows/ci.yml.
+
+pre-commit:
+  jobs:
+    # Alone and first: each `uv run` below can lock the project again, and
+    # the check must see the lockfile before that.
+    - name: lock
+      run: uv lock --check
+
+    - name: checks
+      group:
+        parallel: true
+        jobs:
+          - name: ruff
+            glob: "*.py"
+            stage_fixed: true
+            run: uv run --frozen ruff check --fix {staged_files} && uv run --frozen ruff format {staged_files}
+          - name: ruff-markdown
+            glob: "*.md"
+            stage_fixed: true
+            run: uv run --frozen ruff format {staged_files}
+          - name: ty
+            run: uv run --frozen ty check
+          - name: secrets
+            run: uv run scripts/check_secrets.py {staged_files}
+          # The imports between the layers and the public names of each module.
+          - name: layers
+            glob: "*.py"
+            run: uv run .agents/skills/mai-dev/scripts/audit.py .
+
+commit-msg:
+  jobs:
+    - name: conventional
+      run: uv run scripts/check_commit.py {1}
+
+pre-push:
+  jobs:
+    - name: tests
+      run: uv run --frozen pytest -q

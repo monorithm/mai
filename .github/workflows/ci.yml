@@ -1,0 +1,110 @@
+# Continuous integration: lock, lint, types, secrets, commit messages, the
+# layer audit, the tests, and the container image.
+# release.yml calls this workflow before it publishes.
+# The actions are pinned to a commit. The comment gives the release of the commit.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.6"
+
+jobs:
+  checks:
+    name: Lock, lint, types, secrets, layers and commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+          enable-cache: true
+      # Before any `uv run`, which can lock the project again.
+      - run: uv lock --check
+      - run: uv sync --locked
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen ty check
+      - run: uv run scripts/check_secrets.py --all
+      # The layer and module rules that bustan does not enforce.
+      - run: uv run .agents/skills/mai-dev/scripts/audit.py .
+      - if: github.event_name == 'pull_request'
+        env:
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: uv run scripts/check_commit.py --range "$RANGE"
+
+  tests:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the floor of bustan. 3.14 is the Python of the container image.
+        python: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --frozen pytest -q
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t mai:dev .
+      # The image starts PostgreSQL, Dovecot, Postfix and the app. Then the
+      # integration tests run against it.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.14"
+      - run: uv sync --locked
+      # The script starts the image as compose does (read-only, 6 capabilities), makes the test
+      # credentials, and runs the container tests: router, ops, milter, and the board flow.
+      - name: Container tests
+        run: scripts/it_container.sh mai:dev
+
+  shims:
+    # The host shims: bin/mai (sh) on macOS and Linux, bin/mai.ps1 with PowerShell on each OS,
+    # and bin/mai.cmd on Windows. The container is Linux, thus Docker runs it on each of these.
+    name: Shims (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+      - run: uv sync --locked
+      - run: uv run --frozen pytest -q -p no:cacheprovider tests/shims
