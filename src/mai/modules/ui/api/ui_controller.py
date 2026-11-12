@@ -41,6 +41,7 @@ from ..domain.mail_view import (
 )
 from ..domain.owner_session import COOKIE, OwnerSession, csrf_matches, session_cookie
 from . import ui_pages as pages
+from .ui_http_policy import UiHttpPolicy
 
 MAX_FORM_BYTES = 16 * 1024
 AGENT_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -76,6 +77,7 @@ class UiController:
         envelopes: EnvelopeLookup,
         credentials: CredentialService,
         threads: ThreadLookup,
+        policy: UiHttpPolicy,
     ) -> None:
         self._access = access
         self._sign_out = sign_out
@@ -86,6 +88,18 @@ class UiController:
         self._envelopes = envelopes
         self._credentials = credentials
         self._threads = threads
+        self._policy = policy
+
+    async def _refusal(self, request: HttpRequest) -> HttpResponse | None:
+        """Give 404 when the UI is off, and 403 for a Host or an Origin out of the rules."""
+        if not await self._access.enabled():
+            return pages.not_found()
+        headers = request.headers
+        if not self._policy.admits(headers.get("host"), headers.get("origin")):
+            return pages.page(
+                403, "Forbidden", "<p class=err>The host is not allowed.</p>"
+            )
+        return None
 
     async def _session(self, request: HttpRequest) -> OwnerSession | None:
         return await self._current.execute(
@@ -98,8 +112,8 @@ class UiController:
         view: Callable[[OwnerSession], Awaitable[HttpResponse]],
     ) -> HttpResponse:
         """Give 404 when the UI is off, the sign-in note with no session, else the view."""
-        if not await self._access.enabled():
-            return pages.not_found()
+        if (refused := await self._refusal(request)) is not None:
+            return refused
         session = await self._session(request)
         if session is None:
             return pages.signed_out_page()
@@ -109,8 +123,8 @@ class UiController:
         self, request: HttpRequest
     ) -> tuple[OwnerSession | None, dict, HttpResponse | None]:
         """Return the session and the form of a POST, or the response that refuses it."""
-        if not await self._access.enabled():
-            return None, {}, pages.not_found()
+        if (refused := await self._refusal(request)) is not None:
+            return None, {}, refused
         session = await self._session(request)
         if session is None:
             return None, {}, pages.signed_out_page()
@@ -193,27 +207,27 @@ class UiController:
             return False
 
     @Get("/style.css")
-    async def style(self) -> HttpResponse:
-        if not await self._access.enabled():
-            return pages.not_found()
+    async def style(self, request: HttpRequest) -> HttpResponse:
+        if (refused := await self._refusal(request)) is not None:
+            return refused
         return pages.style()
 
     @Get("/sign-in")
-    async def sign_in(self) -> HttpResponse:
-        if not await self._access.enabled():
-            return pages.not_found()
+    async def sign_in(self, request: HttpRequest) -> HttpResponse:
+        if (refused := await self._refusal(request)) is not None:
+            return refused
         return pages.sign_in_page()
 
     @Get("/sign-in.js")
-    async def sign_in_script(self) -> HttpResponse:
-        if not await self._access.enabled():
-            return pages.not_found()
+    async def sign_in_script(self, request: HttpRequest) -> HttpResponse:
+        if (refused := await self._refusal(request)) is not None:
+            return refused
         return pages.sign_in_script()
 
     @Post("/session")
     async def new_session(self, request: HttpRequest) -> HttpResponse:
-        if not await self._access.enabled():
-            return pages.not_found()
+        if (refused := await self._refusal(request)) is not None:
+            return refused
         body = await request.body()
         try:
             data = json.loads(body) if len(body) <= MAX_FORM_BYTES else None

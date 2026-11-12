@@ -9,6 +9,7 @@ from mai.modules.board import BoardTools
 from mai.modules.credentials import CredentialService
 from mai.modules.ui.api.ui_api_controller import UiApiController
 from mai.modules.ui.api.ui_controller import UiController
+from mai.modules.ui.api.ui_http_policy import UiHttpPolicy
 from mai.modules.ui.application.board_snapshot_query import BoardSnapshotHandler
 from mai.modules.ui.application.current_session_query import CurrentSessionHandler
 from mai.modules.ui.application.manage_sessions_command import (
@@ -157,6 +158,12 @@ def client(credentials, clock, reader):
             ValueProvider(provide=MailReader, use_value=reader),
             ValueProvider(provide=EnvelopeLookup, use_value=FakeEnvelopes()),
             ValueProvider(provide=ThreadLookup, use_value=FakeThreads()),
+            ValueProvider(
+                provide=UiHttpPolicy,
+                use_value=UiHttpPolicy(
+                    frozenset({"testserver"}), frozenset({"http://testserver"})
+                ),
+            ),
             ClassProvider(provide=UiStateStore, use_class=MemoryUiStateStore),
             ClassProvider(provide=SignInTicketStore, use_class=MemorySignInTicketStore),
             ClassProvider(provide=OwnerSessionStore, use_class=MemoryOwnerSessionStore),
@@ -410,3 +417,20 @@ def test_the_threads_page_lists_the_claims_escaped(client):
     r = client.get("/ui/threads", headers=headers)
     assert r.status_code == 200
     assert "&lt;r1@mai.internal&gt;" in r.text and "claimed" in r.text
+
+
+def test_a_host_or_an_origin_out_of_the_rules_is_refused(client):
+    headers, _ = _sign_in(client)
+    r = client.get("/ui/mail", headers={**headers, "host": "evil.example:8765"})
+    assert r.status_code == 403
+    r = client.get("/ui/mail", headers={**headers, "origin": "http://evil.example"})
+    assert r.status_code == 403
+    assert client.get("/ui/mail", headers=headers).status_code == 200
+
+
+def test_the_policy_reads_the_hosts_of_the_environment(monkeypatch):
+    monkeypatch.setenv("MAI_HOSTS", "127.0.0.1:18780")
+    policy = UiHttpPolicy.from_environment()
+    assert policy.admits("127.0.0.1:18780", None)
+    assert policy.admits("127.0.0.1:8765", "http://127.0.0.1:8765")
+    assert not policy.admits("evil.example", None)

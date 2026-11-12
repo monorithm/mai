@@ -11,6 +11,7 @@ from mai.platform.database import Database, DatabaseModule
 
 from .api.ui_api_controller import UiApiController
 from .api.ui_controller import UiController
+from .api.ui_http_policy import UiHttpPolicy
 from .application.board_snapshot_query import BoardSnapshotHandler
 from .application.current_session_query import CurrentSessionHandler
 from .application.manage_sessions_command import ManageSessionsHandler
@@ -58,6 +59,9 @@ def _threads(database: Database) -> ThreadLookup:
         ClassProvider(provide=SignInTicketStore, use_class=MemorySignInTicketStore),
         ClassProvider(provide=OwnerSessionStore, use_class=MemoryOwnerSessionStore),
         ClassProvider(provide=MailReader, use_class=DoveadmMailReader),
+        FactoryProvider(
+            provide=UiHttpPolicy, use_factory=UiHttpPolicy.from_environment
+        ),
         UiAccessService,
         SignOutHandler,
         CurrentSessionHandler,

@@ -43,7 +43,13 @@ docker exec "$name" doveadm acl set -u copies INBOX user=owner \
   lookup read write write-seen write-deleted expunge
 if [ "$(docker exec "$name" postconf -h always_bcc)" != "copies@mai.internal" ]; then
   docker exec "$name" postconf -e always_bcc=copies@mai.internal
-  docker exec "$name" postfix reload >/dev/null 2>&1
+  # Postfix can start after the health check. Try the reload again until it works.
+  j=0
+  until docker exec "$name" postfix reload >/dev/null 2>&1; do
+    j=$((j + 1))
+    if [ "$j" -gt 30 ]; then echo "it_ui: postfix reload failed"; exit 1; fi
+    sleep 1
+  done
 fi
 
 docker exec -i "$name" python3 - <<'PY'
