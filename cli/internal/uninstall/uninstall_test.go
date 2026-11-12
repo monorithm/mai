@@ -184,6 +184,21 @@ func TestUninstallReportsEachFailure(t *testing.T) {
 	}
 }
 
+func TestUninstallKeepsAContainerWithNoLabelOfTheCLI(t *testing.T) {
+	e := setup(t)
+	e.eng.containers[0] = fakeContainer{ID: "c1", Name: "mai", Labels: map[string]string{LabelCompose: LegacyProject}}
+	var out bytes.Buffer
+	if code := e.uninstaller(&out).Run(context.Background()); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out.String())
+	}
+	if e.eng.findContainer("mai") < 0 {
+		t.Fatal("the uninstall removed the 2.x container")
+	}
+	if !strings.Contains(out.String(), "kept     container mai: it has no label of the CLI") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}
+
 func TestUninstallWantsTheTypedWord(t *testing.T) {
 	e := setup(t)
 	var out bytes.Buffer

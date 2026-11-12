@@ -256,7 +256,14 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 		return 1
 	}
 	if u.Backup != "" {
-		if err := WriteBackup(ctx, u.Engine, p.Instance, u.Backup); err != nil {
+		r, err := u.Engine.ContainerInspect(ctx, p.Instance, client.ContainerInspectOptions{})
+		if err == nil && (r.Container.Config == nil || r.Container.Config.Labels[LabelManagedBy] != ManagedByValue) {
+			err = errors.New("the container " + p.Instance + " has no label of the CLI")
+		}
+		if err == nil {
+			err = WriteBackup(ctx, u.Engine, r.Container.ID, u.Backup)
+		}
+		if err != nil {
 			fmt.Fprintln(w, "mai uninstall: the backup failed, thus no item was removed:", err)
 			return 1
 		}
@@ -328,18 +335,32 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 	var rs []Result
 	removed := map[string]bool{}
 	for _, c := range p.Containers {
-		var id string
-		if r, err := u.Engine.ContainerInspect(ctx, c, client.ContainerInspectOptions{}); err == nil {
-			id = r.Container.ID
+		r, err := u.Engine.ContainerInspect(ctx, c, client.ContainerInspectOptions{})
+		if IsNotFound(err) {
+			rs = append(rs, Result{Item: "container " + c, State: Gone})
+			continue
 		}
-		_, err := u.Engine.ContainerRemove(ctx, c, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
+		if err != nil {
+			rs = append(rs, Result{Item: "container " + c, State: Failure, Detail: err.Error()})
+			continue
+		}
+		// A container with no label of the CLI is not of this instance, for example the
+		// container of a 2.x install. The uninstall never removes it.
+		var labels map[string]string
+		if r.Container.Config != nil {
+			labels = r.Container.Config.Labels
+		}
+		if labels[LabelManagedBy] != ManagedByValue {
+			rs = append(rs, Result{Item: "container " + c, State: Kept, Detail: "it has no label of the CLI; for a 2.x install, use mai uninstall --legacy"})
+			continue
+		}
+		id := r.Container.ID
+		_, err = u.Engine.ContainerRemove(ctx, id, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
 		rs = append(rs, check("container "+c, ignoreNotFound(err), func() (bool, error) {
-			_, e := u.Engine.ContainerInspect(ctx, c, client.ContainerInspectOptions{})
+			_, e := u.Engine.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
 			return engineExists(e)
 		}))
-		if id != "" {
-			removed[id] = true
-		}
+		removed[id] = true
 	}
 	for _, v := range p.Volumes {
 		_, err := u.Engine.VolumeRemove(ctx, v, client.VolumeRemoveOptions{Force: true})
