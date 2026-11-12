@@ -119,7 +119,7 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 			if v == nil {
 				continue
 			}
-			lf := bytes.ReplaceAll(v, []byte("\r\n"), []byte("\n"))
+			lf := toLF(v)
 			crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
 			if hashOf(v) == it.Hash || hashOf(lf) == it.Hash || hashOf(crlf) == it.Hash {
 				same = true
@@ -147,6 +147,13 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 // only its own hooks from a value that holds hooks of the user, and keeps a value that is not
 // an entry of mai.
 func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
+	if bom := []byte("\xef\xbb\xbf"); bytes.HasPrefix(before, bom) {
+		out, err := removeJSON(before[len(bom):], it, force)
+		if err != nil {
+			return nil, err
+		}
+		return append(append([]byte(nil), bom...), out...), nil
+	}
 	if len(bytes.TrimSpace(before)) == 0 {
 		return before, nil
 	}
@@ -159,6 +166,11 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		return nil, errors.New("connect: the item has no pointer")
 	}
 	rec := loadRecord(it)
+	if rec.Target != "" && linkTarget(it.Path) != rec.Target {
+		// The path names a different file now: the notes of mai about its containers are not
+		// for this file.
+		rec.Created, rec.Empty, rec.Blank = nil, nil, nil
+	}
 	made := map[string]bool{}
 	for _, p := range rec.Created {
 		made[p] = true
@@ -500,16 +512,37 @@ func hasMaiHook(b []byte, n *jnode, format, event string) bool {
 // file with content stays, and the result is false.
 func RemoveCreatedFile(it manifest.Item) (bool, error) {
 	// For a symbolic link of the user, the file that the link names is the file that mai made.
+	// When the link names a different file now (the user made the link after mai connect),
+	// that file is not of mai, and it stays.
 	path := linkTarget(it.Path)
+	if it.Target != "" && path != it.Target {
+		return false, nil
+	}
+	if it.Target == "" {
+		if st, err := os.Lstat(it.Path); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return false, nil // a record of 3.0.0 has no target: keep the file of a link
+		}
+	}
 	b, existed, err := readFile(path)
-	if err != nil || !existed {
-		return !existed, err
+	if err != nil {
+		return false, err
 	}
-	t := bytes.TrimSpace(b)
-	if len(t) == 0 || string(t) == "{}" {
-		return true, os.Remove(path)
+	if existed {
+		t := bytes.TrimSpace(b)
+		if len(t) != 0 && string(t) != "{}" {
+			return false, nil
+		}
+		if err := os.Remove(path); err != nil {
+			return false, err
+		}
 	}
-	return false, nil
+	// The folders that mai made for the file go when they are empty.
+	for _, d := range it.Dirs {
+		if err := os.Remove(d); err != nil {
+			break
+		}
+	}
+	return true, nil
 }
 
 // Disconnect removes each entry of app in m, and each file that mai connect made for app and

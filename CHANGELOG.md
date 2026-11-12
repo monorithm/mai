@@ -68,7 +68,17 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When an app writes its file before you agree to the diff of `mai connect`,
   the write of the app stays.
 - `mai connect` writes through a symbolic link, also a link to a missing file,
-  and the link stays.
+  and the link stays. When the user replaces a file that mai made with a link,
+  `mai disconnect` keeps the file that the link names.
+- `mai disconnect` removes the empty folders that `mai connect` made for a file.
+- `mai connect` and `mai disconnect` read a JSON file with a byte order mark,
+  and keep the mark.
+- The record of the table of mai in `config.toml` uses one kind of line break.
+  Thus Codex, an editor, or git can change the line breaks, and the table counts
+  as unchanged.
+- `mai disconnect codex --force` also removes a table of mai with `args` on more
+  than one line. It also removes the begin comment of mai above a comment of
+  the user.
 - A file with CRLF line breaks keeps CRLF. An empty object or array, and a file
   with only white space, come back byte for byte after `mai disconnect`.
 - `mai connect` refuses a path of the binary that is not valid UTF-8, and a
