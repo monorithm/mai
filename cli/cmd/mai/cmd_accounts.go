@@ -57,13 +57,13 @@ func fail(errOut io.Writer, err error) int {
 }
 
 func runAgent(args []string, out, errOut io.Writer) int {
-	const use = "usage: mai agent add NAME | list | rotate NAME | remove NAME"
+	const use = "usage: mai agent add NAME... | list | rotate NAME | remove NAME..."
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, use)
 		return 2
 	}
 	sub, rest := args[0], args[1:]
-	if (sub == "list" && len(rest) != 0) || (sub != "list" && len(rest) != 1) {
+	if (sub == "list" && len(rest) != 0) || (sub == "rotate" && len(rest) != 1) || (sub != "list" && len(rest) == 0) {
 		fmt.Fprintln(errOut, use)
 		return 2
 	}
@@ -75,20 +75,21 @@ func runAgent(args []string, out, errOut io.Writer) int {
 	store := accountsKeychain()
 	switch sub {
 	case "add":
-		name := rest[0]
-		a, err := c.AddAgent(ctx, name)
-		if err != nil {
-			return fail(errOut, err)
+		for _, name := range rest {
+			a, err := c.AddAgent(ctx, name)
+			if err != nil {
+				return fail(errOut, err)
+			}
+			account := keychain.AgentAccount(cfg.Instance, a.Name)
+			if err := store.Set(keychain.Service, account, a.AgentKey); err != nil {
+				_ = c.RemoveAgent(ctx, a.Name)
+				return fail(errOut, fmt.Errorf("keychain: %w; the agent %s is removed again", err, a.Name))
+			}
+			if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+				return fail(errOut, err)
+			}
+			fmt.Fprintln(out, a.Name)
 		}
-		account := keychain.AgentAccount(cfg.Instance, a.Name)
-		if err := store.Set(keychain.Service, account, a.AgentKey); err != nil {
-			_ = c.RemoveAgent(ctx, a.Name)
-			return fail(errOut, fmt.Errorf("keychain: %w; the agent is removed again", err))
-		}
-		if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
-			return fail(errOut, err)
-		}
-		fmt.Fprintln(out, a.Name)
 		return 0
 	case "rotate":
 		name := rest[0]
@@ -118,18 +119,19 @@ func runAgent(args []string, out, errOut io.Writer) int {
 		_ = w.Flush()
 		return 0
 	case "remove":
-		name := rest[0]
-		if err := c.RemoveAgent(ctx, name); err != nil {
-			return fail(errOut, err)
+		for _, name := range rest {
+			if err := c.RemoveAgent(ctx, name); err != nil {
+				return fail(errOut, err)
+			}
+			account := keychain.AgentAccount(cfg.Instance, name)
+			if err := store.Delete(keychain.Service, account); err != nil && !errors.Is(err, keychain.ErrNotFound) {
+				return fail(errOut, fmt.Errorf("keychain: %w", err))
+			}
+			if err := m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+				return fail(errOut, err)
+			}
+			fmt.Fprintln(out, name)
 		}
-		account := keychain.AgentAccount(cfg.Instance, name)
-		if err := store.Delete(keychain.Service, account); err != nil && !errors.Is(err, keychain.ErrNotFound) {
-			return fail(errOut, fmt.Errorf("keychain: %w", err))
-		}
-		if err := m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
-			return fail(errOut, err)
-		}
-		fmt.Fprintln(out, name)
 		return 0
 	}
 	fmt.Fprintln(errOut, use)

@@ -150,6 +150,13 @@ func TestAgentAddListRemove(t *testing.T) {
 	if code := runAgent([]string{"add"}, &out, &errOut); code != 2 {
 		t.Fatalf("add with no name gives %d", code)
 	}
+	out.Reset()
+	if code := runAgent([]string{"add", "a", "b"}, &out, &errOut); code != 0 || out.String() != "a\nb\n" {
+		t.Fatalf("add of two agents: %d %q", code, out.String())
+	}
+	if _, err := store.Get(keychain.Service, keychain.AgentAccount("mai", "b")); err != nil {
+		t.Fatalf("no key for b: %v", err)
+	}
 }
 
 func TestSessionListAndEnd(t *testing.T) {
