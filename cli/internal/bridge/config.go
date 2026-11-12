@@ -9,8 +9,8 @@ import (
 	"strconv"
 )
 
-// Config is the part of the CLI configuration file that the bridge and the hook use. A
-// missing file or a missing field gives the default value.
+// Config is the part of the CLI configuration file that the bridge and the hook use. When
+// the file or a field is not there, the default value applies.
 type Config struct {
 	Instance string `json:"instance"`
 	Port     int    `json:"port"`

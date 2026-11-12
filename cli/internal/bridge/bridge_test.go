@@ -288,7 +288,7 @@ func TestBridgeStopsWhenNoNewLeaseIsAvailable(t *testing.T) {
 	}
 }
 
-func TestBridgeNamesTheAgentAddCommandWhenTheKeyIsMissing(t *testing.T) {
+func TestBridgeNamesTheAgentAddCommandWhenTheKeyIsNotThere(t *testing.T) {
 	h := newHarness(t, keychain.NewMemory())
 	h.start(context.Background())
 	if code := h.wait(t); code != ExitError {
