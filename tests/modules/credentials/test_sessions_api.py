@@ -49,10 +49,11 @@ def test_owner_api(client):
     owner = files.read(files.system_path("owner"))
     auth = {"authorization": f"Bearer {owner}"}
 
-    assert test_client.get("/api/sessions").status_code == 401
+    assert test_client.post("/api/sessions/cursor.a/rotate").status_code == 401
     assert (
-        test_client.get(
-            "/api/sessions", headers={"authorization": "Bearer mai1:x:y"}
+        test_client.post(
+            "/api/sessions/cursor.a/rotate",
+            headers={"authorization": "Bearer mai1:x:y"},
         ).status_code
         == 401
     )
@@ -73,7 +74,7 @@ def test_owner_api(client):
         ).status_code
         == 400
     )
-    listed = test_client.get("/api/sessions", headers=auth).json()["sessions"]
+    listed = anyio.run(service.session_list)
     assert [s["login"] for s in listed] == ["cursor.a"]
     assert (
         test_client.post("/api/sessions/cursor.a/rotate", headers=auth).status_code
