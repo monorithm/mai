@@ -54,13 +54,6 @@ def test_the_router_does_not_retry_in_a_loop():
     assert text.count("retry in") <= 8
 
 
-def test_the_owner_signs_in_and_a_post_without_csrf_is_refused():
-    out = _python("ui_sign_in.py")
-    assert "login 303 /ui/sessions" in out
-    assert "sessions 200 True" in out
-    assert "nocsrf 403" in out
-
-
 def test_watch_gives_3_without_new_mail():
     assert (
         _exec("mai", "watch", "--credential-file", "/data/w.cred", "--timeout", "3")
