@@ -1,7 +1,7 @@
 # Postfix for mai. Rendered by the controller at each start.
 compatibility_level = 3.11
-queue_directory = /data/postfix
-data_directory = /data/postfix-data
+queue_directory = @MAI_SPOOL@/queue
+data_directory = @MAI_SPOOL@/data
 mail_owner = postfix
 setgid_group = postdrop
 myhostname = mail.mai.internal

@@ -208,9 +208,9 @@ def cmd_import_maildir(args) -> int:
 
 
 def cmd_milter(args) -> int:
-    from mai import app_milter
+    from mai import app_milter, app_run
 
-    argv = ["--socket", args.socket or "/data/postfix/private/mai-milter"]
+    argv = ["--socket", args.socket or str(app_run.MILTER_SOCKET)]
     return int(app_milter.main(argv) or 0)
 
 

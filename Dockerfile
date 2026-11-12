@@ -18,7 +18,7 @@ RUN apk add --no-cache tini git python3 openssl \
  && (deluser vmail 2>/dev/null || true) && (delgroup vmail 2>/dev/null || true) \
  && addgroup -g 10002 vmail && adduser -D -u 10002 -G vmail -h /data/mail -s /sbin/nologin vmail \
  && cp -a /etc/postfix /opt/postfix-dist && cp -a /etc/dovecot /opt/dovecot-dist \
- && rm -rf /var/spool/postfix && ln -s /data/postfix /var/spool/postfix
+ && rm -rf /var/spool/postfix && mkdir -p /var/lib/mai/spool
 COPY --from=build /opt/mai/.venv /opt/mai/.venv
 COPY src /opt/mai/src
 COPY etc/ /opt/mai/etc/

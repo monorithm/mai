@@ -30,4 +30,4 @@ class AppSettings(BaseModel):
     HTTP_HOST: str = "0.0.0.0"
     HTTP_PORT: int = Field(default=8080, ge=1, le=65535)
 
-    MILTER_SOCKET: str = "/data/postfix/private/mai-milter"
+    MILTER_SOCKET: str = "/var/lib/mai/spool/queue/private/mai-milter"

@@ -45,6 +45,14 @@ file is in the root directory.
 |---|---|---|---|
 | `MAI_TAG` | The tag of the image `ghcr.io/monorithm/mai`: `latest`, a release such as `2.0.0`, `2.0` or `2`, or `sha-<short>`. `docker compose pull` gets this tag. `docker compose build` in a clone gives this tag to the local image. | No | `latest` |
 
+| `MAI_DATA_DIR` | A folder on the host for `/data`: the database, the mail, the secrets, and the backups. Use an absolute path, or a path that starts with `./`. A name with no `/` is a name of a volume. | No | The volume `mai-data` |
+
+The Postfix queue is always on the volume `mai-spool`, at `/var/lib/mai/spool` in
+the container. A host folder on macOS or Windows can hold no Unix socket, and the
+queue has the sockets of Postfix, Dovecot, and the milter. With no volume there, the
+container uses `/run/mai/spool` and logs a warning: the queue then does not stay
+across a restart. `MAI_SPOOL_DIR` in the container changes the path.
+
 To pin a version, set `MAI_TAG` before the compose command.
 
 - macOS and Linux:

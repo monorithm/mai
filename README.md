@@ -145,6 +145,23 @@ docker logout ghcr.io
 If you use `ghcr.io` for private images too, log in again with a token that has the
 scope `read:packages`.
 
+### Keep the data in a folder on the host
+
+By default, the named volume `mai-data` holds the data of mai: the database, the
+mail, the secrets, and the backups. To keep the data in a folder on the host, set
+`MAI_DATA_DIR` before you start the container. Use an absolute path, or a path that
+starts with `./`:
+
+```bash
+MAI_DATA_DIR="$HOME/.mai/data" docker compose -f ~/.mai/bin/compose.yaml up -d
+```
+
+The Postfix queue stays on the volume `mai-spool`, because a host folder on macOS
+or Windows can hold no Unix socket.
+
+To move data from the volume to a folder, make a backup with `mai backup` first.
+Then restore it in the new folder.
+
 ## Addresses on the host
 
 | Address | Service |

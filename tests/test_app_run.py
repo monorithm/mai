@@ -275,3 +275,40 @@ def test_health_reports_an_error_status_of_healthz(tmp_path, monkeypatch, capsys
 def test_start_order_takes_a_generator():
     names = (n for n in ["app", "extra", "postgres"])
     assert controller._in_start_order(names) == ["postgres", "app", "extra"]
+
+
+def test_select_spool_uses_the_volume_when_it_is_writable(tmp_path, monkeypatch):
+    monkeypatch.setattr(controller, "SPOOL_DIR", tmp_path / "spool")
+    monkeypatch.delenv("MILTER_SOCKET", raising=False)
+    assert controller.select_spool() == tmp_path / "spool"
+    assert (
+        controller.MILTER_SOCKET
+        == tmp_path / "spool" / "queue" / "private" / "mai-milter"
+    )
+
+
+def test_select_spool_falls_back_to_the_tmpfs_with_a_warning(
+    tmp_path, monkeypatch, caplog
+):
+    blocked = tmp_path / "read-only"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    monkeypatch.setattr(controller, "SPOOL_DIR", blocked / "spool")
+    monkeypatch.setattr(controller, "SPOOL_FALLBACK", tmp_path / "run" / "spool")
+    monkeypatch.delenv("MILTER_SOCKET", raising=False)
+    try:
+        with caplog.at_level("WARNING", logger="mai.run"):
+            assert controller.select_spool() == tmp_path / "run" / "spool"
+    finally:
+        blocked.chmod(0o700)
+    assert any(
+        "does not stay across a restart" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_templates_get_the_spool_of_the_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(controller, "SPOOL", tmp_path / "spool")
+    src, dst = tmp_path / "main.cf", tmp_path / "out.cf"
+    src.write_text("queue_directory = @MAI_SPOOL@/queue\n")
+    controller._copy_with_spool(src, dst)
+    assert dst.read_text() == f"queue_directory = {tmp_path / 'spool'}/queue\n"

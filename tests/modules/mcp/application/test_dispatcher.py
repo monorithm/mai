@@ -61,10 +61,14 @@ def test_initialize_both_revisions():
         )[1]["result"]
         assert r["protocolVersion"] == rev and r["serverInfo"] == {
             "name": "mai",
-            "version": "2.0.0",
+            "version": "2.1.0",
         }
         assert (
-            r["capabilities"] == {"tools": {"listChanged": True}}
+            r["capabilities"]
+            == {
+                "tools": {"listChanged": True},
+                "resources": {"subscribe": False, "listChanged": False},
+            }
             and "login" in r["instructions"]
         )
     assert (
@@ -225,3 +229,48 @@ def test_a_tool_call_during_a_restore_gets_mail_server_down_and_runs_nothing(
     assert result["isError"] is True
     assert result["structuredContent"]["error"]["code"] == "MAIL_SERVER_DOWN"
     assert result["structuredContent"]["error"]["retry_safe"] is True
+
+
+def test_resources_need_no_login_and_give_the_guide():
+    d = Dispatcher(fake_registry(), resolver)
+
+    async def go(method, params=None):
+        return await d.handle(
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+            None,
+            "http",
+        )
+
+    init = run(go, "initialize", {"protocolVersion": "2025-11-25"})[1]["result"]
+    assert init["capabilities"]["resources"] == {
+        "subscribe": False,
+        "listChanged": False,
+    }
+    assert "mai://guide" in init["instructions"]
+    listed = run(go, "resources/list")[1]["result"]["resources"]
+    assert [r["uri"] for r in listed] == ["mai://guide"]
+    read = run(go, "resources/read", {"uri": "mai://guide"})[1]["result"]
+    [content] = read["contents"]
+    assert content["mimeType"] == "text/markdown"
+    assert content["text"].startswith("# How to use mai")
+    # The tool table comes from the schemas: each tool is in the guide.
+    for name in ("login", "claim_thread", "manage_sprint"):
+        assert f"| `{name}` |" in content["text"]
+    assert run(go, "resources/templates/list")[1]["result"] == {"resourceTemplates": []}
+
+
+def test_an_unknown_resource_gives_resource_not_found():
+    d = Dispatcher(fake_registry(), resolver)
+
+    async def go(params):
+        return await d.handle(
+            {"jsonrpc": "2.0", "id": 7, "method": "resources/read", "params": params},
+            None,
+            "http",
+        )
+
+    body = run(go, {"uri": "mai://other"})[1]
+    assert body["error"]["code"] == -32002 and body["error"]["data"] == {
+        "uri": "mai://other"
+    }
+    assert run(go, {})[1]["error"]["code"] == -32602
