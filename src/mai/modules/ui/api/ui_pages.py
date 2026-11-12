@@ -268,10 +268,20 @@ def agents_page(csrf: str, agents: list[str], error: str = "") -> HttpResponse:
     return page(200, "Agents", "".join(parts))
 
 
-def threads_page(csrf: str) -> HttpResponse:
-    parts = [
-        "<h1>Threads</h1>",
-        nav(csrf),
-        "<p>The thread view is not available in this version.</p>",
-    ]
+def threads_page(csrf: str, claims: list) -> HttpResponse:
+    parts = ["<h1>Threads</h1>", nav(csrf)]
+    if not claims:
+        parts.append("<p>No thread has a claim.</p>")
+        return page(200, "Threads", "".join(parts))
+    parts.append(
+        "<table><tr><th>Agent</th><th>Thread</th><th>Holder</th>"
+        "<th>Lease end</th><th>State</th></tr>"
+    )
+    for c in claims:
+        state = "claimed" if c.live else "expired"
+        parts.append(
+            f"<tr><td>{e(c.agent)}</td><td>{e(c.root_msg_id)}</td><td>{e(c.holder)}</td>"
+            f"<td>{e(c.lease_end)}</td><td>{e(state)}</td></tr>"
+        )
+    parts.append("</table>")
     return page(200, "Threads", "".join(parts))

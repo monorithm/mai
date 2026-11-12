@@ -36,6 +36,7 @@ from ..domain.mail_view import (
     EnvelopeLookup,
     MailboxMissingError,
     MailReader,
+    ThreadLookup,
     text_of,
 )
 from ..domain.owner_session import COOKIE, OwnerSession, csrf_matches, session_cookie
@@ -74,6 +75,7 @@ class UiController:
         reader: MailReader,
         envelopes: EnvelopeLookup,
         credentials: CredentialService,
+        threads: ThreadLookup,
     ) -> None:
         self._access = access
         self._sign_out = sign_out
@@ -83,6 +85,7 @@ class UiController:
         self._reader = reader
         self._envelopes = envelopes
         self._credentials = credentials
+        self._threads = threads
 
     async def _session(self, request: HttpRequest) -> OwnerSession | None:
         return await self._current.execute(
@@ -325,7 +328,7 @@ class UiController:
     @Get("/threads")
     async def threads(self, request: HttpRequest) -> HttpResponse:
         async def view(s: OwnerSession) -> HttpResponse:
-            return pages.threads_page(s.csrf)
+            return pages.threads_page(s.csrf, await self._threads.claims())
 
         return await self._guarded(request, view)
 

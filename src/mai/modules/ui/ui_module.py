@@ -16,14 +16,14 @@ from .application.current_session_query import CurrentSessionHandler
 from .application.manage_sessions_command import ManageSessionsHandler
 from .application.sign_out_command import SignOutHandler
 from .application.ui_access_service import UiAccessService
-from .domain.mail_view import EnvelopeLookup, MailReader
+from .domain.mail_view import EnvelopeLookup, MailReader, ThreadLookup
 from .domain.owner_session import OwnerSessionStore
 from .domain.sign_in_ticket import SignInTicketStore
 from .domain.ui_state import UiStateStore
 from .infra.doveadm_mail_reader import DoveadmMailReader
 from .infra.memory_owner_session_store import MemoryOwnerSessionStore
 from .infra.memory_ui_state import MemorySignInTicketStore, MemoryUiStateStore
-from .infra.postgres_envelope_lookup import PostgresEnvelopeLookup
+from .infra.postgres_envelope_lookup import PostgresEnvelopeLookup, PostgresThreadLookup
 from .infra.postgres_ui_state import PostgresUiStateStore
 
 
@@ -35,6 +35,10 @@ def _ui_state(database: Database) -> UiStateStore:
 
 def _envelopes(database: Database) -> EnvelopeLookup:
     return PostgresEnvelopeLookup(database)
+
+
+def _threads(database: Database) -> ThreadLookup:
+    return PostgresThreadLookup(database)
 
 
 # The UI state lives in the table ui.state (versions 700 to 709) on PostgreSQL.
@@ -50,6 +54,7 @@ def _envelopes(database: Database) -> EnvelopeLookup:
         FactoryProvider(
             provide=EnvelopeLookup, use_factory=_envelopes, inject=(Database,)
         ),
+        FactoryProvider(provide=ThreadLookup, use_factory=_threads, inject=(Database,)),
         ClassProvider(provide=SignInTicketStore, use_class=MemorySignInTicketStore),
         ClassProvider(provide=OwnerSessionStore, use_class=MemoryOwnerSessionStore),
         ClassProvider(provide=MailReader, use_class=DoveadmMailReader),

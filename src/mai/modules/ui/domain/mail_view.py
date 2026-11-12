@@ -71,3 +71,18 @@ def text_of(uid: str, raw: bytes) -> MailText:
                 payload.decode("utf-8", "replace") if isinstance(payload, bytes) else ""
             )
     return MailText(uid, headers, body, str(msg["Message-ID"] or "").strip())
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadClaim:
+    agent: str
+    root_msg_id: str
+    holder: str
+    lease_end: str
+    live: bool
+
+
+class ThreadLookup(ABC):
+    @abstractmethod
+    async def claims(self) -> list[ThreadClaim]:
+        """The claims of the threads, newest lease first. Empty when there is none."""

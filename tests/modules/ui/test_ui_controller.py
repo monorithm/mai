@@ -21,6 +21,8 @@ from mai.modules.ui.domain.mail_view import (
     MailboxMissingError,
     MailReader,
     MailSummary,
+    ThreadClaim,
+    ThreadLookup,
 )
 from mai.modules.ui.domain.owner_session import COOKIE, OwnerSessionStore
 from mai.modules.ui.domain.sign_in_ticket import SignInTicketStore
@@ -114,6 +116,13 @@ class FakeReader(MailReader):
         return self.mailboxes.get(user, {}).get(uid)
 
 
+class FakeThreads(ThreadLookup):
+    async def claims(self):
+        return [
+            ThreadClaim("cursor", "<r1@mai.internal>", "cursor.s1", "2026-11-12", True)
+        ]
+
+
 class FakeEnvelopes(EnvelopeLookup):
     async def find(self, message_ids):
         return {
@@ -147,6 +156,7 @@ def client(credentials, clock, reader):
             ValueProvider(provide=BoardTools, use_value=FakeBoard()),
             ValueProvider(provide=MailReader, use_value=reader),
             ValueProvider(provide=EnvelopeLookup, use_value=FakeEnvelopes()),
+            ValueProvider(provide=ThreadLookup, use_value=FakeThreads()),
             ClassProvider(provide=UiStateStore, use_class=MemoryUiStateStore),
             ClassProvider(provide=SignInTicketStore, use_class=MemorySignInTicketStore),
             ClassProvider(provide=OwnerSessionStore, use_class=MemoryOwnerSessionStore),
@@ -393,3 +403,10 @@ def test_style_sheet_is_served_when_on(client):
     _turn_on(client)
     r = client.get("/ui/style.css")
     assert r.status_code == 200 and "body{" in r.text
+
+
+def test_the_threads_page_lists_the_claims_escaped(client):
+    headers, _ = _sign_in(client)
+    r = client.get("/ui/threads", headers=headers)
+    assert r.status_code == 200
+    assert "&lt;r1@mai.internal&gt;" in r.text and "claimed" in r.text
