@@ -184,7 +184,7 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 func (u *Uninstaller) dataSize(ctx context.Context, p *Plan) string {
 	var total int64
 	known := false
-	if du, err := u.Engine.DiskUsage(ctx, client.DiskUsageOptions{Volumes: true}); err == nil {
+	if du, err := u.Engine.DiskUsage(ctx, client.DiskUsageOptions{Volumes: true, Verbose: true}); err == nil {
 		for _, v := range du.Volumes.Items {
 			for _, name := range p.Volumes {
 				if v.Name == name && v.UsageData != nil && v.UsageData.Size >= 0 {
