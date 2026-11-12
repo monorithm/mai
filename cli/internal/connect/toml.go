@@ -271,7 +271,7 @@ func dropLines(body []byte, lines []tomlLine, drop map[int]bool, first int) []by
 		case (above == "\n" || above == "\r\n") && !drop[i-1]:
 			// The blank line that mai wrote before its table: only a line break.
 			drop[i-1] = true
-		case i > 0 && i == first && j == len(lines)-1:
+		case i > 0 && i == first && j == len(lines)-1 && !strings.HasPrefix(strings.TrimSpace(lines[i-1].text), "#"):
 			trimEnd = true
 		}
 		i = j
@@ -421,20 +421,6 @@ func splitComment(line string) (code, comment string) {
 	return line, ""
 }
 
-// sameKeyValue reports if two lines "key = value" have the same key and value, with no regard
-// to white space around "=" or to a comment.
-func sameKeyValue(a, b string) bool {
-	norm := func(s string) string {
-		code, _ := splitComment(s)
-		k, v, ok := strings.Cut(code, "=")
-		if !ok {
-			return strings.TrimSpace(code)
-		}
-		return strings.TrimSpace(k) + "=" + strings.TrimSpace(v)
-	}
-	return norm(a) == norm(b)
-}
-
 // updateMaiTable sets the keys command and args of the table of mai to the values of the new
 // table text, and keeps each other line of the table and each comment. It removes each end
 // comment of 3.0.0. The result is false when the command names a program that is not mai, or
@@ -467,24 +453,29 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 				return nil, false
 			}
 			haveCommand = true
-			if !sameKeyValue(l.text, newCommand) {
+			want, _ := tomlStringValue(strings.SplitN(newCommand, "=", 2)[1])
+			if v != want {
 				_, comment := splitComment(l.text)
 				replace[i] = newCommand + comment
 			}
 		}
 		if argsLine.MatchString(l.text) {
-			if !argsOfMai.MatchString(argsValue(lines, i)) {
+			value := argsValue(lines, i)
+			if !argsOfMai.MatchString(value) {
 				return nil, false // a server of the user that runs a program named mai
 			}
 			haveArgs = true
-			// An array on more than one line becomes the one line of mai.
+			have, ok1 := tomlStringArray(strings.SplitN(value, "=", 2)[1])
+			want, ok2 := tomlStringArray(strings.SplitN(newArgs, "=", 2)[1])
+			if ok1 && ok2 && strings.Join(have, "\x00") == strings.Join(want, "\x00") {
+				continue // the same values: each line and comment of the user stays
+			}
+			// Different values: the array becomes the one line of mai.
 			for j := i + 1; j < len(lines) && !lines[j].code; j++ {
 				drop[j] = true
 			}
-			if !sameKeyValue(l.text, newArgs) || (i+1 < len(lines) && !lines[i+1].code) {
-				_, comment := splitComment(l.text)
-				replace[i] = newArgs + comment
-			}
+			_, comment := splitComment(l.text)
+			replace[i] = newArgs + comment
 		}
 	}
 	var out []byte
@@ -517,7 +508,8 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 
 // argsValue returns the line i and each line after it that continues its value, on one line.
 func argsValue(lines []tomlLine, i int) string {
-	parts := []string{lines[i].text}
+	first, _ := splitComment(lines[i].text)
+	parts := []string{first}
 	for j := i + 1; j < len(lines) && !lines[j].code; j++ {
 		code, _ := splitComment(lines[j].text)
 		parts = append(parts, strings.TrimSpace(code))
@@ -546,4 +538,119 @@ func ownedTOML(lines []tomlLine, e tomlEntry) bool {
 		}
 	}
 	return command
+}
+
+// tomlStringAt reads the string that starts at s[i] (a basic or a literal string on one line),
+// and returns its value and the index after it.
+func tomlStringAt(s string, i int) (string, int, bool) {
+	if i >= len(s) {
+		return "", i, false
+	}
+	switch s[i] {
+	case '\'':
+		j := strings.IndexByte(s[i+1:], '\'')
+		if j < 0 {
+			return "", i, false
+		}
+		return s[i+1 : i+1+j], i + j + 2, true
+	case '"':
+		j := i + 1
+		for j < len(s) && s[j] != '"' {
+			if s[j] == '\\' {
+				j++
+			}
+			j++
+		}
+		if j >= len(s) {
+			return "", i, false
+		}
+		v, ok := tomlStringValue(s[i : j+1])
+		return v, j + 1, ok
+	}
+	return "", i, false
+}
+
+// tomlStringArray reads an array of strings, such as ["mcp", '--agent', "a"], also with line
+// breaks and comments between the values, and reports false for each other value.
+func tomlStringArray(v string) ([]string, bool) {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "[") {
+		return nil, false
+	}
+	var out []string
+	for i := 1; i < len(v); {
+		switch c := v[i]; {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',':
+			i++
+		case c == ']':
+			return out, true
+		case c == '#':
+			j := strings.IndexByte(v[i:], '\n')
+			if j < 0 {
+				return nil, false
+			}
+			i += j
+		default:
+			s, next, ok := tomlStringAt(v, i)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+			i = next
+		}
+	}
+	return nil, false
+}
+
+// sameTOMLTable reports if two texts of the table of mai have the same headers, keys, and
+// values, with no regard to comments, white space, line breaks, or the form of a string.
+func sameTOMLTable(a, b []byte) bool {
+	norm := func(text []byte) []string {
+		var out []string
+		lines := tomlLines(text)
+		for i := 0; i < len(lines); i++ {
+			l := lines[i]
+			if !l.code {
+				continue
+			}
+			code, _ := splitComment(l.text)
+			code = strings.TrimSpace(code)
+			if code == "" {
+				continue
+			}
+			if tomlHeader.MatchString(code) {
+				out = append(out, "h:"+strings.Join(strings.Fields(code), ""))
+				continue
+			}
+			k, v, ok := strings.Cut(code, "=")
+			if !ok {
+				out = append(out, "x:"+code)
+				continue
+			}
+			// A value on more than one line continues on the lines that are not code.
+			for j := i + 1; j < len(lines) && !lines[j].code; j++ {
+				v += "\n" + lines[j].text
+				i = j
+			}
+			k = strings.Trim(strings.TrimSpace(k), `"'`)
+			if s, ok := tomlStringValue(v); ok {
+				out = append(out, "s:"+k+"="+s)
+			} else if arr, ok := tomlStringArray(v); ok {
+				out = append(out, "a:"+k+"="+strings.Join(arr, "\x00"))
+			} else {
+				out = append(out, "v:"+k+"="+strings.TrimSpace(v))
+			}
+		}
+		return out
+	}
+	x, y := norm(a), norm(b)
+	if len(x) != len(y) || len(x) == 0 {
+		return false
+	}
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
 }
