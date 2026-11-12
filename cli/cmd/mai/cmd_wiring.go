@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/monorithm/mai/cli/v3/internal/connect"
 	"github.com/monorithm/mai/cli/v3/internal/uninstall"
 )
@@ -10,4 +12,5 @@ import (
 func init() {
 	uninstall.RemoveAppEntry = connect.RemoveEntry
 	uninstall.RemoveCreatedAppFile = connect.RemoveCreatedFile
+	uninstall.IsKept = func(err error) bool { return errors.Is(err, connect.ErrKept) }
 }

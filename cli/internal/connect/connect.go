@@ -471,7 +471,10 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 	}
 	// The record is the table as it is now, with the keys of the user in it.
 	nlines := tomlLines(out)
-	ne, _ := findMaiTOML(nlines)
+	ne, ok := findMaiTOML(nlines)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("connect: %s: the table of mai is not readable after the change", c.path)
+	}
 	text, _ := ne.mainText(out, nlines, nl)
 	item.Hash = hashOf(text)
 	return out, item, text, nil

@@ -54,6 +54,10 @@ func forget(it manifest.Item) {
 	}
 }
 
+// ErrKept means that the entry stays, because other content of the file needs it, for example
+// "version" of a hooks file that holds hooks. The record of the entry stays too.
+var ErrKept = errors.New("connect: the entry stays, because other content of the file needs it")
+
 // RemoveEntry removes exactly the entry of the item. An entry that is gone already gives no
 // error. An entry with a different hash gives *ErrChanged and the file stays the same.
 func RemoveEntry(it manifest.Item) error { return remove(it, false) }
@@ -80,7 +84,7 @@ func remove(it manifest.Item, force bool) error {
 		after, err = removeJSON(before, it, force)
 	}
 	if err != nil {
-		return err
+		return err // also ErrKept: the record stays
 	}
 	if !bytes.Equal(before, after) {
 		if err := writeFile(it.Path, after); err != nil {
@@ -101,8 +105,21 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 	if !found {
 		return body, nil
 	}
-	text, with300 := e.mainText(body, lines, layoutOf(body).nl)
-	same := hashOf(text) == it.Hash || (with300 != nil && hashOf(with300) == it.Hash)
+	// 3.0.0 wrote its block with "\n" also in a file with CRLF, thus both line breaks count.
+	same := false
+	var text []byte
+	for _, nl := range []string{layoutOf(body).nl, "\n"} {
+		t, with300 := e.mainText(body, lines, nl)
+		if text == nil {
+			text = t
+		}
+		if hashOf(t) == it.Hash || (with300 != nil && hashOf(with300) == it.Hash) {
+			same = true
+		}
+	}
+	if force && !ownedTOML(lines, e) {
+		return body, nil // a server of the user named mai replaced the table of mai: it stays
+	}
 	if (!same || !e.marked || len(e.subs) > 0) && !force {
 		current := strings.TrimLeft(string(text), "\r\n")
 		for _, s := range e.subs {
@@ -116,9 +133,10 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 // removeJSON removes the entry of the item from the JSON text before. Each other byte stays.
 // When the entry was the last child of a container that mai connect made, the container goes
 // too, from the deepest one up. A container that was empty before gets its bytes back. An
-// entry that is gone gives no error. An entry with a different text gives *ErrChanged, unless
-// force is set; in a hook group that holds hooks of the user, force removes only the hook
-// object of mai.
+// entry that is gone gives no error, and the empty containers that mai made for it go. An
+// entry with a different text gives *ErrChanged, unless force is set; with force, mai removes
+// only its own hooks from a value that holds hooks of the user, and keeps a value that is not
+// an entry of mai.
 func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	if len(bytes.TrimSpace(before)) == 0 {
 		return before, nil
@@ -150,6 +168,9 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	if appendItem {
 		keys = keys[:len(keys)-1]
 	}
+	// gone is the result for an entry that is not there: the empty containers that mai made
+	// for it go.
+	gone := func() ([]byte, error) { return finish(pruneMade(before, keys, made, inner)), nil }
 	// nodes[i] is the object that holds keys[i] at idx[i]; nodes[len(keys)] is the value.
 	nodes, idx := []*jnode{root}, []int{}
 	for _, k := range keys {
@@ -159,7 +180,7 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		}
 		i, v := cur.member(k)
 		if v == nil {
-			return before, nil
+			return gone()
 		}
 		nodes, idx = append(nodes, v), append(idx, i)
 	}
@@ -209,7 +230,7 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 				}
 			}
 			if found < 0 {
-				return before, nil // the user removed the entry
+				return gone() // the user removed the entry
 			}
 		}
 		if len(target.elems) > 1 || !made[pointerOf(keys)] {
@@ -220,7 +241,26 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		if !force {
 			return nil, changedErr(it, string(before[target.start:target.end]))
 		}
-		if !ownedByMai(before, target) {
+		switch {
+		case isMaiMCP(before, target):
+			// An MCP entry of mai: the keys that the user added in it go with it.
+		case hasAnyMaiHook(before, target):
+			// A value with hooks of mai and of the user, such as the hook set "mai" of
+			// Antigravity of 3.0.0: only the hooks of mai go.
+			out := removeMaiHooks(before, keys)
+			if n, err := scanJSON(out); err == nil {
+				if v := nodeAt(n, keys); v != nil && hasValueText(out, v) {
+					return finish(out), nil
+				}
+			}
+			before = out
+			root, _ = scanJSON(before)
+			nodes, idx = []*jnode{root}, []int{}
+			for _, k := range keys {
+				i, v := nodes[len(nodes)-1].member(k)
+				nodes, idx = append(nodes, v), append(idx, i)
+			}
+		default:
 			return before, nil // a value of the user replaced the entry of mai: it stays
 		}
 	}
@@ -228,7 +268,7 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	// the file holds other content, because that content needs it. "/version" of 3.0.0 has no
 	// mark in its record.
 	if !appendItem && (rec.IfAbsent || it.Pointer == "/version") && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
-		return before, nil
+		return nil, ErrKept
 	}
 	// Remove the member keys[level] of nodes[level]. When it is the only member of an object
 	// that mai made, remove that object from its parent instead.
@@ -237,6 +277,107 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		level--
 	}
 	return finish(removeChild(before, nodes[level], idx[level], inner(pointerOf(keys[:level])))), nil
+}
+
+// nodeAt follows the keys from n, or returns nil.
+func nodeAt(n *jnode, keys []string) *jnode {
+	for _, k := range keys {
+		if n == nil || n.kind != '{' {
+			return nil
+		}
+		_, n = n.member(k)
+	}
+	return n
+}
+
+// pruneMade removes the containers on the path of keys that mai made and that are empty, from
+// the deepest one up.
+func pruneMade(b []byte, keys []string, made map[string]bool, inner func(string) string) []byte {
+	for level := len(keys); level > 0; level-- {
+		root, err := scanJSON(b)
+		if err != nil {
+			return b
+		}
+		parent := nodeAt(root, keys[:level-1])
+		if parent == nil || parent.kind != '{' {
+			continue
+		}
+		i, v := parent.member(keys[level-1])
+		if v == nil {
+			continue
+		}
+		if !made[pointerOf(keys[:level])] || len(v.members) > 0 || len(v.elems) > 0 || (v.kind != '{' && v.kind != '[') {
+			return b
+		}
+		b = removeChild(b, parent, i, inner(pointerOf(keys[:level-1])))
+	}
+	return b
+}
+
+// removeMaiHooks removes each hook of mai (an object with a command of mai, or a string of
+// mai) from the arrays in the value at keys.
+func removeMaiHooks(b []byte, keys []string) []byte {
+	for range 1000 {
+		root, err := scanJSON(b)
+		if err != nil {
+			return b
+		}
+		v := nodeAt(root, keys)
+		if v == nil {
+			return b
+		}
+		arr, i := findMaiHook(b, v)
+		if arr == nil {
+			return b
+		}
+		b = removeChild(b, arr, i, "")
+	}
+	return b
+}
+
+// findMaiHook returns an array in n and the index of a hook of mai in it, or nil.
+func findMaiHook(b []byte, n *jnode) (*jnode, int) {
+	for i, e := range n.elems {
+		if hasMaiHook(b, e, "", "") && !hasUserHook(b, e) {
+			return n, i
+		}
+	}
+	for _, e := range n.elems {
+		if a, i := findMaiHook(b, e); a != nil {
+			return a, i
+		}
+	}
+	for _, m := range n.members {
+		if a, i := findMaiHook(b, m.val); a != nil {
+			return a, i
+		}
+	}
+	return nil, 0
+}
+
+// hasUserHook reports if the value n holds a command that is not a hook command of mai.
+func hasUserHook(b []byte, n *jnode) bool {
+	v, err := parseJSON(b[n.start:n.end])
+	if err != nil {
+		return true
+	}
+	o, ok := v.(*object)
+	if !ok {
+		return false
+	}
+	for _, s := range stringsIn(o.vals["hooks"]) {
+		if !isMaiHook(s, "", "") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasValueText reports if the value n of the text b holds a value that is not an object or an
+// array.
+func hasValueText(b []byte, n *jnode) bool {
+	v, err := parseJSON(b[n.start:n.end])
+	return err != nil || hasValue(v)
 }
 
 // hasUserContent reports if the object n holds a member other than skip with a value in it
@@ -276,25 +417,24 @@ func hasValue(v any) bool {
 	return true
 }
 
-// ownedByMai reports if the value n of the text b is an entry of mai: an object whose command
-// is a mai binary, or a value that holds a hook command of mai.
-func ownedByMai(b []byte, n *jnode) bool {
+// isMaiMCP reports if the value n of the text b is an MCP entry of mai: an object whose
+// command is a mai binary and whose args start with "mcp", as mai connect writes it.
+func isMaiMCP(b []byte, n *jnode) bool {
 	v, err := parseJSON(b[n.start:n.end])
 	if err != nil {
 		return false
 	}
-	if o, ok := v.(*object); ok {
-		if cmd, ok := o.vals["command"].(string); ok && isMaiProgram(cmd) {
-			return true
-		}
+	o, ok := v.(*object)
+	if !ok {
+		return false
 	}
-	for _, s := range stringsIn(v) {
-		if isMaiHook(s, "", "") {
-			return true
-		}
-	}
-	return false
+	cmd, _ := o.vals["command"].(string)
+	args, _ := o.vals["args"].([]any)
+	return isMaiProgram(cmd) && len(args) > 0 && args[0] == "mcp"
 }
+
+// hasAnyMaiHook reports if the value n of the text b holds a hook command of mai.
+func hasAnyMaiHook(b []byte, n *jnode) bool { return hasMaiHook(b, n, "", "") }
 
 // hasMaiHook reports if the value n of the text b holds the hook command of mai for format
 // and event.
@@ -329,14 +469,24 @@ func RemoveCreatedFile(it manifest.Item) (bool, error) {
 
 // Disconnect removes each entry of app in m, and each file that mai connect made for app and
 // that is empty now. It removes the records of the removed items. It continues after an
-// *ErrChanged and returns all of them at the end.
-func Disconnect(app string, m *manifest.Manifest) error {
+// *ErrChanged and returns all of them at the end. An entry that other content needs
+// (ErrKept) stays with its record, and gives no error.
+func Disconnect(app string, m *manifest.Manifest) error { return disconnect(app, m, false) }
+
+// DisconnectForce is Disconnect with ForceRemoveEntry for each entry.
+func DisconnectForce(app string, m *manifest.Manifest) error { return disconnect(app, m, true) }
+
+func disconnect(app string, m *manifest.Manifest, force bool) error {
 	var errs []error
 	for _, it := range RemovalOrder(m.Of(manifest.AppEntry)) {
 		if it.Name != app {
 			continue
 		}
-		if err := RemoveEntry(it); err != nil {
+		err := remove(it, force)
+		switch {
+		case errors.Is(err, ErrKept):
+			continue
+		case err != nil:
 			errs = append(errs, err)
 			continue
 		}

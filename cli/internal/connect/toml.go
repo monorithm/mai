@@ -20,12 +20,14 @@ import (
 type tomlLine struct {
 	start, end int
 	text       string // the line with no line break, no trailing white space, and no BOM
-	code       bool   // false for a line in a multi-line string
+	// code is false for a line that continues a value of the line above it: a line in a
+	// multi-line string, or in an array on more than one line.
+	code bool
 }
 
 func tomlLines(body []byte) []tomlLine {
 	var out []tomlLine
-	state := "" // "" outside a multi-line string, or its delimiter
+	var sc tomlScan
 	for start := 0; start < len(body); {
 		end := bytes.IndexByte(body[start:], '\n')
 		if end < 0 {
@@ -37,34 +39,48 @@ func tomlLines(body []byte) []tomlLine {
 		if start == 0 {
 			text = strings.TrimPrefix(text, "\xef\xbb\xbf")
 		}
-		l := tomlLine{start: start, end: end, text: text, code: state == ""}
-		state = multilineState(text, state)
-		out = append(out, l)
+		out = append(out, tomlLine{start: start, end: end, text: text, code: sc.str == "" && sc.depth == 0})
+		sc.line(text)
 		start = end
 	}
 	return out
 }
 
-// multilineState returns the state after the line: "" outside a multi-line string, or the
-// delimiter (""" or ”') of the multi-line string that is open at the end of the line.
-func multilineState(line, state string) string {
+// tomlScan is the state of the scan at the end of a line: the delimiter of an open
+// multi-line string ("" for none), and the depth of open arrays of a value.
+type tomlScan struct {
+	str   string
+	depth int
+}
+
+// line reads one line and updates the state.
+func (sc *tomlScan) line(line string) {
+	header := sc.str == "" && sc.depth == 0 && strings.HasPrefix(strings.TrimSpace(line), "[")
 	for i := 0; i < len(line); {
-		if state != "" {
-			j := strings.Index(line[i:], state)
-			if j < 0 {
-				return state
+		if sc.str != "" {
+			// In a multi-line basic string, a backslash escapes the next character.
+			if sc.str == `"""` && line[i] == '\\' {
+				i += 2
+				continue
 			}
-			i += j + 3
-			state = ""
+			if strings.HasPrefix(line[i:], sc.str) {
+				i += 3
+				// A closing delimiter can have one or two quotes of the content before it.
+				for n := 0; n < 2 && i < len(line) && line[i] == sc.str[0]; n++ {
+					i++
+				}
+				sc.str = ""
+				continue
+			}
+			i++
 			continue
 		}
-		switch {
+		switch c := line[i]; {
 		case strings.HasPrefix(line[i:], `"""`):
-			state, i = `"""`, i+3
+			sc.str, i = `"""`, i+3
 		case strings.HasPrefix(line[i:], `'''`):
-			state, i = `'''`, i+3
-		case line[i] == '"':
-			// A basic string on one line, with backslash escapes.
+			sc.str, i = `'''`, i+3
+		case c == '"':
 			i++
 			for i < len(line) && line[i] != '"' {
 				if line[i] == '\\' {
@@ -73,19 +89,24 @@ func multilineState(line, state string) string {
 				i++
 			}
 			i++
-		case line[i] == '\'':
+		case c == '\'':
 			if j := strings.IndexByte(line[i+1:], '\''); j >= 0 {
 				i += j + 2
 			} else {
 				i = len(line)
 			}
-		case line[i] == '#':
-			return ""
+		case c == '#':
+			return
+		case c == '[' && !header:
+			sc.depth++
+			i++
+		case c == ']' && !header && sc.depth > 0:
+			sc.depth--
+			i++
 		default:
 			i++
 		}
 	}
-	return state
 }
 
 const (
@@ -355,10 +376,55 @@ func tomlStringValue(v string) (string, bool) {
 	return "", false
 }
 
+// splitComment returns the part of a TOML line before a comment, and the comment with the
+// white space before it ("" for none).
+func splitComment(line string) (code, comment string) {
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '"', '\'':
+			// Skip a string on one line.
+			j := i
+			rest := line[j:]
+			k := 1
+			if rest[0] == '"' {
+				for k < len(rest) && rest[k] != '"' {
+					if rest[k] == '\\' {
+						k++
+					}
+					k++
+				}
+			} else if m := strings.IndexByte(rest[1:], '\''); m >= 0 {
+				k = m + 1
+			} else {
+				k = len(rest)
+			}
+			i = j + k
+		case '#':
+			code = strings.TrimRight(line[:i], " \t")
+			return code, line[len(code):]
+		}
+	}
+	return line, ""
+}
+
+// sameKeyValue reports if two lines "key = value" have the same key and value, with no regard
+// to white space around "=" or to a comment.
+func sameKeyValue(a, b string) bool {
+	norm := func(s string) string {
+		code, _ := splitComment(s)
+		k, v, ok := strings.Cut(code, "=")
+		if !ok {
+			return strings.TrimSpace(code)
+		}
+		return strings.TrimSpace(k) + "=" + strings.TrimSpace(v)
+	}
+	return norm(a) == norm(b)
+}
+
 // updateMaiTable sets the keys command and args of the table of mai to the values of the new
-// table text, and keeps each other line of the table. It removes each end comment of 3.0.0.
-// The result is false when the command names a program that is not mai, or when the table has
-// a value that mai cannot change line by line.
+// table text, and keeps each other line of the table and each comment. It removes each end
+// comment of 3.0.0. The result is false when the command names a program that is not mai, or
+// when the args value goes on more than one line.
 func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string) ([]byte, bool) {
 	var newCommand, newArgs string
 	for _, l := range strings.Split(strings.TrimRight(table, "\n"), "\n") {
@@ -381,44 +447,67 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 			continue
 		}
 		if m := commandLine.FindStringSubmatch(l.text); m != nil {
-			v, ok := tomlStringValue(m[2])
+			code, _ := splitComment(m[2])
+			v, ok := tomlStringValue(code)
 			if !ok || !isMaiProgram(v) {
 				return nil, false
 			}
 			haveCommand = true
-			if strings.TrimSpace(l.text) != newCommand {
-				replace[i] = newCommand
+			if !sameKeyValue(l.text, newCommand) {
+				_, comment := splitComment(l.text)
+				replace[i] = newCommand + comment
 			}
 		}
 		if argsLine.MatchString(l.text) {
-			if !strings.Contains(l.text, "]") {
+			if i+1 < len(lines) && !lines[i+1].code {
 				return nil, false // an array on more than one line
 			}
 			haveArgs = true
-			if strings.TrimSpace(l.text) != newArgs {
-				replace[i] = newArgs
+			if !sameKeyValue(l.text, newArgs) {
+				_, comment := splitComment(l.text)
+				replace[i] = newArgs + comment
 			}
 		}
 	}
 	var out []byte
+	add := func(text string) {
+		if len(out) > 0 && out[len(out)-1] != '\n' {
+			out = append(out, nl...) // the line above had no line break: it was the last line
+		}
+		out = append(out, text...)
+	}
 	for i, l := range lines {
 		if drop[i] {
 			continue
 		}
 		if r, ok := replace[i]; ok {
-			out = append(out, r...)
-			out = append(out, nl...)
+			add(r + nl)
 		} else {
-			out = append(out, body[l.start:l.end]...)
+			add(string(body[l.start:l.end]))
 		}
 		if i == e.header {
 			if !haveCommand {
-				out = append(out, newCommand+nl...)
+				add(newCommand + nl)
 			}
 			if !haveArgs {
-				out = append(out, newArgs+nl...)
+				add(newArgs + nl)
 			}
 		}
 	}
 	return out, true
+}
+
+// ownedTOML reports if the table of the entry names a mai binary as its command.
+func ownedTOML(lines []tomlLine, e tomlEntry) bool {
+	for i := e.header + 1; i <= e.lastKey; i++ {
+		if !lines[i].code {
+			continue
+		}
+		if m := commandLine.FindStringSubmatch(lines[i].text); m != nil {
+			code, _ := splitComment(m[2])
+			v, ok := tomlStringValue(code)
+			return ok && isMaiProgram(v)
+		}
+	}
+	return false
 }

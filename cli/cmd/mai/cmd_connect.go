@@ -126,20 +126,11 @@ func runDisconnect(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return fail(errOut, err)
 	}
+	disconnect := connect.Disconnect
 	if *force {
-		for _, it := range m.Of(manifest.AppEntry) {
-			if it.Name != app {
-				continue
-			}
-			if err := connect.ForceRemoveEntry(it); err != nil {
-				return fail(errOut, err)
-			}
-			if err := m.Remove(it); err != nil {
-				return fail(errOut, err)
-			}
-		}
+		disconnect = connect.DisconnectForce
 	}
-	if err := connect.Disconnect(app, m); err != nil {
+	if err := disconnect(app, m); err != nil {
 		for _, e := range unwrapAll(err) {
 			var ce *connect.ErrChanged
 			if errors.As(e, &ce) {

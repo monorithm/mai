@@ -30,6 +30,10 @@ var RemoveAppEntry func(manifest.Item) error
 // stays. The part of the CLI that writes app entries sets it; nil keeps each such file.
 var RemoveCreatedAppFile func(manifest.Item) (bool, error)
 
+// IsKept reports if an error of RemoveAppEntry means that the entry stays, because other
+// content of the file needs it. nil counts each error as a failure.
+var IsKept func(error) bool
+
 // States of a result.
 const (
 	Gone    = "gone"
@@ -396,6 +400,10 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			continue
 		}
 		if err := RemoveAppEntry(it); err != nil {
+			if IsKept != nil && IsKept(err) {
+				rs = append(rs, Result{Item: item, State: Skipped, Detail: "it stays, because the file holds content that needs it"})
+				continue
+			}
 			rs = append(rs, Result{Item: item, State: Failure, Detail: err.Error()})
 			continue
 		}
