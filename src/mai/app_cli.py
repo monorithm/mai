@@ -175,12 +175,6 @@ def cmd_session_revoke(args) -> int:
     return 0
 
 
-def cmd_mcp(args) -> int:
-    from mai import app_stdio
-
-    return int(app_stdio.main() or 0)
-
-
 def cmd_serve_http(args) -> int:
     from mai import app_main
 
@@ -347,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--lane", help="the lane name (default: the worker name)")
     sd.add_argument("--min-coverage", type=float, default=80)
     sd.set_defaults(func=cmd_project_seed)
-    sub.add_parser("mcp", help="serve MCP on stdio").set_defaults(func=cmd_mcp)
+    # The bridge "mai mcp" of the host CLI replaces the stdio server of the container.
     h = sub.add_parser("serve-http", help="serve MCP and the UI on HTTP")
     h.add_argument("--host", default="0.0.0.0")
     h.add_argument("--port", type=int, default=8080)
