@@ -25,9 +25,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   group stay.
 - `mai connect codex` finds the table of mai by its comment and its header.
   Thus it keeps the tables and the comments that Codex or the user adds after
-  the table of mai. A sub-table of the user, for example
-  `[mcp_servers.mai.env]`, stays, and `mai disconnect codex --force` removes it
-  with the table of mai.
+  the table of mai. A second `mai connect codex` changes only the keys `command`
+  and `args`, and keeps each key that the user adds to the table. A sub-table of
+  the user, for example `[mcp_servers.mai.env]`, stays, and
+  `mai disconnect codex --force` removes it with the table of mai.
+- `mai disconnect codex` removes the lines of mai as whole lines, thus no two
+  lines of the user join.
 - `mai connect codex` gives an error, not a second table, for a table
   `mcp_servers.mai` in a different form of TOML, and for an inline table
   `mcp_servers = { ... }`.
@@ -36,8 +39,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An MCP entry of mai keeps each key that the user adds, for example `env`. The
   hook of mai for Antigravity is one element of the array `PreInvocation`, thus
   a hook of the user in that array stays.
-- `mai disconnect cursor` keeps `"version": 1` in a hooks file that holds hooks
-  of the user.
+- `mai disconnect cursor` keeps `"version": 1` in a hooks file that holds hooks,
+  also for a record of 3.0.0. It removes `version` after the other entries.
+- After an upgrade from 3.0.0, `mai connect antigravity` moves the record of the
+  hook set `mai` to the record of the hook. Thus `mai disconnect` keeps the
+  hooks of the user.
+- `mai disconnect --force` keeps an entry at the place of mai that is not an
+  entry of mai.
 - `mai uninstall` keeps a file of an app that `mai connect` made, when the file
   holds content of the user.
 - `mai disconnect` gives no error for an entry of mai that the user removed.

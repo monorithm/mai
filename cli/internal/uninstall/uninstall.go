@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/moby/moby/client"
@@ -136,6 +137,11 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	p.Images = man.Of(manifest.Image)
 	p.AppEntries = man.Of(manifest.AppEntry)
+	// A "version" entry goes after the other entries of its file, because a hook that stays
+	// needs it.
+	sort.SliceStable(p.AppEntries, func(i, j int) bool {
+		return p.AppEntries[i].Pointer != "/version" && p.AppEntries[j].Pointer == "/version"
+	})
 	for _, it := range man.Of(manifest.KeychainKey) {
 		p.Keys = appendNew(p.Keys, it.Name)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -91,24 +92,25 @@ func remove(it manifest.Item, force bool) error {
 }
 
 // removeTOML removes the table of mai from the config.toml of Codex, with its sub-tables and
-// the comments of mai. A table that is gone gives no error. A table with a different text, a
-// sub-table of the user, or a table with no begin comment of mai gives *ErrChanged, unless
-// force is set.
+// the comments of mai, line by line. A table that is gone gives no error. A table with a
+// different text, a sub-table, or a table with no begin comment of mai gives *ErrChanged,
+// unless force is set.
 func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
-	e, found := findMaiTOML(body)
+	lines := tomlLines(body)
+	e, found := findMaiTOML(lines)
 	if !found {
 		return body, nil
 	}
-	text, with300 := e.mainText(body)
+	text, with300 := e.mainText(body, lines, layoutOf(body).nl)
 	same := hashOf(text) == it.Hash || (with300 != nil && hashOf(with300) == it.Hash)
 	if (!same || !e.marked || len(e.subs) > 0) && !force {
-		current := string(text)
+		current := strings.TrimLeft(string(text), "\r\n")
 		for _, s := range e.subs {
-			current += string(body[s.start:s.end])
+			current += string(body[lines[s[0]].start:lines[s[1]].end])
 		}
 		return nil, changedErr(it, strings.TrimRight(current, "\r\n"))
 	}
-	return e.remove(body), nil
+	return dropLines(body, lines, e.allLines(), e.mainLines()[0]), nil
 }
 
 // removeJSON removes the entry of the item from the JSON text before. Each other byte stays.
@@ -214,10 +216,19 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 			return finish(removeChild(before, target, found, inner(pointerOf(keys)))), nil
 		}
 		// The array has only this element, and mai made the array: remove the array.
-	} else if hashOf(canonical(before, target)) != it.Hash && !force {
-		return nil, changedErr(it, string(before[target.start:target.end]))
-	} else if rec.IfAbsent && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
-		return before, nil // the file holds content of the user, which needs the key
+	} else if hashOf(canonical(before, target)) != it.Hash {
+		if !force {
+			return nil, changedErr(it, string(before[target.start:target.end]))
+		}
+		if !ownedByMai(before, target) {
+			return before, nil // a value of the user replaced the entry of mai: it stays
+		}
+	}
+	// An entry that mai writes only into a file with no such key, such as "version", stays when
+	// the file holds other content, because that content needs it. "/version" of 3.0.0 has no
+	// mark in its record.
+	if !appendItem && (rec.IfAbsent || it.Pointer == "/version") && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
+		return before, nil
 	}
 	// Remove the member keys[level] of nodes[level]. When it is the only member of an object
 	// that mai made, remove that object from its parent instead.
@@ -228,45 +239,59 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	return finish(removeChild(before, nodes[level], idx[level], inner(pointerOf(keys[:level])))), nil
 }
 
-// hasUserContent reports if the object n holds a member other than skip with a value that is
-// not only hooks of mai: a string that is not a hook command of mai, a number, or true.
+// hasUserContent reports if the object n holds a member other than skip with a value in it
+// (not only empty objects and arrays). mai removes "version" after its other entries, thus
+// each hook that stays, also a changed hook of mai, needs the key.
 func hasUserContent(b []byte, n *jnode, skip string) bool {
 	for _, m := range n.members {
 		if m.key == skip {
 			continue
 		}
 		v, err := parseJSON(b[m.val.start:m.val.end])
-		if err != nil || !onlyMaiHooks(v) {
+		if err != nil || hasValue(v) {
 			return true
 		}
 	}
 	return false
 }
 
-// onlyMaiHooks reports if v holds no value but containers, hook commands of mai, and the keys
-// of a hook object of mai ("type": "command", a timeout, a loop limit).
-func onlyMaiHooks(v any) bool {
+// hasValue reports if v holds a value that is not an object or an array.
+func hasValue(v any) bool {
 	switch x := v.(type) {
 	case *object:
 		for _, k := range x.keys {
-			switch k {
-			case "type", "timeout", "timeoutSec", "loop_limit":
-				continue
-			}
-			if !onlyMaiHooks(x.vals[k]) {
-				return false
+			if hasValue(x.vals[k]) {
+				return true
 			}
 		}
-		return true
+		return false
 	case []any:
 		for _, e := range x {
-			if !onlyMaiHooks(e) {
-				return false
+			if hasValue(e) {
+				return true
 			}
 		}
-		return true
-	case string:
-		return isMaiHook(x, "", "")
+		return false
+	}
+	return true
+}
+
+// ownedByMai reports if the value n of the text b is an entry of mai: an object whose command
+// is a mai binary, or a value that holds a hook command of mai.
+func ownedByMai(b []byte, n *jnode) bool {
+	v, err := parseJSON(b[n.start:n.end])
+	if err != nil {
+		return false
+	}
+	if o, ok := v.(*object); ok {
+		if cmd, ok := o.vals["command"].(string); ok && isMaiProgram(cmd) {
+			return true
+		}
+	}
+	for _, s := range stringsIn(v) {
+		if isMaiHook(s, "", "") {
+			return true
+		}
 	}
 	return false
 }
@@ -307,7 +332,7 @@ func RemoveCreatedFile(it manifest.Item) (bool, error) {
 // *ErrChanged and returns all of them at the end.
 func Disconnect(app string, m *manifest.Manifest) error {
 	var errs []error
-	for _, it := range m.Of(manifest.AppEntry) {
+	for _, it := range RemovalOrder(m.Of(manifest.AppEntry)) {
 		if it.Name != app {
 			continue
 		}
@@ -343,4 +368,14 @@ func pointerOf(keys []string) string {
 		b.WriteString("/" + escapeKey(k))
 	}
 	return b.String()
+}
+
+// RemovalOrder returns the items with each "version" entry at the end, because a hook that
+// stays needs it. The sequence of the other items stays.
+func RemovalOrder(items []manifest.Item) []manifest.Item {
+	out := append([]manifest.Item(nil), items...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Pointer != "/version" && out[j].Pointer == "/version"
+	})
+	return out
 }

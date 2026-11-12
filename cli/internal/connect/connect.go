@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -328,6 +329,20 @@ func addText(b []byte, c change, app string, l layout) (addResult, error) {
 			// An MCP entry of mai: change only the keys that mai writes, and keep each key
 			// that the user added, for example "env".
 			res.text = mergeMembers(b, keys, c.value.(*object), l)
+			// The record is the entry as it is in the file now: the keys of the user and the
+			// sequence of the keys of the file.
+			if root, err := scanJSON(res.text); err == nil {
+				n := root
+				for _, k := range keys {
+					if n != nil {
+						_, n = n.member(k)
+					}
+				}
+				if n != nil {
+					res.entry = canonical(res.text, n)
+					res.item.Hash = hashOf(res.entry)
+				}
+			}
 			return res, nil
 		case c.ownsText(b, v):
 			return replace(v, cur, c.value)
@@ -428,27 +443,38 @@ func (c change) ownsText(b []byte, n *jnode) bool {
 	return err == nil && c.owns(v)
 }
 
-// addTOML adds the table of mai to the config.toml of Codex, or replaces an earlier table of
-// mai and keeps its sub-tables. A definition of mcp_servers.mai that mai did not write, and an
-// inline table mcp_servers, give ErrExists.
+// addTOML adds the table of mai to the config.toml of Codex. For an earlier table of mai, it
+// changes only the keys command and args, and keeps each other key, comment, and sub-table. A
+// definition of mcp_servers.mai that mai did not write, and an inline table mcp_servers, give
+// ErrExists.
 func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte, error) {
 	nl := layoutOf(body).nl
 	block := tomlBlock(c.toml, nl)
 	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: hashOf(block)}
-	if inlineMCPServers(body) {
+	lines := tomlLines(body)
+	if inlineMCPServers(lines) {
 		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers as an inline table; write it as tables [mcp_servers.NAME], then run mai connect again", ErrExists, c.path)
 	}
-	e, found := findMaiTOML(body)
-	if otherMaiTable(body, e, found) || (found && !e.marked) {
+	e, found := findMaiTOML(lines)
+	if otherMaiTable(lines, e, found) || (found && !e.marked) {
 		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers.mai, and mai did not write that table; remove it, or run mai disconnect codex --force", ErrExists, c.path)
 	}
 	if !found {
 		return append(append([]byte(nil), body...), block...), item, block, nil
 	}
-	if text, _ := e.mainText(body); bytes.Equal(text, block) && e.orphan.start < 0 {
+	if text, _ := e.mainText(body, lines, nl); bytes.Equal(text, block) && len(e.ends) == 0 {
 		return body, item, block, nil
 	}
-	return e.replaceMain(body, string(block)), item, block, nil
+	out, ok := updateMaiTable(body, lines, e, c.toml, nl)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("%w: the table of mai in %s names a different program, or has an args array on more than one line; correct it, or run mai disconnect codex --force", ErrExists, c.path)
+	}
+	// The record is the table as it is now, with the keys of the user in it.
+	nlines := tomlLines(out)
+	ne, _ := findMaiTOML(nlines)
+	text, _ := ne.mainText(out, nlines, nl)
+	item.Hash = hashOf(text)
+	return out, item, text, nil
 }
 
 // Changed reports if the plan changes a file.
@@ -516,10 +542,39 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 				return err
 			}
 		}
+		// An entry of an earlier version of mai can be a container of a new entry, for example
+		// /mai of 3.0.0 for /mai/PreInvocation/- of Antigravity. mai made that container and each
+		// container in it: the new record gets them, and the old entry goes.
+		extra := map[string][]string{}
+		newPointers := map[string]bool{}
+		for _, it := range f.Items {
+			newPointers[it.Pointer] = true
+		}
+		for _, old := range m.Of(manifest.AppEntry) {
+			if old.Name != p.App || old.Path != f.Path || newPointers[old.Pointer] {
+				continue
+			}
+			for _, it := range f.Items {
+				if !strings.HasPrefix(it.Pointer, old.Pointer+"/") {
+					continue
+				}
+				keys := splitPointer(it.Pointer)
+				for i := len(splitPointer(old.Pointer)); i < len(keys); i++ {
+					extra[it.Pointer] = append(extra[it.Pointer], pointerOf(keys[:i]))
+				}
+				extra[it.Pointer] = append(extra[it.Pointer], loadRecord(old).Created...)
+				forget(old)
+				if err := m.Remove(old); err != nil {
+					return err
+				}
+				break
+			}
+		}
 		for _, it := range f.Items {
 			// An earlier connect of the same entry knows which containers mai made, and their
 			// bytes before. Keep that knowledge, and remove the record of a replaced entry.
 			r := f.records[it.Pointer]
+			r.Created = union(r.Created, extra[it.Pointer])
 			for _, old := range m.Of(manifest.AppEntry) {
 				if old.Name != it.Name || old.Path != it.Path || old.Pointer != it.Pointer {
 					continue
@@ -616,7 +671,12 @@ func linkTarget(path string) string {
 			return path
 		}
 		if !filepath.IsAbs(dest) {
-			dest = filepath.Join(filepath.Dir(path), dest)
+			// The system reads ".." of the link from the real folder of the link.
+			dir := filepath.Dir(path)
+			if real, err := filepath.EvalSymlinks(dir); err == nil {
+				dir = real
+			}
+			dest = filepath.Join(dir, dest)
 		}
 		path = dest
 	}
