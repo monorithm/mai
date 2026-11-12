@@ -30,3 +30,6 @@ class MemoryOwnerSessionStore(OwnerSessionStore):
     async def purge_expired(self, now: datetime) -> None:
         for k in [k for k, s in self._sessions.items() if not s.is_live(now)]:
             del self._sessions[k]
+
+    async def clear(self) -> None:
+        self._sessions.clear()

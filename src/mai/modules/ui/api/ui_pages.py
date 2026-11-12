@@ -1,4 +1,8 @@
-"""The HTML pages of the owner UI. Each page is made on the server, with no script."""
+"""The HTML pages of the owner UI. Each page is made on the server.
+
+Only the sign-in page has a script, served from /ui/sign-in.js. No page shows
+the HTML of a mail: the text of a mail is escaped.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ th,td{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:to
 form.inline{display:inline}
 .secret{font-family:monospace;background:#fffbe6;border:1px solid #e0c060;padding:8px;word-break:break-all}
 .err{color:#a00}
+pre.mail{white-space:pre-wrap;word-break:break-word}
 input,button{font:inherit}
 @media (prefers-color-scheme:dark){body{background:#151515;color:#ddd}th,td{border-color:#333}a{color:#8ab4f8}.secret{background:#332b00;border-color:#665500}}
 """
@@ -73,24 +78,63 @@ def redirect(location: str, headers: dict[str, str] | None = None) -> HttpRespon
     return HttpResponse(status_code=303, headers=h, body=b"", media_type="text/plain")
 
 
+SIGN_IN_CSP = (
+    "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; "
+    "form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+)
+
+SIGN_IN_JS = b"""(function () {
+  var m = /^#t=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  history.replaceState(null, "", location.pathname);
+  var out = document.getElementById("state");
+  if (!m) { out.textContent = "No ticket. Run the command: mai ui open"; return; }
+  fetch("/ui/session", {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    credentials: "same-origin",
+    body: JSON.stringify({ticket: m[1]})
+  }).then(function (r) {
+    if (r.ok) { location.replace("/ui/mail"); }
+    else { out.textContent = "The ticket is not valid. Run the command: mai ui open"; }
+  });
+})();
+"""
+
+
+def sign_in_page() -> HttpResponse:
+    body = (
+        "<h1>mai</h1><p id=state>Sign-in ...</p><script src='/ui/sign-in.js'></script>"
+    )
+    return page(200, "Sign in", body, {"content-security-policy": SIGN_IN_CSP})
+
+
+def sign_in_script() -> HttpResponse:
+    h = base_headers()
+    return HttpResponse(
+        status_code=200,
+        headers=h,
+        body=SIGN_IN_JS,
+        media_type="text/javascript; charset=utf-8",
+    )
+
+
+def signed_out_page() -> HttpResponse:
+    body = (
+        "<h1>mai</h1><p>You are not signed in. Run the command"
+        " <code>mai ui open</code> to sign in.</p>"
+    )
+    return page(401, "Signed out", body)
+
+
 def nav(csrf: str) -> str:
     return (
-        "<nav><a href='/ui/sessions'>Sessions</a><a href='/ui/board'>Board</a>"
+        "<nav><a href='/ui/mail'>All mail</a><a href='/ui/threads'>Threads</a>"
+        "<a href='/ui/agents'>Agents</a><a href='/ui/inbox'>Inbox</a>"
+        "<a href='/ui/sessions'>Sessions</a><a href='/ui/board'>Board</a>"
         "<form class=inline method=post action='/ui/logout'>"
         f"<input type=hidden name=csrf value='{e(csrf)}'>"
         "<button>Sign out</button></form></nav>"
     )
-
-
-def login_page(error: str = "") -> HttpResponse:
-    err = f"<p class=err>{e(error)}</p>" if error else ""
-    body = (
-        "<h1>mai owner</h1>" + err + "<form method=post action='/ui/login'>"
-        "<label>Owner credential<br><input type=password name=credential "
-        "autocomplete=off size=70 required></label><br><br>"
-        "<button>Sign in</button></form>"
-    )
-    return page(401 if error else 200, "Sign in", body)
 
 
 def forbidden() -> HttpResponse:
@@ -128,7 +172,7 @@ def sessions_page(
         login = r.get("login", "")
         actions = ""
         if r.get("status") in ("issued", "active", "expired"):
-            for act in ("rotate", "revoke"):
+            for act in ("revoke",):
                 actions += (
                     f"<form class=inline method=post action='/ui/sessions/{act}'>"
                     f"<input type=hidden name=csrf value='{e(csrf)}'>"
@@ -139,22 +183,7 @@ def sessions_page(
             f"<tr><td>{e(login)}</td><td>{e(r.get('agent'))}</td><td>{e(r.get('status'))}</td>"
             f"<td>{e(r.get('expires_at'))}</td><td>{e(r.get('last_login_at'))}</td><td>{actions}</td></tr>"
         )
-    parts.append("</table><h2>New session</h2>")
-    if not agents:
-        parts.append(
-            "<p>There are no agents. Add an agent with the command"
-            " <code>mai agent add NAME</code>.</p>"
-        )
-        return page(200, "Sessions", "".join(parts))
-    options = "".join(f"<option value='{e(a)}'>{e(a)}</option>" for a in agents)
-    parts.append(
-        "<form method=post action='/ui/sessions/new'>"
-        f"<input type=hidden name=csrf value='{e(csrf)}'>"
-        f"<label>Agent <select name=agent required>{options}</select></label> "
-        "<label>Label <input name=label required pattern='[a-z0-9][a-z0-9-]*'></label> "
-        "<label>Days <input name=days type=number min=1 max=90 value=7></label> "
-        "<button>Create</button></form>"
-    )
+    parts.append("</table>")
     return page(200, "Sessions", "".join(parts))
 
 
@@ -167,3 +196,82 @@ def board_page(csrf: str, snapshot: dict | None, error: str = "") -> HttpRespons
     else:
         parts.append("<p>The board is empty.</p>")
     return page(200, "Board", "".join(parts))
+
+
+def mail_list_page(
+    csrf: str,
+    title: str,
+    base: str,
+    rows: list,
+    *,
+    search: str | None = None,
+    error: str = "",
+    envelopes: dict[str, dict] | None = None,
+) -> HttpResponse:
+    parts = [f"<h1>{e(title)}</h1>", nav(csrf)]
+    if search is not None:
+        parts.append(
+            f"<form method=get action='{e(base)}'><label>Search subject and sender "
+            f"<input name=q value='{e(search)}'></label> <button>Search</button></form>"
+        )
+    if error:
+        parts.append(f"<p class=err>{e(error)}</p>")
+        return page(200, title, "".join(parts))
+    if not rows:
+        parts.append("<p>There is no mail.</p>")
+        return page(200, title, "".join(parts))
+    head = "<th>Received</th><th>From</th><th>Subject</th>"
+    if envelopes is not None:
+        head += "<th>Envelope</th>"
+    parts.append(f"<table><tr>{head}</tr>")
+    for m in rows:
+        cells = (
+            f"<td>{e(m.received)}</td><td>{e(m.sender)}</td>"
+            f"<td><a href='{e(base)}/{e(m.uid)}'>{e(m.subject or '(no subject)')}</a></td>"
+        )
+        if envelopes is not None:
+            env = envelopes.get(m.message_id)
+            cells += f"<td>{e(_envelope_text(env)) if env else ''}</td>"
+        parts.append(f"<tr>{cells}</tr>")
+    parts.append("</table>")
+    return page(200, title, "".join(parts))
+
+
+def _envelope_text(env: dict) -> str:
+    keys = [k for k in env if k not in ("message_id", "id")]
+    return "; ".join(f"{k}: {env[k]}" for k in keys)
+
+
+def mail_page(csrf: str, title: str, back: str, mail) -> HttpResponse:
+    parts = [f"<h1>{e(title)}</h1>", nav(csrf), f"<p><a href='{e(back)}'>Back</a></p>"]
+    parts.append("<table>")
+    for name, value in mail.headers:
+        parts.append(f"<tr><th>{e(name)}</th><td>{e(value)}</td></tr>")
+    if mail.envelope:
+        parts.append(
+            f"<tr><th>Envelope</th><td>{e(_envelope_text(mail.envelope))}</td></tr>"
+        )
+    parts.append(f"</table><pre class=mail>{e(mail.body)}</pre>")
+    return page(200, title, "".join(parts))
+
+
+def agents_page(csrf: str, agents: list[str], error: str = "") -> HttpResponse:
+    parts = ["<h1>Agents</h1>", nav(csrf)]
+    if error:
+        parts.append(f"<p class=err>{e(error)}</p>")
+    if not agents:
+        parts.append("<p>There are no agents.</p>")
+    else:
+        parts.append("<ul>")
+        parts.extend(f"<li><a href='/ui/agents/{e(a)}'>{e(a)}</a></li>" for a in agents)
+        parts.append("</ul>")
+    return page(200, "Agents", "".join(parts))
+
+
+def threads_page(csrf: str) -> HttpResponse:
+    parts = [
+        "<h1>Threads</h1>",
+        nav(csrf),
+        "<p>The thread view is not available in this version.</p>",
+    ]
+    return page(200, "Threads", "".join(parts))
