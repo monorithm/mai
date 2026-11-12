@@ -1,5 +1,7 @@
 # GoReleaser configuration of the host CLI "mai" (https://goreleaser.com).
-# The release workflow runs it on macOS for a tag vX.Y.Z, after the GitHub release exists.
+# The release workflow does not run this file at this time: the CLI is released as a Go
+# module and installed with "go install" (docs/how-to/make-a-release.md). Keep this file for
+# a subsequent release with binaries and packages.
 # Six binaries: macOS, Linux, and Windows, each amd64 and arm64.
 # The macOS binaries use cgo for the Security framework and LocalAuthentication, thus the
 # build runs on a macOS runner. The Linux and Windows binaries use no cgo.
@@ -23,7 +25,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/monorithm/mai/cli/internal/version.Version={{.Version}}
+      - -s -w -X github.com/monorithm/mai/cli/v3/internal/version.Version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
     hooks:
       post:
@@ -42,7 +44,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/monorithm/mai/cli/internal/version.Version={{.Version}}
+      - -s -w -X github.com/monorithm/mai/cli/v3/internal/version.Version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:

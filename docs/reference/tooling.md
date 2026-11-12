@@ -13,7 +13,7 @@
 | Go | `cli/go.mod` | Builds the host CLI. `go vet` and `go test` examine it. |
 | CI | `.github/workflows/ci.yml` | Runs the checks, the tests, the image test, and the job "CLI (os)" on Linux, macOS, and Windows. |
 | Release | `.github/workflows/release.yml` | Publishes a version on a tag `vX.Y.Z`. |
-| GoReleaser | `.goreleaser.yaml` | Builds the six binaries of the CLI, the checksums, the Homebrew formula, and the Scoop manifest. |
+| GoReleaser | `.goreleaser.yaml` | Not used at this time. It can build the six binaries of the CLI, the checksums, the Homebrew formula, and the Scoop manifest. |
 | Dependabot | `.github/dependabot.yml` | Opens update requests each week. |
 
 ## Hooks
