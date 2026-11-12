@@ -117,7 +117,7 @@ static int maiDefaultUnlocked(void) {
 
 // maiDecryptApps examines the access list of an item and reads no secret. It returns the
 // number of trusted applications of the smallest entry that permits decrypt, 0 when an
-// entry lets each application decrypt, and -1 when the item or its access list is missing.
+// entry lets each application decrypt, and -1 when the item or its access list does not exist.
 static int maiDecryptApps(const char *service, const char *account) {
 	SecKeychainItemRef item = NULL;
 	OSStatus st = SecKeychainFindGenericPassword(NULL,
@@ -179,7 +179,7 @@ import (
 	"unsafe"
 )
 
-// errSecItemNotFound is the status of the Security framework for a missing item.
+// errSecItemNotFound is the status of the Security framework for an item that does not exist.
 const errSecItemNotFound = -25300
 
 // System returns the keychain of the OS. On macOS it is the Security framework. Each item
