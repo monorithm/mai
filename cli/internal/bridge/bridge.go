@@ -451,12 +451,20 @@ func (b *Bridge) Run(ctx context.Context) int {
 		}
 		return ExitError
 	}
-	defer b.end()
-
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	fatal := make(chan error, 1)
-	go b.heartbeatLoop(ctx, fatal)
+	hbDone := make(chan struct{})
+	go func() {
+		defer close(hbDone)
+		b.heartbeatLoop(ctx, fatal)
+	}()
+	// Stop the heartbeat before the end of the lease. Then no heartbeat writes the notice
+	// file again after its removal.
+	defer func() {
+		cancel()
+		<-hbDone
+		b.end()
+	}()
 
 	lines := make(chan []byte)
 	go func() {
