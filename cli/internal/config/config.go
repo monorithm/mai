@@ -100,6 +100,34 @@ func Save(dir string, c Config) error {
 	return os.Rename(tmp, Path(dir))
 }
 
+// Update applies o to the fields of the file in dir and writes the file. A field that the
+// file does not hold stays out of the file, so that its default can change with the CLI.
+func Update(dir string, o Overrides) error {
+	raw := Config{}
+	b, err := os.ReadFile(Path(dir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+	}
+	raw = raw.Apply(o)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := Path(dir) + ".tmp"
+	if err := os.WriteFile(tmp, append(out, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, Path(dir))
+}
+
 // Overrides are the values of command flags. An empty field keeps the value of the file.
 type Overrides struct {
 	Instance string
