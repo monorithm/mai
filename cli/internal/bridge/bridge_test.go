@@ -37,7 +37,9 @@ func writeErr(w http.ResponseWriter, status int, code string) {
 	_, _ = w.Write([]byte(`{"error":{"code":"` + code + `","message":"test"}}`))
 }
 
-func bearer(r *http.Request) string { return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") }
+func bearer(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
 
 func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
