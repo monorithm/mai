@@ -2,7 +2,12 @@ from bustan import FactoryProvider, Module, ValueProvider
 
 from mai.modules.board import BoardModule, BoardTools
 from mai.modules.mail import MailModule, MailTools
-from mai.modules.sessions import SessionService, SessionsModule, SessionTools
+from mai.modules.sessions import (
+    LeaseService,
+    SessionService,
+    SessionsModule,
+    SessionTools,
+)
 from mai.modules.threads import ThreadsModule, ThreadTools
 
 from .api.mcp_controller import McpController
@@ -17,11 +22,12 @@ def _dispatcher(
     mail_tools: MailTools,
     thread_tools: ThreadTools,
     board_tools: BoardTools,
+    leases: LeaseService,
 ) -> Dispatcher:
     registry: dict = {}
     for provider in (session_tools, mail_tools, thread_tools, board_tools):
         registry.update(provider.tools())
-    return Dispatcher(registry, sessions.resolve)
+    return Dispatcher(registry, sessions.resolve, leases.state)
 
 
 # The MCP module owns the JSON-RPC dispatcher and its two transports. It has no tools of its own: the
@@ -35,7 +41,14 @@ def _dispatcher(
         FactoryProvider(
             provide=Dispatcher,
             use_factory=_dispatcher,
-            inject=(SessionService, SessionTools, MailTools, ThreadTools, BoardTools),
+            inject=(
+                SessionService,
+                SessionTools,
+                MailTools,
+                ThreadTools,
+                BoardTools,
+                LeaseService,
+            ),
         ),
         FactoryProvider(
             provide=McpHttpPolicy, use_factory=McpHttpPolicy.from_environment, inject=()

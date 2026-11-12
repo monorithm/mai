@@ -37,6 +37,7 @@ from .json_rpc import (
 
 ToolFunc = Callable[[Ctx, dict], Awaitable[dict]]
 Resolver = Callable[[str], Awaitable[object]]
+LeaseResolver = Callable[[str], Awaitable[object]]
 Notify = Callable[[dict], object]
 
 
@@ -51,6 +52,17 @@ class McpConnection:
     notify: Notify | None = field(default=None, repr=False)
 
 
+class LeaseRequired(Exception):
+    """An HTTP tool call has no valid lease. The transport answers HTTP 401 LEASE_UNKNOWN."""
+
+
+def bearer_of(headers: Mapping[str, str] | None) -> str:
+    """The bearer token of the header Authorization, or "" when there is none."""
+    value = header_of(headers, "Authorization") or ""
+    scheme, _, token = value.partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else ""
+
+
 class Dispatcher:
     """Maps one JSON-RPC message to a status code and a response body.
 
@@ -59,9 +71,15 @@ class Dispatcher:
     no response (a notification).
     """
 
-    def __init__(self, registry: Mapping[str, ToolFunc], resolver: Resolver) -> None:
+    def __init__(
+        self,
+        registry: Mapping[str, ToolFunc],
+        resolver: Resolver,
+        lease_resolver: LeaseResolver | None = None,
+    ) -> None:
         self._registry = dict(registry)
         self._resolver = resolver
+        self._lease_resolver = lease_resolver
 
     @property
     def registry(self) -> dict[str, ToolFunc]:
@@ -192,6 +210,8 @@ class Dispatcher:
     ) -> dict:
         try:
             return tool_result(await self._call(name, args, conn, transport, headers))
+        except LeaseRequired:
+            raise
         except ToolError as exc:
             return error_result(exc)
         except Exception as exc:  # noqa: BLE001 - A tool defect must not end the process or show internal text.
@@ -207,19 +227,12 @@ class Dispatcher:
         spec = schemas.BY_NAME[name]
         if not isinstance(args, dict):
             raise ToolError("INVALID_ARGUMENT", path="arguments")
-        header = header_of(headers, "Mai-Session")
-        given = args.get("session")
-        if header is not None and given is not None and header != given:
-            raise ToolError("INVALID_ARGUMENT", path="session")
         validate(spec["inputSchema"], args)
         check_one_of(name, args)
-        handle = given or header
-        if handle is None and conn is not None:
-            handle = conn.handle
-        args = {k: v for k, v in args.items() if k != "session"}
+        handle = conn.handle if conn is not None else None
         state = None
-        if name == "login":
-            pass
+        if transport == "http":
+            state = await self._lease_state(headers)
         elif handle is None:
             if name != "whoami":
                 raise ToolError(
@@ -244,14 +257,20 @@ class Dispatcher:
             result = await result
         if not isinstance(result, dict):
             raise ToolError("INTERNAL")
-        if conn is not None:
-            if name == "login" and isinstance(result.get("session"), str):
-                conn.handle = result["session"]
-                _list_changed(conn)
-            elif name == "logout" and handle == conn.handle:
-                conn.handle = None
-                _list_changed(conn)
+        if conn is not None and name == "logout" and handle == conn.handle:
+            conn.handle = None
+            _list_changed(conn)
         return result
+
+    async def _lease_state(self, headers: Mapping[str, str] | None) -> object:
+        """The session state of the lease of the call. Raises LeaseRequired."""
+        token = bearer_of(headers)
+        if self._lease_resolver is None or not token:
+            raise LeaseRequired()
+        try:
+            return await self._lease_resolver(token)
+        except Exception:  # noqa: BLE001 - each failure of the lease check gives LEASE_UNKNOWN
+            raise LeaseRequired() from None
 
 
 def _list_changed(conn: McpConnection) -> None:
