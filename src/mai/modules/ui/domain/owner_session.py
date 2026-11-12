@@ -6,21 +6,27 @@ import hashlib
 import hmac
 import secrets
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-COOKIE = "smc_ui"
-UI_TTL = timedelta(hours=8)
+COOKIE = "mai_ui"
+UI_TTL = timedelta(hours=12)
+IDLE_LIMIT = timedelta(minutes=30)
 
 
 @dataclass(frozen=True, slots=True)
 class OwnerSession:
-    key: str  # sha256 of the cookie token; the token itself is never kept
+    key: str  # sha256 of the cookie token; the store never keeps the token
     csrf: str
     expires_at: datetime
+    last_seen_at: datetime
 
     def is_live(self, now: datetime) -> bool:
-        return self.expires_at >= now
+        """A session ends 12 h after the sign-in, or 30 min after the last request."""
+        return now < self.expires_at and now - self.last_seen_at <= IDLE_LIMIT
+
+    def seen(self, now: datetime) -> OwnerSession:
+        return replace(self, last_seen_at=now)
 
 
 def token_key(token: str) -> str:
@@ -40,8 +46,12 @@ def csrf_matches(given: str | None, expected: str) -> bool:
 
 
 def session_cookie(token: str, max_age: int) -> str:
-    """The Set-Cookie value: HttpOnly, SameSite=Strict, Secure."""
-    return f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age={max_age}"
+    """The Set-Cookie value: HttpOnly, SameSite=Strict, Path=/ui.
+
+    The server listens on 127.0.0.1 with plain HTTP, thus the cookie has no
+    Secure flag. Some browsers refuse a Secure cookie on plain HTTP.
+    """
+    return f"{COOKIE}={token}; Path=/ui; HttpOnly; SameSite=Strict; Max-Age={max_age}"
 
 
 class OwnerSessionStore(ABC):
@@ -56,3 +66,6 @@ class OwnerSessionStore(ABC):
 
     @abstractmethod
     async def purge_expired(self, now: datetime) -> None: ...
+
+    @abstractmethod
+    async def clear(self) -> None: ...

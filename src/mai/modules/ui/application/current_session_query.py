@@ -25,7 +25,10 @@ class CurrentSessionHandler:
     async def execute(self, query: CurrentSessionQuery) -> OwnerSession | None:
         if not query.token:
             return None
+        now = self._clock.now()
         session = await self._store.get(token_key(query.token))
-        if session is None or not session.is_live(self._clock.now()):
+        if session is None or not session.is_live(now):
             return None
+        session = session.seen(now)
+        await self._store.save(session)
         return session
