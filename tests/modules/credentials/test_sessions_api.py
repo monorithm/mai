@@ -36,7 +36,7 @@ def client(tmp_path):
 
 
 def test_owner_api(client):
-    test_client, app, files = client
+    test_client, app, _files = client
     import anyio
 
     from mai.modules.credentials import CredentialService
@@ -46,7 +46,8 @@ def test_owner_api(client):
         pytest.skip("the test app gives no provider lookup")
     anyio.run(service.init_accounts)
     anyio.run(service.agent_add, "cursor")
-    owner = files.read(files.system_path("owner"))
+    owner = "mai1:owner:" + "o" * 52
+    anyio.run(service.owner_set_key, owner)
     auth = {"authorization": f"Bearer {owner}"}
 
     assert test_client.post("/api/sessions/cursor.a/rotate").status_code == 401

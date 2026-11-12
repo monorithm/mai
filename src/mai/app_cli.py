@@ -87,6 +87,26 @@ def cmd_agent_add(args) -> int:
     return 0
 
 
+EXIT_KEY_EXISTS = 3
+
+
+def cmd_owner_set_key(args) -> int:
+    """Read the owner key as one line on stdin and store only its hash.
+
+    Exit 0 when the key is set, 3 when a key exists and --replace is not given.
+    """
+    from mai.modules.credentials.domain.errors import AccountStateError
+
+    key = sys.stdin.readline().strip()
+    try:
+        _call(CRED, "owner_set_key", key, replace=args.replace)
+    except AccountStateError:
+        print("mai: an owner key exists. Use --replace to change it.", file=sys.stderr)
+        return EXIT_KEY_EXISTS
+    print("owner key: set")
+    return 0
+
+
 def cmd_agent_list(args) -> int:
     rows = _call(CRED, "agent_list")
     if args.json:
@@ -278,6 +298,12 @@ def build_parser() -> argparse.ArgumentParser:
     al = asub.add_parser("list", help="list the agent accounts")
     al.add_argument("--json", action="store_true")
     al.set_defaults(func=cmd_agent_list)
+
+    o = sub.add_parser("owner", help="manage the owner key")
+    osub = o.add_subparsers(dest="owner_command", required=True)
+    ok = osub.add_parser("set-key", help="read the owner key on stdin, keep a hash")
+    ok.add_argument("--replace", action="store_true", help="replace a key that exists")
+    ok.set_defaults(func=cmd_owner_set_key)
 
     s = sub.add_parser("session", help="manage session credentials")
     ss = s.add_subparsers(dest="session_command", required=True)

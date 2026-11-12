@@ -46,7 +46,8 @@ def client(tmp_path):
     with AsgiTestClient(app) as test_client:
         service = app.get(CredentialService)
         anyio.run(service.init_accounts)
-        owner = files.read(files.system_path("owner"))
+        owner = "mai1:owner:" + "o" * 52
+        anyio.run(service.owner_set_key, owner)
         yield test_client, app, store, {"authorization": f"Bearer {owner}"}
 
 

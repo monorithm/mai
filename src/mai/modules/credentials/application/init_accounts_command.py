@@ -28,8 +28,8 @@ class InitAccountsCommand:
 class InitAccountsHandler:
     """Makes the system accounts owner and board. "mai agent add" makes the agents.
 
-    The command is idempotent. The owner and board secrets go to
-    <secrets dir>/<login>.cred with mode 0600 when they do not exist.
+    The command is idempotent. The board secret goes to
+    <secrets dir>/board.cred with mode 0600 when they do not exist.
     """
 
     def __init__(
@@ -54,8 +54,9 @@ class InitAccountsHandler:
             if await self._store.add(account):
                 made.append(login)
         if command.write_secrets:
-            for login, _kind in SYSTEM_ACCOUNTS:
-                await self._system_secret(login, now)
+            # The owner key comes from the host through "mai owner set-key".
+            # Only the board secret goes to a file.
+            await self._system_secret("board", now)
         # The board account reads the queue of each agent that exists.
         agents = [a.login for a in await self._store.agents()]
         for agent in agents:

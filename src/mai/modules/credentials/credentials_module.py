@@ -18,6 +18,7 @@ from .application.list_sessions_query import ListSessionsHandler
 from .application.new_session_command import NewSessionHandler
 from .application.revoke_session_command import RevokeSessionHandler
 from .application.rotate_session_command import RotateSessionHandler
+from .application.set_owner_key_command import SetOwnerKeyHandler
 from .domain.agent_key_store import AgentKeyStore
 from .domain.credential_files import CredentialFiles
 from .domain.credential_store import CredentialStore
@@ -77,6 +78,7 @@ def _agent_key_store(database: Database) -> AgentKeyStore:
         AddAgentHandler,
         ListAgentsHandler,
         GetAccountKindHandler,
+        SetOwnerKeyHandler,
         CredentialService,
         AgentKeys,
     ],
