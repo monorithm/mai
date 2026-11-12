@@ -89,6 +89,11 @@ jobs:
       # milter, and the board flow.
       - name: Container tests
         run: scripts/it_container.sh mai:dev
+      - name: Container tests of the owner copy, the leases, and the mail UI
+        run: |
+          sh scripts/it_copies.sh mai:dev
+          sh scripts/it_leases.sh mai:dev
+          sh scripts/it_ui.sh mai:dev
 
   cli:
     # The Go CLI on the host: build, vet, and tests on each OS. The macOS build uses cgo for the

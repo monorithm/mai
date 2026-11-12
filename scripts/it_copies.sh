@@ -39,6 +39,7 @@ docker exec "$name" sh -c '
 docker exec -i "$name" python - <<'EOF'
 import imaplib
 import re
+import secrets
 import smtplib
 import subprocess
 import sys
@@ -76,7 +77,13 @@ def psql(sql):
 
 
 alpha_login, alpha_secret = credential("/data/alpha.cred")
-owner_login, owner_secret = credential("/data/secrets/owner.cred")
+# The owner has no secret file: set a test owner key with "mai owner set-key".
+owner_secret = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(52))
+owner_login = "owner"
+subprocess.run(
+    ["mai", "owner", "set-key", "--replace"],
+    input=f"mai1:owner:{owner_secret}\n", text=True, check=True, capture_output=True,
+)
 message_id = "<it-copies-1@mai.internal>"
 body = (
     f"From: {alpha_login}@mai.internal\r\n"

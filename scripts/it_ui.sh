@@ -68,8 +68,8 @@ def owner_key() -> str:
     if os.path.exists(PATH):
         with open(PATH) as f:
             return f.read().strip()
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-    key = "mai1:owner:" + "".join(secrets.choice(alphabet) for _ in range(43))
+    alphabet = "abcdefghijklmnopqrstuvwxyz234567"
+    key = "mai1:owner:" + "".join(secrets.choice(alphabet) for _ in range(52))
     subprocess.run(
         ["mai", "owner", "set-key", "--replace"],
         input=key + "\n",

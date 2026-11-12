@@ -1,7 +1,7 @@
 """The board flow over MCP HTTP against a running mai container.
 
-Set MAI_IT and: MAI_IT_URL (default http://127.0.0.1:8765/mcp), MAI_IT_SUPERVISOR_CRED and
-MAI_IT_WORKER_CRED (mai1 credentials of a supervisor and a worker of the project), MAI_IT_PROJECT,
+Set MAI_IT and: MAI_IT_URL (default http://127.0.0.1:8765/mcp), MAI_IT_SUPERVISOR_KEY and
+MAI_IT_WORKER_KEY (agent keys of a supervisor and a worker of the project), MAI_IT_PROJECT,
 and MAI_IT_LANE (a lane of the worker agent). The done rule of the project must have a required check
 "tests" with min_coverage 80.
 """
@@ -20,6 +20,9 @@ SHA = "b" * 40
 
 
 def call(name, arguments):
+    # The key "session" of the arguments holds the lease token. It goes in the
+    # Authorization header, because the tools of contract 3.0.0 take no session.
+    token = arguments.pop("session")
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -34,11 +37,24 @@ def call(name, arguments):
         {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {token}",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json.loads(resp.read())["result"]
     return bool(result.get("isError")), result.get("structuredContent") or {}
+
+
+def lease(agent_key):
+    """Get a lease with an agent key. The leases are in the memory of the server, thus
+    the test gets them at its start, after the tests that restart the server."""
+    req = urllib.request.Request(
+        URL.removesuffix("/mcp") + "/api/leases",
+        json.dumps({"app": "it", "folder": "/it", "pid": os.getpid()}).encode(),
+        {"Content-Type": "application/json", "Authorization": f"Bearer {agent_key}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())["lease"]
 
 
 def ok(name, arguments):
@@ -53,8 +69,8 @@ def rid():
 
 def test_plan_assign_start_submit_review():
     project, lane = os.environ["MAI_IT_PROJECT"], os.environ["MAI_IT_LANE"]
-    sup = ok("login", {"credential": os.environ["MAI_IT_SUPERVISOR_CRED"]})["session"]
-    wrk = ok("login", {"credential": os.environ["MAI_IT_WORKER_CRED"]})["session"]
+    sup = lease(os.environ["MAI_IT_SUPERVISOR_KEY"])
+    wrk = lease(os.environ["MAI_IT_WORKER_KEY"])
 
     planned = ok(
         "plan_item",
