@@ -1,6 +1,7 @@
 from bustan import FactoryProvider, Module, ValueProvider
 
 from mai.modules.board import BoardModule, BoardTools
+from mai.modules.credentials import CredentialsModule
 from mai.modules.mail import MailModule, MailTools
 from mai.modules.sessions import (
     LeaseService,
@@ -9,9 +10,11 @@ from mai.modules.sessions import (
     SessionTools,
 )
 from mai.modules.threads import ThreadsModule, ThreadTools
+from mai.platform.health import HealthChecksModule
 
 from .api.mcp_controller import McpController
 from .api.mcp_http_policy import McpHttpPolicy
+from .api.server_controller import ServerController
 from .application.dispatcher import Dispatcher
 from .application.wait_lane import WaitLane
 
@@ -35,8 +38,15 @@ def _dispatcher(
 # and gives the dispatcher the resolver of the sessions module. The stdio entry point gets the same
 # Dispatcher from the application context. The policy reads its allowlists from the environment once.
 @Module(
-    imports=[SessionsModule, MailModule, ThreadsModule, BoardModule],
-    controllers=[McpController],
+    imports=[
+        SessionsModule,
+        MailModule,
+        ThreadsModule,
+        BoardModule,
+        CredentialsModule,
+        HealthChecksModule,
+    ],
+    controllers=[McpController, ServerController],
     providers=[
         FactoryProvider(
             provide=Dispatcher,
