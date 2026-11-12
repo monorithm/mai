@@ -1,7 +1,9 @@
 # Release: on a tag vX.Y.Z, run CI, build the distributions, push the container
 # image to the GitHub Container Registry with the tags X.Y.Z, X.Y and X (image.yml,
 # for linux/amd64 and linux/arm64), and publish a GitHub release with the notes
-# of that version from CHANGELOG.md.
+# of that version from CHANGELOG.md. Then GoReleaser on macOS builds the six binaries of
+# the host CLI, adds them and their checksums to that release, and writes the Homebrew
+# formula and the Scoop manifest (.goreleaser.yaml).
 # Steps to make a tag: docs/how-to/make-a-release.md.
 
 name: Release
@@ -86,3 +88,30 @@ jobs:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$TAG" dist/* --title "$TAG" --notes-file release-notes.md --verify-tag
+
+  cli:
+    # The macOS binaries use cgo for the Security framework, thus the build runs on macOS.
+    name: CLI binaries ${{ github.ref_name }}
+    needs: publish
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # With no token, GoReleaser does not upload the formula or the manifest.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}

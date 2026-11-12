@@ -6,7 +6,6 @@ from bustan import (
     ApiResponse,
     ApiTags,
     Controller,
-    Get,
     HttpResponse,
     Post,
 )
@@ -20,10 +19,10 @@ from bustan.errors import (
 from ..application.credential_service import CredentialService
 from ..domain.errors import AccountStateError, UnknownAccountError
 from .owner_token import OwnerToken
-from .sessions_schemas import IssuedSessionResponse, NewSessionRequest, SessionResponse
+from .sessions_schemas import IssuedSessionResponse, NewSessionRequest
 
 
-# The owner API of the session logins. Each route needs the owner credential
+# The owner API of the session logins. The sessions module lists the sessions. Each route needs the owner credential
 # "mai1:owner:<secret>" as the bearer token.
 @Controller("/api/sessions")
 @ApiTags("sessions")
@@ -34,17 +33,6 @@ class SessionsController:
     async def _owner(self, token: str) -> None:
         if not token or await self._credentials.authenticate_owner(token) is None:
             raise UnauthorizedException("the owner credential is required")
-
-    @Get("/")
-    @ApiBearerAuth()
-    @ApiOperation(summary="List the session logins")
-    @ApiResponse(status=200, description="The session logins", schema=SessionResponse)
-    @ApiResponse(status=401, description="No owner credential")
-    async def list_sessions(
-        self, token: Annotated[str, OwnerToken()]
-    ) -> dict[str, object]:
-        await self._owner(token)
-        return {"sessions": await self._credentials.session_list()}
 
     @Post("/")
     @ApiBearerAuth()

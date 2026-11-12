@@ -1,5 +1,5 @@
 # Continuous integration: lock, lint, types, secrets, commit messages, the
-# layer audit, the tests, and the container image.
+# layer audit, the tests, the container image, and the Go CLI on each OS.
 # release.yml calls this workflow before it publishes.
 # The actions are pinned to a commit. The comment gives the release of the commit.
 
@@ -84,27 +84,51 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: "3.14"
       - run: uv sync --locked
-      # The script starts the image as compose does (read-only, 6 capabilities), makes the test
-      # credentials, and runs the container tests: router, ops, milter, and the board flow.
+      # The script starts the image with the security values of the CLI (read-only, 6
+      # capabilities), makes the test credentials, and runs the container tests: router, ops,
+      # milter, and the board flow.
       - name: Container tests
         run: scripts/it_container.sh mai:dev
+      - name: Container tests of the owner copy, the leases, and the mail UI
+        run: |
+          sh scripts/it_copies.sh mai:dev
+          sh scripts/it_leases.sh mai:dev
+          sh scripts/it_ui.sh mai:dev
 
-  shims:
-    # The host shims: bin/mai (sh) on macOS and Linux, bin/mai.ps1 with PowerShell on each OS,
-    # and bin/mai.cmd on Windows. The container is Linux, thus Docker runs it on each of these.
-    name: Shims (${{ matrix.os }})
+  cli:
+    # The Go CLI on the host: build, vet, and tests on each OS. The macOS build uses cgo for the
+    # Security framework and LocalAuthentication. The cross builds on Linux use no cgo.
+    name: CLI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: cli
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          version: ${{ env.UV_VERSION }}
-          python-version: "3.13"
-      - run: uv sync --locked
-      - run: uv run --frozen pytest -q -p no:cacheprovider tests/shims
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # The fake presence check. The tests make no Touch ID, Windows Hello, or password prompt.
+      - run: go test -tags presencefake ./...
+      - name: Cross builds with no cgo
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          for os in linux windows; do
+            for arch in amd64 arm64; do
+              echo "build: $os/$arch"
+              GOOS="$os" GOARCH="$arch" go build ./...
+            done
+          done

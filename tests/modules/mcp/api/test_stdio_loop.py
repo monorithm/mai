@@ -25,14 +25,3 @@ def test_stdio_transport_lines(monkeypatch):
         and lines[1]["error"]["code"] == -32700
         and lines[2]["error"]["code"] == -32600
     )
-
-
-def test_stdio_login_from_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAI_CREDENTIAL_FILE", str(tmp_path / "cred"))
-    stdin = io.BytesIO(b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n')
-    out = io.BytesIO()
-    loop = StdioLoop(Dispatcher(fake_registry(), resolver), stdin, out)
-    anyio.run(loop.run)
-    lines = [json.loads(x) for x in out.getvalue().splitlines()]
-    assert lines[0]["method"] == "notifications/tools/list_changed"
-    assert "list_inbox" in [t["name"] for t in lines[1]["result"]["tools"]]

@@ -39,10 +39,19 @@ docker exec "$name" sh -c '
   mai project seed itproj --supervisor architect --worker cursor >/dev/null
   mai session new architect --label it-sup --file /data/sup.cred >/dev/null
   mai session new cursor --label it-wrk --file /data/wrk.cred >/dev/null'
+# The board test uses leases: set a test owner key, then get an agent key through
+# the owner API. The test gets its leases itself. The keys stay in variables only.
+okey="mai1:owner:$(LC_ALL=C tr -dc 'a-z2-7' </dev/urandom | head -c 52)"
+printf '%s\n' "$okey" | docker exec -i "$name" mai owner set-key --replace >/dev/null
+agent_key() {
+  curl -fsS -X POST -H "Authorization: Bearer $okey" \
+    "http://127.0.0.1:$port/api/agents/$1/key" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_key"])'
+}
 MAI_IT=1 MAI_IT_CONTAINER=$name MAI_IT_URL="http://127.0.0.1:$port/mcp" \
 MAI_IT_PROJECT=itproj MAI_IT_LANE=cursor \
-MAI_IT_SUPERVISOR_CRED=$(docker exec "$name" cat /data/sup.cred) \
-MAI_IT_WORKER_CRED=$(docker exec "$name" cat /data/wrk.cred) \
+MAI_IT_SUPERVISOR_KEY=$(agent_key architect) \
+MAI_IT_WORKER_KEY=$(agent_key cursor) \
   uv run --frozen pytest -q -p no:cacheprovider \
     tests/modules/threads/test_router_container_it.py \
     tests/modules/ops/test_ops_container_it.py \

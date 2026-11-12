@@ -40,16 +40,15 @@ class WaitLane:
 
     @staticmethod
     def key_of(msg, headers) -> str | None:
-        """The session key of a long-wait tool call, or None for each other message."""
+        """The lease key of a long-wait tool call, or None for each other message."""
         if not isinstance(msg, dict) or msg.get("method") != "tools/call":
             return None
         params = msg.get("params")
         if not isinstance(params, dict) or params.get("name") not in LONG_POLL_TOOLS:
             return None
-        args = (
-            params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-        )
-        return str(args.get("session") or headers.get("mai-session") or "")
+        value = headers.get("authorization") or ""
+        scheme, _, token = value.partition(" ")
+        return token.strip() if scheme.lower() == "bearer" else ""
 
     @staticmethod
     def busy(msg) -> dict:

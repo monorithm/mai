@@ -25,7 +25,7 @@ class SessionTools:
         self._sessions = sessions
 
     def tools(self) -> dict:
-        return {"login": self.login, "logout": self.logout, "whoami": self.whoami}
+        return {"logout": self.logout, "whoami": self.whoami}
 
     async def login(self, ctx: Ctx, args: dict) -> dict:
         client = args.get("client")

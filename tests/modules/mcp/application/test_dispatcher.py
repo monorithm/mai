@@ -1,11 +1,10 @@
 """The dispatcher with a fake registry and a fake session resolver."""
 
-import json
-
 import anyio
+import pytest
 
 from mai.modules.mcp import Dispatcher, McpConnection
-from mai.platform.contract import MESSAGES
+from mai.modules.mcp.application.dispatcher import LeaseRequired
 
 from ..fakes import HANDLE, SUPER, fake_registry, resolver
 
@@ -61,7 +60,7 @@ def test_initialize_both_revisions():
         )[1]["result"]
         assert r["protocolVersion"] == rev and r["serverInfo"] == {
             "name": "mai",
-            "version": "2.1.0",
+            "version": "3.0.0",
         }
         assert (
             r["capabilities"]
@@ -69,7 +68,7 @@ def test_initialize_both_revisions():
                 "tools": {"listChanged": True},
                 "resources": {"subscribe": False, "listChanged": False},
             }
-            and "login" in r["instructions"]
+            and "lease" in r["instructions"]
         )
     assert (
         message(d, {"jsonrpc": "2.0", "id": 2, "method": "ping"}, conn, "stdio")[1][
@@ -100,122 +99,69 @@ def test_jsonrpc_envelope_rules():
     )
 
 
-def test_stdio_list_before_and_after_login_and_notification():
-    sent = []
-    d = Dispatcher(fake_registry(), resolver)
-    conn = McpConnection(notify=sent.append)
-    assert names(d, conn, "stdio") == ["login", "whoami"]
-    r = call(d, "list_inbox", conn=conn, transport="stdio")
-    assert r["isError"] and r["structuredContent"]["error"]["code"] == "NOT_LOGGED_IN"
-    r = call(
-        d, "login", {"credential": "mai1:cursor.lane-a:x"}, conn=conn, transport="stdio"
-    )
-    assert (
-        not r.get("isError")
-        and json.loads(r["content"][0]["text"]) == r["structuredContent"]
-    )
-    assert sent == [{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}]
-    listed = names(d, conn, "stdio")
-    assert (
-        "list_inbox" in listed and "start_item" in listed and "plan_item" not in listed
-    )
-    assert (
-        call(d, "list_inbox", conn=conn, transport="stdio")["structuredContent"][
-            "login"
-        ]
-        == "cursor.lane-a"
-    )
-    r = call(
-        d,
-        "plan_item",
-        {"project": "p", "title": "t", "request_id": "r"},
-        conn=conn,
-        transport="stdio",
-    )
-    assert r["structuredContent"]["error"]["code"] == "FORBIDDEN_ROLE"
-    call(d, "logout", conn=conn, transport="stdio")
-    assert conn.handle is None and len(sent) == 2
-
-
-def test_login_failure_and_internal_error_hide_text():
-    d = Dispatcher(fake_registry(), resolver)
-    conn = McpConnection()
-    e = call(
-        d,
-        "login",
-        {"credential": "mai1:cursor.lane-a:bad"},
-        conn=conn,
-        transport="stdio",
-    )
-    e = e["structuredContent"]["error"]
-    assert e == {
-        "code": "LOGIN_FAILED",
-        "message": MESSAGES["LOGIN_FAILED"],
-        "path": None,
-        "retry_safe": False,
-    }
-    call(
-        d, "login", {"credential": "mai1:cursor.lane-a:x"}, conn=conn, transport="stdio"
-    )
-    r = call(d, "mark_done", {"ref": "ref-" + "0" * 16}, conn=conn, transport="stdio")
-    assert r["structuredContent"]["error"][
-        "code"
-    ] == "INTERNAL" and "secret" not in json.dumps(r)
+def lease(handle):
+    return {"Authorization": f"Bearer {handle}"}
 
 
 def test_validation():
-    d = Dispatcher(fake_registry(), resolver)
-    e = call(d, "list_inbox", {"session": HANDLE, "limit": 500})["structuredContent"][
+    d = Dispatcher(fake_registry(), resolver, resolver)
+    e = call(d, "list_inbox", {"limit": 500}, lease(HANDLE))["structuredContent"][
         "error"
     ]
     assert e["code"] == "INVALID_ARGUMENT" and e["path"] == "limit"
     e = call(
         d,
         "send_message",
-        {"session": HANDLE, "to": ["cursor"], "subject": "s", "body": "b"},
+        {"to": ["cursor"], "subject": "s", "body": "b"},
+        lease(HANDLE),
     )
     assert e["structuredContent"]["error"]["path"] == "request_id"
-    assert (
-        call(d, "list_inbox", {"session": HANDLE, "bogus": 1})["structuredContent"][
-            "error"
-        ]["path"]
-        == "bogus"
-    )
-    assert (
-        call(d, "login", {})["structuredContent"]["error"]["code"] == "INVALID_ARGUMENT"
-    )
+    bogus = call(d, "list_inbox", {"bogus": 1}, lease(HANDLE))
+    assert bogus["structuredContent"]["error"]["path"] == "bogus"
+    session = call(d, "list_inbox", {"session": HANDLE}, lease(HANDLE))
+    assert session["structuredContent"]["error"]["path"] == "session"
 
 
-def test_http_session_rules():
-    d = Dispatcher(fake_registry(), resolver)
-    assert len(names(d)) == 22
+def test_http_lease_rules():
+    d = Dispatcher(fake_registry(), resolver, resolver)
+    assert len(names(d)) == 21
+    assert "login" not in names(d)
+    for headers in (
+        None,
+        {"Authorization": "Bearer lease_unknown"},
+        {"Mai-Session": HANDLE},
+    ):
+        msg = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "whoami", "arguments": {}},
+        }
+
+        async def go(headers=headers, msg=msg):
+            return await d.handle(msg, None, "http", headers)
+
+        with pytest.raises(LeaseRequired):
+            run(go)
     assert (
-        call(d, "list_inbox")["structuredContent"]["error"]["code"] == "SESSION_UNKNOWN"
-    )
-    assert (
-        call(d, "list_inbox", {}, {"Mai-Session": HANDLE})["structuredContent"]["login"]
+        call(d, "list_inbox", {}, lease(HANDLE))["structuredContent"]["login"]
         == "cursor.lane-a"
     )
     assert (
-        call(d, "list_inbox", {}, {"mai-session": HANDLE})["structuredContent"]["login"]
+        call(d, "list_inbox", {}, {"authorization": f"bearer {HANDLE}"})[
+            "structuredContent"
+        ]["login"]
         == "cursor.lane-a"
     )
-    e = call(d, "list_inbox", {"session": HANDLE}, {"Mai-Session": SUPER})[
-        "structuredContent"
-    ]["error"]
-    assert e["code"] == "INVALID_ARGUMENT" and e["path"] == "session"
     plan = {"project": "p", "title": "t", "request_id": "r"}
     assert (
-        call(d, "plan_item", dict(plan, session=HANDLE))["structuredContent"]["error"][
-            "code"
-        ]
+        call(d, "plan_item", plan, lease(HANDLE))["structuredContent"]["error"]["code"]
         == "FORBIDDEN_ROLE"
     )
     assert (
-        call(d, "plan_item", dict(plan, session=SUPER))["structuredContent"]["tool"]
+        call(d, "plan_item", plan, lease(SUPER))["structuredContent"]["tool"]
         == "plan_item"
     )
-    assert call(d, "whoami")["structuredContent"]["login"] is None
 
 
 def test_a_tool_call_during_a_restore_gets_mail_server_down_and_runs_nothing(
@@ -223,9 +169,9 @@ def test_a_tool_call_during_a_restore_gets_mail_server_down_and_runs_nothing(
 ):
     from mai.platform import supervisor
 
-    d = Dispatcher(fake_registry(), resolver)
+    d = Dispatcher(fake_registry(), resolver, resolver)
     monkeypatch.setattr(supervisor, "held", lambda: {"app", "postfix", "dovecot"})
-    result = call(d, "whoami", {"session": HANDLE})
+    result = call(d, "whoami", {}, lease(HANDLE))
     assert result["isError"] is True
     assert result["structuredContent"]["error"]["code"] == "MAIL_SERVER_DOWN"
     assert result["structuredContent"]["error"]["retry_safe"] is True
@@ -254,7 +200,7 @@ def test_resources_need_no_login_and_give_the_guide():
     assert content["mimeType"] == "text/markdown"
     assert content["text"].startswith("# How to use mai")
     # The tool table comes from the schemas: each tool is in the guide.
-    for name in ("login", "claim_thread", "manage_sprint"):
+    for name in ("whoami", "claim_thread", "manage_sprint"):
         assert f"| `{name}` |" in content["text"]
     assert run(go, "resources/templates/list")[1]["result"] == {"resourceTemplates": []}
 

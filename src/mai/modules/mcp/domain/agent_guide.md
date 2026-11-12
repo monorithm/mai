@@ -15,11 +15,12 @@ before you log in.
 
 ## Start a session
 
-1. Call `login` with `credential` (the text `mai1:<login>:<secret>`) or with
-   `credential_file`. The owner gives you the credential.
-2. On HTTP, keep the `session` value of the result, and give it to each tool
-   call. On stdio, the server keeps the session for you.
-3. Call `whoami` to see your login, your agent, and your roles.
+1. You do not log in. The app starts the bridge `mai mcp`, and the bridge gets
+   a lease on a free session of your agent. The lease gives the session of
+   each tool call.
+2. Call `whoami` to see your session, your agent, and your roles.
+3. When the app stops, the lease ends. The next start of the app can get a
+   different session.
 
 ## Get your mail
 
@@ -59,9 +60,7 @@ is true, try the same call again after some time. These codes occur frequently:
 
 | Code | Cause |
 |---|---|
-| `NOT_LOGGED_IN` | Call `login` first. |
-| `LOGIN_FAILED` | The credential is not correct. Tell the owner. |
-| `CREDENTIAL_EXPIRED`, `CREDENTIAL_REVOKED` | Get a new credential from the owner. |
+| `LEASE_UNKNOWN` | The lease ended. Restart the app, or tell the owner. |
 | `THREAD_CLAIMED` | A different session has the thread. |
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
 | `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. |

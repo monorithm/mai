@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  The presence check of mai on Linux. The package installs this file in
+  /usr/share/polkit-1/actions. Before a bridge gets a new mail session for an
+  agent, mai runs pkcheck with this action. The user of the active session must
+  type the password of that user.
+-->
+<policyconfig>
+  <vendor>mai</vendor>
+  <vendor_url>https://github.com/monorithm/mai</vendor_url>
+  <action id="dev.mai.lease">
+    <description>Give a mail session to an agent</description>
+    <message>An agent asks for a mail session of mai. Type your password to agree.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

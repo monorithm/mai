@@ -1,6 +1,7 @@
 """The Streamable HTTP transport of MCP: stateless POST /mcp.
 
-There is no MCP session. Each tool call carries the argument session or the header Mai-Session.
+There is no MCP session. Each tool call carries the lease token of the app as the bearer token.
+A tool call with no valid lease gets HTTP 401 with the code LEASE_UNKNOWN.
 GET and DELETE answer 405, because the server opens no stream and keeps no session to end.
 """
 
@@ -9,7 +10,7 @@ import sys
 
 from bustan import Controller, Delete, Get, HttpRequest, HttpResponse, Post
 
-from ..application.dispatcher import Dispatcher
+from ..application.dispatcher import Dispatcher, LeaseRequired
 from ..application.json_rpc import encode, error, parse_request
 from ..application.wait_lane import WaitLane
 from .mcp_http_policy import McpHttpPolicy
@@ -92,6 +93,11 @@ class McpController:
         try:
             status, body = await self._dispatcher.handle(
                 msg, None, "http", dict(headers.items())
+            )
+        except LeaseRequired:
+            status, body = (
+                401,
+                {"error": {"code": "LEASE_UNKNOWN", "message": "no valid lease"}},
             )
         except Exception as exc:  # noqa: BLE001 - a defect must give 500 with no internal text
             sys.stderr.write(f"mai: internal error of type {type(exc).__name__}\n")

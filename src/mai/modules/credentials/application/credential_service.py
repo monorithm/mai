@@ -20,6 +20,7 @@ from .list_sessions_query import ListSessionsHandler, ListSessionsQuery
 from .new_session_command import NewSessionCommand, NewSessionHandler
 from .revoke_session_command import RevokeSessionCommand, RevokeSessionHandler
 from .rotate_session_command import RotateSessionCommand, RotateSessionHandler
+from .set_owner_key_command import SetOwnerKeyCommand, SetOwnerKeyHandler
 
 
 @Injectable()
@@ -45,6 +46,7 @@ class CredentialService:
         add_agent: AddAgentHandler,
         list_agents: ListAgentsHandler,
         account_kind: GetAccountKindHandler,
+        set_owner_key: SetOwnerKeyHandler,
     ) -> None:
         self._init_accounts = init_accounts
         self._new_session = new_session
@@ -59,10 +61,17 @@ class CredentialService:
         self._add_agent = add_agent
         self._list_agents = list_agents
         self._account_kind = account_kind
+        self._set_owner_key = set_owner_key
 
     async def init_accounts(self, write_secrets: bool = True) -> dict:
         return await self._init_accounts.execute(
             InitAccountsCommand(write_secrets=write_secrets)
+        )
+
+    async def owner_set_key(self, key: str, replace: bool = False) -> dict:
+        """Store the hash of the owner key. Raises AccountStateError when a key exists."""
+        return await self._set_owner_key.execute(
+            SetOwnerKeyCommand(key=key, replace=replace)
         )
 
     async def grant_mailbox_access(self) -> dict:

@@ -22,17 +22,9 @@ RUN apk add --no-cache tini git python3 openssl \
 COPY --from=build /opt/mai/.venv /opt/mai/.venv
 COPY src /opt/mai/src
 COPY etc/ /opt/mai/etc/
-# The host shims and a compose file with no build section: "mai shim install DIR" writes them,
-# thus a run of mai needs no clone. The line endings are fixed here, whatever the checkout gave.
-COPY bin/mai bin/mai.ps1 bin/mai.cmd compose.yaml LICENSE NOTICE /opt/mai/share/
-RUN cd /opt/mai/share \
- && sed -i 's/\r$//' mai compose.yaml \
- && sed -i 's/\r*$/\r/' mai.ps1 mai.cmd \
- && sed -i '/^    build: \.$/d' compose.yaml \
- && chmod 0755 mai && chmod 0644 mai.ps1 mai.cmd compose.yaml LICENSE NOTICE
+COPY LICENSE NOTICE /opt/mai/
 ENV PATH=/opt/mai/.venv/bin:$PATH \
     MAI_ETC=/opt/mai/etc \
-    MAI_SHARE=/opt/mai/share \
     DATABASE_BACKEND=postgres \
     PYTHONUNBUFFERED=1
 EXPOSE 8080 1143 1587 1993

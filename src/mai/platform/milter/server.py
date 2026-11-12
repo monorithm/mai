@@ -6,22 +6,52 @@ import logging
 import os
 import stat
 
+from .envelope import EnvelopeLog
 from .from_policy import FromHeaderPolicy
-from .protocol import CMD_QUIT, MilterSession, ProtocolError, read_packet
+from .protocol import (
+    CMD_QUIT,
+    RECORD_FAILED_TEXT,
+    REPLY_REPLYCODE,
+    MilterSession,
+    ProtocolError,
+    pack,
+    read_packet,
+)
 
 log = logging.getLogger("mai.milter")
 
 
 class MilterServer:
-    """Serves the From header milter on a unix socket for Postfix."""
+    """Serves the milter on a unix socket for Postfix.
+
+    With an envelope log, the milter keeps the envelope of each mail that it
+    accepts. When the write fails, the milter gives a temporary failure, so
+    that no mail goes out without its envelope record.
+    """
 
     def __init__(
-        self, socket_path: str, policy: FromHeaderPolicy, mode: int = 0o660
+        self,
+        socket_path: str,
+        policy: FromHeaderPolicy,
+        mode: int = 0o660,
+        envelopes: EnvelopeLog | None = None,
     ) -> None:
         self._socket_path = socket_path
         self._policy = policy
         self._mode = mode
+        self._envelopes = envelopes
         self._server: asyncio.AbstractServer | None = None
+
+    async def _record(self, session: MilterSession, reply: bytes) -> bytes:
+        envelope = session.take_envelope()
+        if envelope is None or self._envelopes is None:
+            return reply
+        try:
+            await self._envelopes.record(envelope)
+        except Exception as exc:  # noqa: BLE001 - each failure gives a tempfail
+            log.error("the envelope record failed: %s", type(exc).__name__)
+            return pack(REPLY_REPLYCODE, RECORD_FAILED_TEXT.encode() + b"\0")
+        return reply
 
     async def _serve_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -37,6 +67,7 @@ class MilterServer:
                     break
                 reply = session.handle(cmd, data)
                 if reply is not None:
+                    reply = await self._record(session, reply)
                     writer.write(reply)
                     await writer.drain()
                     if reply[4:5] == b"y":
