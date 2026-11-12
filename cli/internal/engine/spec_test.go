@@ -39,6 +39,20 @@ func TestCreateOptionsLabelsAndSecurity(t *testing.T) {
 	}
 }
 
+func TestOwnedNeedsTheLabel(t *testing.T) {
+	mine := container.InspectResponse{Config: &container.Config{Labels: Labels("mai")}}
+	if Owned(mine) != nil {
+		t.Fatal("a container with the label is not owned")
+	}
+	legacy := container.InspectResponse{Config: &container.Config{Labels: map[string]string{"com.docker.compose.project": "mai"}}}
+	if Owned(legacy) == nil {
+		t.Fatal("a compose container is owned")
+	}
+	if Owned(container.InspectResponse{}) == nil {
+		t.Fatal("a container with no config is owned")
+	}
+}
+
 func TestCreateOptionsTmpfs(t *testing.T) {
 	o := Spec{Instance: "mai", Port: 8765, Image: "i"}.CreateOptions()
 	want := []string{"/run", "/tmp", "/etc/postfix", "/etc/dovecot", "/var/lib/postgresql"}

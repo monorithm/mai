@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/client"
+
 	"github.com/monorithm/mai/cli/internal/engine"
 	"github.com/monorithm/mai/cli/internal/keychain"
 	"github.com/monorithm/mai/cli/internal/manifest"
@@ -132,5 +134,39 @@ func TestLifecycleWithEngine(t *testing.T) {
 	}
 	if c, _, _ := e.Container(ctx, instance); c.State.Running {
 		t.Fatal("the container runs after the stop")
+	}
+}
+
+// TestStartRefusesALegacyContainer makes a container with no label of the CLI and makes
+// sure that start refuses it. It runs only when MAI_IT_ENGINE is 1.
+func TestStartRefusesALegacyContainer(t *testing.T) {
+	if os.Getenv("MAI_IT_ENGINE") != "1" {
+		t.Skip("set MAI_IT_ENGINE=1 to run the lifecycle on a real engine")
+	}
+	const instance = "mai-wf-engine-legacy"
+	t.Setenv("MAI_HOME", t.TempDir())
+	var out, errs bytes.Buffer
+	lcOut, lcErr = &out, &errs
+	ctx := context.Background()
+	e, err := engine.ConnectSystem(ctx, &errs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	r, err := e.API.ContainerCreate(ctx, client.ContainerCreateOptions{Name: instance, Image: "mai:dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := e.Remove(context.Background(), r.ID); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+	code := runStart([]string{"--instance", instance, "--port", "18766", "--image", "mai:dev", "--no-pull", "--skip-owner"})
+	if code == 0 {
+		t.Fatal("start accepted a container with no label of the CLI")
+	}
+	if !strings.Contains(errs.String(), "mai uninstall --legacy") {
+		t.Fatalf("the error does not name the command: %s", errs.String())
 	}
 }
