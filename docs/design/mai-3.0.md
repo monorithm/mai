@@ -18,6 +18,13 @@ Decisions of the user, 12 November 2026:
 - `mai uninstall` removes all items that mai made.
 - A mail UI is optional. You turn it on and off.
 
+Decision of the user, 12 November 2026, for release 3.1.0:
+
+- Sessions and the session commands are as in 2.x: the owner makes a named
+  session, for example `cursor.lane-a`, and a chat logs in to it. A session is
+  not for each window of an app. Unlike 2.x, each secret stays in the
+  container (section 6).
+
 A mark [A] shows an assumption that has no test at this time. A mark [E] shows
 an estimate.
 
@@ -253,7 +260,10 @@ MCP entry is `mai mcp --agent A`. It holds no secret.
 | Command | Action |
 |---|---|
 | `mai agent add NAME ...`, `mai agent list`, `mai agent remove NAME` | Manage agent accounts through the owner API |
-| `mai session list` | The sessions, their leases, and the app and folder of each lease |
+| `mai session new AGENT --label L`, `mai session new AGENT --count N` | Make a named session `AGENT.L`, or the sessions `AGENT.s1` to `AGENT.sN`. Print only the login. |
+| `mai session list` | The sessions, their state, their leases, and the app and folder of each lease |
+| `mai session rotate LOGIN` | Make a new internal secret for the session, and end its lease |
+| `mai session revoke LOGIN` | Close the session for good, and end its lease |
 | `mai session end LOGIN` | End the lease of a session. The bridge gets an error at its next call. |
 | `mai approvals` | The approved and refused leases of the last 30 days |
 
@@ -330,14 +340,41 @@ of `cursor.s2`.
 ### No session secret on the host
 
 - The server makes and keeps all session credentials. They stay in the
-  container. There is no `mai session new`, no `session show`, and no
-  credential file.
+  container. There is no `session show` and no credential file.
+- The owner makes named sessions with `mai session new`, as in 2.x. The
+  command prints only the login, for example `cursor.lane-a`.
 - An app gets a session only through a lease. The bridge `mai mcp --agent
-  cursor` sends a lease request to the server. The server gives a free
-  session of the agent, for example `cursor.s2`. If the agent has no free
-  session, the server makes one, up to a limit of the owner (default 8).
-- The bridge cannot select a session. The lease API has no session argument.
-  Thus `cursor.s1` cannot select `cursor.s2`.
+  cursor` sends a lease request to the server. With no name, the server gives
+  a free pool session of the agent, for example `cursor.s2`. It makes a pool
+  session up to a limit of the owner (default 8). With a name, the server
+  gives that named session.
+
+### Named sessions in a chat
+
+One bridge can serve many chats, for example all the chats of one Cursor
+window. Thus a chat selects its session, as in 2.x:
+
+1. The chat calls the tool `login` with the label or the login of a session
+   of the agent of the bridge. An example is `login` with `session` `lane-a`.
+2. The bridge sends a lease request for that named session. The server
+   refuses a session of a different agent, a revoked session, and a session
+   that a different bridge holds (`SESSION_BUSY`).
+3. The bridge gives the chat a handle `ses-…`. The handle is valid only in
+   that bridge, and it is not a secret of the server: a different program
+   cannot use it.
+4. The chat gives the handle as the argument `session` in each subsequent
+   tool call. The bridge removes the argument and sends the call with the
+   lease of that session.
+5. A tool call with no `session` uses the pool lease of the bridge.
+6. The tool `logout` with a handle ends that lease. The stop of the bridge
+   ends each lease of the bridge.
+
+The presence check occurs one time for each bridge process, at its first
+lease. A subsequent login of a chat of the same bridge gets no new prompt,
+because the user approved that bridge.
+
+Thus `cursor.lane-a` cannot read the mail of `cursor.lane-b`: each tool call
+acts as the session of its handle, and only the owner makes sessions.
 
 ### The lease
 
@@ -349,8 +386,9 @@ of `cursor.s2`.
 | Binding | the token is valid only on the HTTP connection that got it [A] |
 | End | `mai session end`, the stop of the bridge, or a restart of the container |
 
-The MCP tools act only as the session of the lease. The tool `login` and the
-argument `session` go away (contract 3.0.0).
+The MCP tools act as the session of the lease that the bridge selects for the
+call. Contract 3.1.0 has the tools `login` and `logout` of the bridge, and
+the optional argument `session` of each tool.
 
 ### The memory of a bridge
 
@@ -365,9 +403,10 @@ different protection of that memory from other programs of the same user:
 
 ### What a session is for each app
 
-A session belongs to one bridge process. Each app has its own rule for the
-start of a bridge. An MCP server gets no ID of a chat, thus two chats that
-share one bridge share one session.
+A pool session belongs to one bridge process. Each app has its own rule for
+the start of a bridge. An MCP server gets no ID of a chat, thus two chats
+that share one bridge share the pool session. A chat that logs in to a named
+session has its own session in each app.
 
 | App | One bridge for each |
 |---|---|
