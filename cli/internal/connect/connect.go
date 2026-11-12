@@ -59,6 +59,9 @@ type record struct {
 	// HadContent marks an IfAbsent entry in a file that held other content before mai wrote
 	// the key: that content did not need the key, thus mai removes it again.
 	HadContent bool `json:"had_content,omitempty"`
+	// Target is the real file at connect: the file that a symbolic link named. When a link
+	// names a different file later, the notes about containers do not apply to that file.
+	Target string `json:"target,omitempty"`
 }
 
 func recordName(it manifest.Item) string {
@@ -172,6 +175,15 @@ func planFile(path string, before []byte, existed bool, cs []change, app string)
 		}
 		fc.After = text
 		return fc, nil
+	}
+	// A byte order mark at the start of a JSON file stays, and the scan reads the text after it.
+	if bom := []byte("\xef\xbb\xbf"); bytes.HasPrefix(before, bom) {
+		fc2, err := planFile(path, before[len(bom):], existed, cs, app)
+		if err != nil {
+			return nil, err
+		}
+		fc2.Before, fc2.After = before, append(append([]byte(nil), bom...), fc2.After...)
+		return fc2, nil
 	}
 	orig, err := loadDoc(path, before)
 	if err != nil {
@@ -531,7 +543,9 @@ func (c change) ownsText(b []byte, n *jnode) bool {
 func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte, error) {
 	nl := layoutOf(body).nl
 	block := tomlBlock(c.toml, nl)
-	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: hashOf(block)}
+	// The record has the text with "\n" line breaks, because Codex, an editor, or git can
+	// change the line breaks of the file.
+	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: hashOf(toLF(block))}
 	lines := tomlLines(body)
 	if inlineMCPServers(lines) {
 		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers as an inline table; write it as tables [mcp_servers.NAME], then run mai connect again", ErrExists, c.path)
@@ -543,7 +557,7 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 	if !found {
 		return append(append([]byte(nil), body...), block...), item, block, nil
 	}
-	if text, _ := e.mainText(body, lines, nl); bytes.Equal(text, block) && len(e.ends) == 0 {
+	if text, _ := e.mainText(body, lines, nl); bytes.Equal(toLF(text), toLF(block)) && len(e.ends) == 0 {
 		return body, item, block, nil
 	}
 	out, ok := updateMaiTable(body, lines, e, c.toml, nl)
@@ -557,9 +571,12 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 		return nil, nil, nil, fmt.Errorf("connect: %s: the table of mai is not readable after the change", c.path)
 	}
 	text, _ := ne.mainText(out, nlines, nl)
-	item.Hash = hashOf(text)
+	item.Hash = hashOf(toLF(text))
 	return out, item, text, nil
 }
+
+// toLF returns b with each "\r\n" as "\n".
+func toLF(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
 
 // Changed reports if the plan changes a file.
 func (p *Plan) Changed() bool {
@@ -616,13 +633,18 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 			}
 			p.Files[i], f = nf, nf
 		}
+		var dirs []string
+		if !f.Existed {
+			dirs = missingDirs(filepath.Dir(linkTarget(f.Path)))
+		}
 		if !f.Existed || !bytes.Equal(f.Before, f.After) {
 			if err := writeFile(f.Path, f.After); err != nil {
 				return err
 			}
 		}
 		if !f.Existed {
-			if err := m.Add(manifest.Item{Type: manifest.File, Name: p.App, Path: f.Path}); err != nil {
+			it := manifest.Item{Type: manifest.File, Name: p.App, Path: f.Path, Target: linkTarget(f.Path), Dirs: dirs}
+			if err := m.Add(it); err != nil {
 				return err
 			}
 		}
@@ -657,9 +679,16 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 		// The containers that mai made are one list for the whole file: an earlier remove can
 		// forget the record that knew a container, while a different entry is still in it.
 		var fileCreated []string
+		var fileEmpty map[string]string
+		var fileBlank *string
 		for _, old := range m.Of(manifest.AppEntry) {
 			if old.Name == p.App && old.Path == f.Path {
-				fileCreated = union(fileCreated, loadRecord(old).Created)
+				o := loadRecord(old)
+				fileCreated = union(fileCreated, o.Created)
+				fileEmpty = mergeEmpty(fileEmpty, o.Empty)
+				if o.Blank != nil {
+					fileBlank = o.Blank
+				}
 			}
 		}
 		for _, it := range f.Items {
@@ -671,6 +700,11 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 			// bytes before. Keep that knowledge, and remove the record of a replaced entry.
 			r := f.records[it.Pointer]
 			r.Created = union(r.Created, fileCreated)
+			r.Empty = mergeEmpty(r.Empty, fileEmpty)
+			if fileBlank != nil {
+				r.Blank = fileBlank
+			}
+			r.Target = linkTarget(f.Path)
 			for _, old := range m.Of(manifest.AppEntry) {
 				if old.Name != it.Name || old.Path != it.Path || old.Pointer != it.Pointer {
 					continue
@@ -777,4 +811,15 @@ func linkTarget(path string) string {
 		path = dest
 	}
 	return path
+}
+
+// missingDirs returns each folder of the path dir that does not exist, the deepest first.
+func missingDirs(dir string) []string {
+	var out []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil || filepath.Dir(d) == d {
+			return out
+		}
+		out = append(out, d)
+	}
 }

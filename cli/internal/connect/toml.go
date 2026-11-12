@@ -166,8 +166,13 @@ func findMaiTOML(lines []tomlLine) (tomlEntry, bool) {
 		switch {
 		case e.header < 0 && maiHeader.MatchString(l.text):
 			e.header = i
-			if i > 0 && lines[i-1].code && lines[i-1].text == begin {
-				e.marked, e.begin = true, i-1
+			// The begin comment of mai is above the header, also with blank lines or comments
+			// of the user between them.
+			for j := i - 1; j >= 0 && lines[j].code && !keyLine.MatchString(lines[j].text); j-- {
+				if lines[j].text == begin {
+					e.marked, e.begin = true, j
+					break
+				}
 			}
 			e.lastKey = lastKeyLine(lines, i)
 		case maiSubHeader.MatchString(l.text):
@@ -197,13 +202,13 @@ func lastKeyLine(lines []tomlLine, h int) int {
 }
 
 // mainLines returns the indices of the begin comment and of the table, to its last key line.
+// The lines of the user between the begin comment and the header are not in it.
 func (e tomlEntry) mainLines() []int {
-	first := e.header
-	if e.begin >= 0 {
-		first = e.begin
-	}
 	var out []int
-	for i := first; i <= e.lastKey; i++ {
+	if e.begin >= 0 {
+		out = append(out, e.begin)
+	}
+	for i := e.header; i <= e.lastKey; i++ {
 		out = append(out, i)
 	}
 	return out
@@ -230,8 +235,10 @@ func (e tomlEntry) allLines() map[int]bool {
 // comment, the table), and the same text with an end comment of 3.0.0 after it, as 3.0.0
 // recorded it.
 func (e tomlEntry) mainText(body []byte, lines []tomlLine, nl string) (text, with300 []byte) {
-	ml := e.mainLines()
-	text = append([]byte(nl), body[lines[ml[0]].start:lines[ml[len(ml)-1]].end]...)
+	text = []byte(nl)
+	for _, i := range e.mainLines() {
+		text = append(text, body[lines[i].start:lines[i].end]...)
+	}
 	if len(e.ends) > 0 {
 		end := e.ends[0]
 		with300 = append(append([]byte(nil), text...), body[lines[end].start:lines[end].end]...)
@@ -466,14 +473,15 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 			}
 		}
 		if argsLine.MatchString(l.text) {
-			if i+1 < len(lines) && !lines[i+1].code {
-				return nil, false // an array on more than one line
-			}
-			if !argsOfMai.MatchString(l.text) {
+			if !argsOfMai.MatchString(argsValue(lines, i)) {
 				return nil, false // a server of the user that runs a program named mai
 			}
 			haveArgs = true
-			if !sameKeyValue(l.text, newArgs) {
+			// An array on more than one line becomes the one line of mai.
+			for j := i + 1; j < len(lines) && !lines[j].code; j++ {
+				drop[j] = true
+			}
+			if !sameKeyValue(l.text, newArgs) || (i+1 < len(lines) && !lines[i+1].code) {
 				_, comment := splitComment(l.text)
 				replace[i] = newArgs + comment
 			}
@@ -507,6 +515,16 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 	return out, true
 }
 
+// argsValue returns the line i and each line after it that continues its value, on one line.
+func argsValue(lines []tomlLine, i int) string {
+	parts := []string{lines[i].text}
+	for j := i + 1; j < len(lines) && !lines[j].code; j++ {
+		code, _ := splitComment(lines[j].text)
+		parts = append(parts, strings.TrimSpace(code))
+	}
+	return strings.Join(parts, " ")
+}
+
 // ownedTOML reports if the table of the entry is a server of mai: its command is a mai binary,
 // and its args, if any, start with "mcp".
 func ownedTOML(lines []tomlLine, e tomlEntry) bool {
@@ -523,7 +541,7 @@ func ownedTOML(lines []tomlLine, e tomlEntry) bool {
 			}
 			command = true
 		}
-		if argsLine.MatchString(lines[i].text) && !argsOfMai.MatchString(lines[i].text) {
+		if argsLine.MatchString(lines[i].text) && !argsOfMai.MatchString(argsValue(lines, i)) {
 			return false
 		}
 	}

@@ -29,6 +29,10 @@ type Item struct {
 	Path    string `json:"path,omitempty"`    // file of an app, folder, or file
 	Pointer string `json:"pointer,omitempty"` // JSON pointer of the entry in the file of an app
 	Hash    string `json:"hash,omitempty"`    // SHA-256 of the content that mai wrote
+	// For a file that mai connect made: the real file at that time (the file that a symbolic
+	// link named), and each folder that mai made for it, the deepest first.
+	Target string   `json:"target,omitempty"`
+	Dirs   []string `json:"dirs,omitempty"`
 }
 
 // Manifest is the list of items of one instance.
