@@ -51,6 +51,10 @@ type record struct {
 	Created []string          `json:"created,omitempty"`
 	Empty   map[string]string `json:"empty,omitempty"`
 	Blank   *string           `json:"blank,omitempty"`
+	// IfAbsent marks an entry that mai writes only into a file that does not have the key,
+	// such as "version" of a hooks file. mai removes it only when no content of the user is
+	// in the file.
+	IfAbsent bool `json:"if_absent,omitempty"`
 }
 
 func recordName(it manifest.Item) string {
@@ -196,7 +200,7 @@ func planFile(path string, before []byte, existed bool, cs []change, app string)
 		}
 		if res.item != nil {
 			fc.Items = append(fc.Items, *res.item)
-			fc.records[res.item.Pointer] = record{Text: string(res.entry), Created: created(orig, c.pointer), Blank: blank}
+			fc.records[res.item.Pointer] = record{Text: string(res.entry), Created: created(orig, c.pointer), Blank: blank, IfAbsent: c.ifAbsent}
 		}
 	}
 	if len(empty) > 0 {
@@ -320,6 +324,11 @@ func addText(b []byte, c change, app string, l layout) (addResult, error) {
 			return addResult{text: b}, nil
 		case hashOf(canonical(b, v)) == h:
 			return res, nil
+		case c.ownsText(b, v) && c.mcp && v.kind == '{':
+			// An MCP entry of mai: change only the keys that mai writes, and keep each key
+			// that the user added, for example "env".
+			res.text = mergeMembers(b, keys, c.value.(*object), l)
+			return res, nil
 		case c.ownsText(b, v):
 			return replace(v, cur, c.value)
 		}
@@ -355,6 +364,31 @@ func addText(b []byte, c change, app string, l layout) (addResult, error) {
 		return replace(hook, group, c.inner)
 	}
 	return insert(v, pointerOf(keys), "", c.value)
+}
+
+// mergeMembers sets each key of want in the object at keys of the text b, and keeps each
+// other key of that object.
+func mergeMembers(b []byte, keys []string, want *object, l layout) []byte {
+	for _, k := range want.keys {
+		root, err := scanJSON(b)
+		if err != nil {
+			return b
+		}
+		n := root
+		for _, key := range keys {
+			if _, n = n.member(key); n == nil {
+				return b
+			}
+		}
+		_, cur := n.member(k)
+		switch {
+		case cur == nil:
+			b, _ = insertChild(b, n, k, want.vals[k], l)
+		case hashOf(canonical(b, cur)) != hashOf(encodeJSON(want.vals[k], "")):
+			b = replaceNode(b, cur, n, want.vals[k], l)
+		}
+	}
+	return b
 }
 
 // maiHookInGroup returns the array "hooks" of the hook group e and the hook object of mai in
@@ -395,22 +429,26 @@ func (c change) ownsText(b []byte, n *jnode) bool {
 }
 
 // addTOML adds the table of mai to the config.toml of Codex, or replaces an earlier table of
-// mai. A definition of mcp_servers.mai in a different form gives ErrExists.
+// mai and keeps its sub-tables. A definition of mcp_servers.mai that mai did not write, and an
+// inline table mcp_servers, give ErrExists.
 func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte, error) {
 	nl := layoutOf(body).nl
 	block := tomlBlock(c.toml, nl)
 	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: hashOf(block)}
-	r, found := findMaiTOML(body)
-	if otherMaiTable(body, r, found) {
-		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers.mai outside the table of mai", ErrExists, c.path)
+	if inlineMCPServers(body) {
+		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers as an inline table; write it as tables [mcp_servers.NAME], then run mai connect again", ErrExists, c.path)
 	}
-	if found {
-		if bytes.Equal(body[r.start:r.end], block) && r.orphanStart < 0 {
-			return body, item, block, nil
-		}
-		return r.replace(body, string(block)), item, block, nil
+	e, found := findMaiTOML(body)
+	if otherMaiTable(body, e, found) || (found && !e.marked) {
+		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers.mai, and mai did not write that table; remove it, or run mai disconnect codex --force", ErrExists, c.path)
 	}
-	return append(append([]byte(nil), body...), block...), item, block, nil
+	if !found {
+		return append(append([]byte(nil), body...), block...), item, block, nil
+	}
+	if text, _ := e.mainText(body); bytes.Equal(text, block) && e.orphan.start < 0 {
+		return body, item, block, nil
+	}
+	return e.replaceMain(body, string(block)), item, block, nil
 }
 
 // Changed reports if the plan changes a file.
@@ -518,9 +556,7 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 // writeFile replaces the file and keeps its mode. A new file gets mode 0600. For a symbolic
 // link, the file that the link names gets the text, and the link stays.
 func writeFile(path string, b []byte) error {
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
+	path = linkTarget(path)
 	mode := os.FileMode(0o600)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
@@ -562,4 +598,27 @@ func mergeEmpty(a, b map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// linkTarget returns the file that a symbolic link at path names, also when that file does not
+// exist yet (a dangling link). For a path that is not a link, the result is path.
+func linkTarget(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	for range 40 {
+		st, err := os.Lstat(path)
+		if err != nil || st.Mode()&os.ModeSymlink == 0 {
+			return path
+		}
+		dest, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(path), dest)
+		}
+		path = dest
+	}
+	return path
 }

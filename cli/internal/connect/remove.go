@@ -90,18 +90,25 @@ func remove(it manifest.Item, force bool) error {
 	return nil
 }
 
-// removeTOML removes the table of mai from the config.toml of Codex. A table that is gone
-// gives no error. A table with a different text gives *ErrChanged, unless force is set.
+// removeTOML removes the table of mai from the config.toml of Codex, with its sub-tables and
+// the comments of mai. A table that is gone gives no error. A table with a different text, a
+// sub-table of the user, or a table with no begin comment of mai gives *ErrChanged, unless
+// force is set.
 func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
-	r, found := findMaiTOML(body)
+	e, found := findMaiTOML(body)
 	if !found {
 		return body, nil
 	}
-	region := body[r.start:r.end]
-	if hashOf(region) != it.Hash && !force {
-		return nil, changedErr(it, strings.TrimRight(string(region), "\r\n"))
+	text, with300 := e.mainText(body)
+	same := hashOf(text) == it.Hash || (with300 != nil && hashOf(with300) == it.Hash)
+	if (!same || !e.marked || len(e.subs) > 0) && !force {
+		current := string(text)
+		for _, s := range e.subs {
+			current += string(body[s.start:s.end])
+		}
+		return nil, changedErr(it, strings.TrimRight(current, "\r\n"))
 	}
-	return r.replace(body, ""), nil
+	return e.remove(body), nil
 }
 
 // removeJSON removes the entry of the item from the JSON text before. Each other byte stays.
@@ -209,6 +216,8 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		// The array has only this element, and mai made the array: remove the array.
 	} else if hashOf(canonical(before, target)) != it.Hash && !force {
 		return nil, changedErr(it, string(before[target.start:target.end]))
+	} else if rec.IfAbsent && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
+		return before, nil // the file holds content of the user, which needs the key
 	}
 	// Remove the member keys[level] of nodes[level]. When it is the only member of an object
 	// that mai made, remove that object from its parent instead.
@@ -217,6 +226,49 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 		level--
 	}
 	return finish(removeChild(before, nodes[level], idx[level], inner(pointerOf(keys[:level])))), nil
+}
+
+// hasUserContent reports if the object n holds a member other than skip with a value that is
+// not only hooks of mai: a string that is not a hook command of mai, a number, or true.
+func hasUserContent(b []byte, n *jnode, skip string) bool {
+	for _, m := range n.members {
+		if m.key == skip {
+			continue
+		}
+		v, err := parseJSON(b[m.val.start:m.val.end])
+		if err != nil || !onlyMaiHooks(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// onlyMaiHooks reports if v holds no value but containers, hook commands of mai, and the keys
+// of a hook object of mai ("type": "command", a timeout, a loop limit).
+func onlyMaiHooks(v any) bool {
+	switch x := v.(type) {
+	case *object:
+		for _, k := range x.keys {
+			switch k {
+			case "type", "timeout", "timeoutSec", "loop_limit":
+				continue
+			}
+			if !onlyMaiHooks(x.vals[k]) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, e := range x {
+			if !onlyMaiHooks(e) {
+				return false
+			}
+		}
+		return true
+	case string:
+		return isMaiHook(x, "", "")
+	}
+	return false
 }
 
 // hasMaiHook reports if the value n of the text b holds the hook command of mai for format
@@ -237,13 +289,15 @@ func hasMaiHook(b []byte, n *jnode, format, event string) bool {
 // RemoveCreatedFile removes a file that mai connect made, when it holds no content now. A
 // file with content stays, and the result is false.
 func RemoveCreatedFile(it manifest.Item) (bool, error) {
-	b, existed, err := readFile(it.Path)
+	// For a symbolic link of the user, the file that the link names is the file that mai made.
+	path := linkTarget(it.Path)
+	b, existed, err := readFile(path)
 	if err != nil || !existed {
 		return !existed, err
 	}
 	t := bytes.TrimSpace(b)
 	if len(t) == 0 || string(t) == "{}" {
-		return true, os.Remove(it.Path)
+		return true, os.Remove(path)
 	}
 	return false, nil
 }

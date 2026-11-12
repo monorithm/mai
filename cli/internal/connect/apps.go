@@ -225,14 +225,14 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 			value:   obj("command", bin, "args", mcpArgs(agent)),
 			mcp:     true,
 		})
+		// The hook of mai is one element of the array PreInvocation of the hook set "mai", thus
+		// a hook of the user in the same array stays.
 		out = append(out, change{
 			path:    filepath.Join(home, ".gemini", "config", "hooks.json"),
-			pointer: "/mai",
-			value: obj("PreInvocation", []any{
-				obj("type", "command", "command", hookCommand("antigravity", "PreInvocation"), "timeout", 10),
-			}),
-			format: "antigravity",
-			event:  "PreInvocation",
+			pointer: "/mai/PreInvocation/-",
+			value:   obj("type", "command", "command", hookCommand("antigravity", "PreInvocation"), "timeout", 10),
+			format:  "antigravity",
+			event:   "PreInvocation",
 		})
 	default:
 		return nil, fmt.Errorf("connect: unknown app %q; use one of %v", app, Apps)

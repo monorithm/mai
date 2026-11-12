@@ -24,15 +24,27 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mai disconnect --force` change only the hook of mai. The other hooks of the
   group stay.
 - `mai connect codex` finds the table of mai by its comment and its header.
-  Thus it keeps the tables that Codex adds after the table of mai. A table
-  `mcp_servers.mai` in a different form of TOML gives an error, not a second
-  table.
+  Thus it keeps the tables and the comments that Codex or the user adds after
+  the table of mai. A sub-table of the user, for example
+  `[mcp_servers.mai.env]`, stays, and `mai disconnect codex --force` removes it
+  with the table of mai.
+- `mai connect codex` gives an error, not a second table, for a table
+  `mcp_servers.mai` in a different form of TOML, and for an inline table
+  `mcp_servers = { ... }`.
+- When the comment of mai above its table is gone, `mai disconnect codex` gives
+  an error and keeps the record of the table.
+- An MCP entry of mai keeps each key that the user adds, for example `env`. The
+  hook of mai for Antigravity is one element of the array `PreInvocation`, thus
+  a hook of the user in that array stays.
+- `mai disconnect cursor` keeps `"version": 1` in a hooks file that holds hooks
+  of the user.
 - `mai uninstall` keeps a file of an app that `mai connect` made, when the file
   holds content of the user.
 - `mai disconnect` gives no error for an entry of mai that the user removed.
 - When an app writes its file before you agree to the diff of `mai connect`,
   the write of the app stays.
-- `mai connect` writes through a symbolic link, and the link stays.
+- `mai connect` writes through a symbolic link, also a link to a missing file,
+  and the link stays.
 - A file with CRLF line breaks keeps CRLF. An empty object or array, and a file
   with only white space, come back byte for byte after `mai disconnect`.
 - `mai connect` refuses a path of the binary that is not valid UTF-8, and a
