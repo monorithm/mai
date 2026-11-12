@@ -1,5 +1,6 @@
 """The public names of the credentials module. Other modules import only these."""
 
+from .api.owner_token import OwnerToken
 from .application.agent_keys import AgentKeys
 from .application.credential_service import CredentialService
 from .credentials_module import CredentialsModule
@@ -17,5 +18,6 @@ __all__ = [
     "AgentKeys",
     "CredentialService",
     "CredentialsModule",
+    "OwnerToken",
     "address",
 ]

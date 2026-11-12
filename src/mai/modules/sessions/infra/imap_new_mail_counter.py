@@ -12,10 +12,7 @@ class ImapNewMailCounter(NewMailCounter):
     async def count(self, state: SessionState) -> int:
         # The notices module imports the threads module, which imports this
         # module. A late import prevents the import cycle.
-        from mai.modules.notices.application.notice_lines import (
-            SEARCH,
-            mailboxes_of,
-        )
+        from mai.modules.notices import SEARCH, mailboxes_of
 
         boxes = mailboxes_of(state.login, frozenset({state.agent}))
 

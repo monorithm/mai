@@ -22,8 +22,7 @@ from bustan import (
     Put,
 )
 
-from mai.modules.credentials import CredentialService
-from mai.modules.credentials.api.owner_token import OwnerToken
+from mai.modules.credentials import CredentialService, OwnerToken
 
 from ..application.ui_access_service import UiAccessService
 from ..domain.ui_state import UiOffError
