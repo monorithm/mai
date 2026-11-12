@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
 )
 
 const ownerKey = "mai1:owner:testsecret"

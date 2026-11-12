@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/monorithm/mai/cli/internal/version"
+	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
 // ConfigFile is the name of the configuration file in the configuration folder.

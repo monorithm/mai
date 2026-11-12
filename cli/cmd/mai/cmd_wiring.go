@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/monorithm/mai/cli/internal/connect"
-	"github.com/monorithm/mai/cli/internal/uninstall"
+	"github.com/monorithm/mai/cli/v3/internal/connect"
+	"github.com/monorithm/mai/cli/v3/internal/uninstall"
 )
 
 // The uninstall package removes app entries through the connect package. The link is here,

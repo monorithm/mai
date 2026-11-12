@@ -21,13 +21,13 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 
-	"github.com/monorithm/mai/cli/internal/config"
-	"github.com/monorithm/mai/cli/internal/engine"
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/manifest"
-	"github.com/monorithm/mai/cli/internal/paths"
-	"github.com/monorithm/mai/cli/internal/presence"
-	"github.com/monorithm/mai/cli/internal/version"
+	"github.com/monorithm/mai/cli/v3/internal/config"
+	"github.com/monorithm/mai/cli/v3/internal/engine"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/presence"
+	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
 func init() {

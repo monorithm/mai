@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/monorithm/mai/cli/internal/api"
-	"github.com/monorithm/mai/cli/internal/presence"
+	"github.com/monorithm/mai/cli/v3/internal/api"
+	"github.com/monorithm/mai/cli/v3/internal/presence"
 )
 
 // uiOpenBrowser opens the URL in the default browser. The tests replace it.

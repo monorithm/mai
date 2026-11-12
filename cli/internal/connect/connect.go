@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monorithm/mai/cli/internal/manifest"
-	"github.com/monorithm/mai/cli/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 // ErrExists means that the file has a mai entry with a different content. Run mai disconnect

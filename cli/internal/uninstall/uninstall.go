@@ -14,9 +14,9 @@ import (
 
 	"github.com/moby/moby/client"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/manifest"
-	"github.com/monorithm/mai/cli/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 // RemoveAppEntry removes one entry that mai connect wrote in a file of an app. The part of the

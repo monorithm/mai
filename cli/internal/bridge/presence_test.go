@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monorithm/mai/cli/internal/presence"
+	"github.com/monorithm/mai/cli/v3/internal/presence"
 )
 
 func TestBridgeAsksForNoLeaseWhenThePresenceCheckFails(t *testing.T) {

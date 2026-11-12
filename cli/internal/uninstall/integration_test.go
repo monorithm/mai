@@ -13,9 +13,9 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/manifest"
-	"github.com/monorithm/mai/cli/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 const (

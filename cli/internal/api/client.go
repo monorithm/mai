@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 // Error is the error object of the server: {"error":{"code":"CODE","message":"..."}}.

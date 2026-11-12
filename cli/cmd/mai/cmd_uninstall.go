@@ -12,9 +12,9 @@ import (
 
 	"github.com/moby/moby/client"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/paths"
-	"github.com/monorithm/mai/cli/internal/uninstall"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/uninstall"
 )
 
 func init() {
