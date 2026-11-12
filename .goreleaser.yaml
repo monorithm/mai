@@ -1,0 +1,120 @@
+# GoReleaser configuration of the host CLI "mai" (https://goreleaser.com).
+# The release workflow runs it on macOS for a tag vX.Y.Z, after the GitHub release exists.
+# Six binaries: macOS, Linux, and Windows, each amd64 and arm64.
+# The macOS binaries use cgo for the Security framework and LocalAuthentication, thus the
+# build runs on a macOS runner. The Linux and Windows binaries use no cgo.
+# Signatures: the macOS binaries get an ad-hoc signature with the hardened runtime. A
+# Developer ID signature and notarization are not part of this configuration.
+# A local test with no upload: goreleaser release --snapshot --clean
+
+version: 2
+
+project_name: mai
+
+builds:
+  - id: mai-darwin
+    dir: cli
+    main: ./cmd/mai
+    binary: mai
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/monorithm/mai/cli/internal/version.Version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    hooks:
+      post:
+        # The hardened runtime and no get-task-allow: a program that is not root cannot attach.
+        - cmd: codesign --force --options runtime --sign - "{{ .Path }}"
+          output: true
+
+  - id: mai-other
+    dir: cli
+    main: ./cmd/mai
+    binary: mai
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/monorithm/mai/cli/internal/version.Version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: mai
+    ids: [mai-darwin, mai-other]
+    name_template: "mai_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: "mai_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+# The release workflow makes the GitHub release with the notes from CHANGELOG.md.
+# GoReleaser adds the archives and the checksums to that release and keeps its notes.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: monorithm
+    name: mai
+  mode: keep-existing
+  draft: false
+  prerelease: auto
+
+# The Homebrew formula in the tap monorithm/homebrew-tap.
+# With no HOMEBREW_TAP_TOKEN, GoReleaser writes the formula to dist/ and does not upload it.
+brews:
+  - name: mai
+    ids: [mai]
+    repository:
+      owner: monorithm
+      name: homebrew-tap
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+    directory: Formula
+    homepage: https://github.com/monorithm/mai
+    description: "mai (Mail for AI): the host CLI of a mail server for agents"
+    license: Apache-2.0
+    commit_author:
+      name: mai release
+      email: release@mai.invalid
+    commit_msg_template: "chore(mai): update the formula to {{ .Tag }}"
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    install: |
+      bin.install "mai"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/mai version")
+
+# The Scoop manifest in the bucket monorithm/scoop-bucket.
+# With no SCOOP_BUCKET_TOKEN, GoReleaser writes the manifest to dist/ and does not upload it.
+scoops:
+  - name: mai
+    ids: [mai]
+    repository:
+      owner: monorithm
+      name: scoop-bucket
+      token: '{{ index .Env "SCOOP_BUCKET_TOKEN" }}'
+    homepage: https://github.com/monorithm/mai
+    description: "mai (Mail for AI): the host CLI of a mail server for agents"
+    license: Apache-2.0
+    commit_author:
+      name: mai release
+      email: release@mai.invalid
+    commit_msg_template: "chore(mai): update the manifest to {{ .Tag }}"
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
