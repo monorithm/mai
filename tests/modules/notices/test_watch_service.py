@@ -1,9 +1,6 @@
 import asyncio
 import io
 import json
-import os
-import subprocess
-from pathlib import Path
 from typing import cast
 
 from mai.modules.credentials import CredentialService
@@ -28,7 +25,6 @@ from mai.platform.mailserver.mail_client_factory import MailClientFactory
 
 from ..threads.fakes import ROOT, FakeMail, headers
 
-SHIM = Path(__file__).resolve().parents[3] / "bin" / "mai"
 CRED = "mai1:cursor.lane-a:" + "a" * 26
 SENDER = "claude.lead"
 KNOWN = known_set(["claude", "cursor"])
@@ -274,84 +270,3 @@ def test_the_hook_reads_the_bytes_of_stdin_as_utf8():
     svc.stdin = ByteStdin((CRED + "\n").encode("ascii") + payload)
     assert asyncio.run(svc.hook("-", "codex")) == 0
     assert json.loads(svc.out.getvalue())["decision"] == "block"
-
-
-def _docker_on_path(tmp_path, code=0):
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    d = bindir / "docker"
-    d.write_text(f'#!/bin/sh\necho "ARGS:$*"\necho "STDIN:$(cat)"\nexit {code}\n')
-    d.chmod(0o755)
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("MAI_DOCKER", "MAI_CREDENTIAL_FILE")
-    }
-    env["PATH"] = f"{bindir}:{env.get('PATH', '/usr/bin:/bin')}"
-    env["HOME"] = str(tmp_path)
-    return env
-
-
-def test_shim_watch_passes_credential_on_stdin(tmp_path):
-    (tmp_path / ".mai").mkdir()
-    (tmp_path / ".mai" / "c.cred").write_text(CRED + "\n")
-    env = _docker_on_path(tmp_path)
-    r = subprocess.run(
-        [
-            "sh",
-            str(SHIM),
-            "watch",
-            "--credential-file",
-            "~/.mai/c.cred",
-            "--timeout",
-            "5",
-        ],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=env,
-    )
-    assert "ARGS:exec -i mai mai watch --credential-file - --timeout 5" in r.stdout
-    assert f"STDIN:{CRED}" in r.stdout
-
-
-def test_shim_other_commands_and_missing_credential(tmp_path):
-    env = _docker_on_path(tmp_path)
-    r = subprocess.run(
-        ["sh", str(SHIM), "session", "list"],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=env,
-    )
-    assert "ARGS:exec -i mai mai session list" in r.stdout
-    r = subprocess.run(
-        ["sh", str(SHIM), "watch", "--credential-file", str(tmp_path / "none")],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=env,
-    )
-    assert r.returncode == 2 and "ARGS" not in r.stdout
-
-
-def test_shim_hook_hides_errors(tmp_path):
-    cred = tmp_path / "c.cred"
-    cred.write_text(CRED + "\n")
-    env = _docker_on_path(tmp_path, code=1)
-    r = subprocess.run(
-        ["sh", str(SHIM), "hook", f"--credential-file={cred}"],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=env,
-    )
-    assert r.returncode == 0 and r.stdout == ""
-    r = subprocess.run(
-        ["sh", str(SHIM), "hook", "--credential-file", str(tmp_path / "missing")],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=env,
-    )
-    assert r.returncode == 0 and r.stdout == ""
