@@ -37,10 +37,14 @@ from mai.modules.credentials.application.revoke_session_command import (
 from mai.modules.credentials.application.rotate_session_command import (
     RotateSessionHandler,
 )
+from mai.modules.credentials.application.set_owner_key_command import (
+    SetOwnerKeyHandler,
+)
 from mai.modules.credentials.domain.credential import (
     ACL_RIGHTS,
     parse_credential,
 )
+from mai.modules.credentials.domain.errors import AccountStateError
 from mai.modules.credentials.domain.mailbox_acl import MailboxAcl
 from mai.modules.credentials.infra.bcrypt_secret_hasher import BcryptSecretHasher
 from mai.modules.credentials.infra.in_memory_credential_store import (
@@ -89,6 +93,7 @@ def make_service(tmp_path):
         AddAgentHandler(store, acl),
         ListAgentsHandler(store),
         GetAccountKindHandler(store),
+        SetOwnerKeyHandler(store, hasher),
     )
     return service, store, acl, files
 
@@ -122,14 +127,36 @@ def test_init_accounts_is_idempotent_and_grants_board_rights(tmp_path):
     assert first["agents"] == []
     assert second["created"] == [] and second["agents"] == ["cursor"]
     assert ("grant", "cursor", "board", ("lookup", "read")) in acl.calls
-    path = files.system_path("owner")
+    assert not os.path.exists(files.system_path("owner"))
+    path = files.system_path("board")
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
-    owner = files.read(path)
 
-    async def owner_login():
-        return await service.authenticate_owner(owner)
 
-    assert run(owner_login)["kind"] == "owner"
+def test_owner_set_key_keeps_a_hash_and_refuses_a_second_key(tmp_path):
+    service, store, _acl, _files = make_service(tmp_path)
+    run(service.init_accounts)
+    first = "mai1:owner:" + "a" * 52
+    second = "mai1:owner:" + "b" * 52
+
+    async def go():
+        await service.owner_set_key(first)
+        with pytest.raises(AccountStateError):
+            await service.owner_set_key(second)
+        ok_first = await service.authenticate_owner(first)
+        await service.owner_set_key(second, replace=True)
+        return (
+            ok_first,
+            await service.authenticate_owner(first),
+            await service.authenticate_owner(second),
+        )
+
+    ok_first, old, new = run(go)
+    assert ok_first["kind"] == "owner" and old is None and new["kind"] == "owner"
+    stored = run(lambda: store.get("owner")).password_hash
+    assert "b" * 52 not in stored
+    for bad in ("", "mai1:cursor:" + "a" * 52, "owner"):
+        with pytest.raises(ValueError):
+            anyio.run(service.owner_set_key, bad, True)
 
 
 def test_session_lifecycle(tmp_path):

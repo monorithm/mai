@@ -1,17 +1,27 @@
-from bustan import FactoryProvider, Module
+from bustan import ClassProvider, FactoryProvider, Module
 
 from mai.modules.credentials import CredentialsModule
 from mai.platform.database import Database, DatabaseModule
 from mai.platform.mailserver import MailServerModule
 
+from .api.leases_controller import (
+    AgentLeasesController,
+    LeasesController,
+    SessionLeasesController,
+)
 from .api.session_tools import SessionTools
+from .application.lease_service import LeaseService
 from .application.log_in_command import LogInHandler
 from .application.log_out_command import LogOutHandler
 from .application.resolve_session_query import ResolveSessionHandler
 from .application.session_cache import SessionCache
 from .application.session_service import SessionService
 from .domain.handle_store import HandleStore
+from .domain.lease_store import LeaseStore
+from .domain.new_mail_counter import NewMailCounter
+from .infra.imap_new_mail_counter import ImapNewMailCounter
 from .infra.in_memory_handle_store import InMemoryHandleStore
+from .infra.in_memory_lease_store import InMemoryLeaseStore
 from .infra.postgres_handle_store import PostgresHandleStore
 
 
@@ -25,7 +35,11 @@ def _handle_store(database: Database) -> HandleStore:
 # adapter of the handle store. The migrations run in app_migrate.
 @Module(
     imports=[DatabaseModule, MailServerModule, CredentialsModule],
+    controllers=[LeasesController, SessionLeasesController, AgentLeasesController],
     providers=[
+        ClassProvider(provide=LeaseStore, use_class=InMemoryLeaseStore),
+        ClassProvider(provide=NewMailCounter, use_class=ImapNewMailCounter),
+        LeaseService,
         FactoryProvider(
             provide=HandleStore, use_factory=_handle_store, inject=(Database,)
         ),
@@ -36,7 +50,7 @@ def _handle_store(database: Database) -> HandleStore:
         SessionService,
         SessionTools,
     ],
-    exports=[SessionService, SessionTools],
+    exports=[SessionService, SessionTools, LeaseService],
 )
 class SessionsModule:
     pass

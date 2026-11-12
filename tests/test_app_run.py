@@ -98,7 +98,7 @@ def test_cli_has_all_commands():
         "init",
         "agent",
         "session",
-        "mcp",
+        "owner",
         "serve-http",
         "watch",
         "hook",

@@ -21,7 +21,8 @@ LANE = WaitLane(total=1, per_key=1)
     controllers=[McpController],
     providers=[
         ValueProvider(
-            provide=Dispatcher, use_value=Dispatcher(fake_registry(), resolver)
+            provide=Dispatcher,
+            use_value=Dispatcher(fake_registry(), resolver, resolver),
         ),
         ValueProvider(
             provide=McpHttpPolicy,
@@ -62,7 +63,7 @@ def test_get_and_delete_are_405(client):
 
 def test_post_lists_tools(client):
     r = post(client, LIST)
-    assert r.status_code == 200 and len(r.json()["result"]["tools"]) == 22
+    assert r.status_code == 200 and len(r.json()["result"]["tools"]) == 21
     assert r.headers["cache-control"] == "no-store"
 
 
@@ -84,25 +85,29 @@ def test_notification_is_202(client):
     assert r.status_code == 202 and r.content == b""
 
 
-def test_session_header_and_busy_lane(client):
+def test_lease_bearer_and_busy_lane(client):
     call = {
         "jsonrpc": "2.0",
         "id": 3,
         "method": "tools/call",
         "params": {"name": "list_inbox", "arguments": {}},
     }
-    r = post(client, call, **{"mai-session": HANDLE})
+    auth = {"authorization": f"Bearer {HANDLE}"}
+    r = post(client, call, **auth)
     assert r.json()["result"]["structuredContent"]["login"] == "cursor.lane-a"
+    refused = post(client, call)
+    assert refused.status_code == 401
+    assert refused.json()["error"]["code"] == "LEASE_UNKNOWN"
     wait = {
         "jsonrpc": "2.0",
         "id": 4,
         "method": "tools/call",
-        "params": {"name": "wait_for_mail", "arguments": {"session": HANDLE}},
+        "params": {"name": "wait_for_mail", "arguments": {}},
     }
     assert LANE.enter(HANDLE)
     try:
-        r = post(client, wait)
+        r = post(client, wait, **auth)
         assert r.json()["result"]["structuredContent"]["error"]["code"] == "BUSY"
     finally:
         LANE.leave(HANDLE)
-    assert not post(client, wait).json()["result"].get("isError")
+    assert not post(client, wait, **auth).json()["result"].get("isError")

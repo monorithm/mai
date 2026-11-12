@@ -89,11 +89,6 @@ def out(props=None, required=()):
     return schema
 
 
-def with_session(schema):
-    schema = dict(schema, properties=dict(schema["properties"], session=SESSION))
-    return schema
-
-
 def tool(
     name,
     description,
@@ -103,7 +98,6 @@ def tool(
     outputs,
     read_only=False,
     idempotent=False,
-    session=True,
 ):
     annotations = {"openWorldHint": False, "destructiveHint": False}
     if read_only:
@@ -116,7 +110,7 @@ def tool(
     return {
         "name": name,
         "description": description,
-        "inputSchema": with_session(inputs) if session else inputs,
+        "inputSchema": inputs,
         "outputSchema": outputs,
         "annotations": annotations,
         "group": group,
@@ -126,38 +120,8 @@ def tool(
 
 TOOLS = [
     tool(
-        "login",
-        "Log in with a credential or a credential file. Returns the session handle.",
-        "session",
-        ALL,
-        obj(
-            {
-                "credential": {"type": "string", "minLength": 1, "maxLength": 512},
-                "credential_file": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 1024,
-                },
-                "client": {"type": "string", "maxLength": 64},
-            }
-        ),
-        out(
-            {
-                "session": SESSION,
-                "login": {"type": "string"},
-                "address": {"type": "string"},
-                "agent": {"type": "string"},
-                "roles": ROLES,
-                "projects": STR_LIST,
-                "expires_at": DATE,
-            },
-            ["session", "login", "address", "agent", "roles", "projects", "expires_at"],
-        ),
-        session=False,
-    ),
-    tool(
         "logout",
-        "End the session handle.",
+        "End the lease of this app. The next tool call gets LEASE_UNKNOWN.",
         "session",
         ALL,
         obj(),
@@ -165,7 +129,7 @@ TOOLS = [
     ),
     tool(
         "whoami",
-        "Show the login of the session, or that no login occurred.",
+        "Show the session of the lease of this app.",
         "session",
         ALL,
         obj(),
@@ -499,7 +463,7 @@ TOOLS = [
 ]
 
 BY_NAME = {t["name"]: t for t in TOOLS}
-PUBLIC = ("login", "whoami")
+PUBLIC = ("whoami",)
 
 
 def public_view(t):

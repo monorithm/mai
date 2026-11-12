@@ -85,6 +85,26 @@ def cmd_agent_add(args) -> int:
     return 0
 
 
+EXIT_KEY_EXISTS = 3
+
+
+def cmd_owner_set_key(args) -> int:
+    """Read the owner key as one line on stdin and store only its hash.
+
+    Exit 0 when the key is set, 3 when a key exists and --replace is not given.
+    """
+    from mai.modules.credentials.domain.errors import AccountStateError
+
+    key = sys.stdin.readline().strip()
+    try:
+        _call(CRED, "owner_set_key", key, replace=args.replace)
+    except AccountStateError:
+        print("mai: an owner key exists. Use --replace to change it.", file=sys.stderr)
+        return EXIT_KEY_EXISTS
+    print("owner key: set")
+    return 0
+
+
 def cmd_agent_list(args) -> int:
     rows = _call(CRED, "agent_list")
     if args.json:
@@ -151,12 +171,6 @@ def cmd_session_revoke(args) -> int:
     res = _call(CRED, "session_revoke", args.login)
     print(f"revoked:    {res['login']}")
     return 0
-
-
-def cmd_mcp(args) -> int:
-    from mai import app_stdio
-
-    return int(app_stdio.main() or 0)
 
 
 def cmd_serve_http(args) -> int:
@@ -277,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
     al.add_argument("--json", action="store_true")
     al.set_defaults(func=cmd_agent_list)
 
+    o = sub.add_parser("owner", help="manage the owner key")
+    osub = o.add_subparsers(dest="owner_command", required=True)
+    ok = osub.add_parser("set-key", help="read the owner key on stdin, keep a hash")
+    ok.add_argument("--replace", action="store_true", help="replace a key that exists")
+    ok.set_defaults(func=cmd_owner_set_key)
+
     s = sub.add_parser("session", help="manage session credentials")
     ss = s.add_subparsers(dest="session_command", required=True)
     n = ss.add_parser("new", help="make a session credential")
@@ -319,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--lane", help="the lane name (default: the worker name)")
     sd.add_argument("--min-coverage", type=float, default=80)
     sd.set_defaults(func=cmd_project_seed)
-    sub.add_parser("mcp", help="serve MCP on stdio").set_defaults(func=cmd_mcp)
+    # The bridge "mai mcp" of the host CLI replaces the stdio server of the container.
     h = sub.add_parser("serve-http", help="serve MCP and the UI on HTTP")
     h.add_argument("--host", default="0.0.0.0")
     h.add_argument("--port", type=int, default=8080)
