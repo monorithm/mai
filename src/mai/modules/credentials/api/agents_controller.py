@@ -7,7 +7,6 @@ from bustan import (
     ApiTags,
     Controller,
     Delete,
-    Get,
     HttpRequest,
     HttpResponse,
     Post,
@@ -20,7 +19,7 @@ from .api_errors import api_error
 from .owner_token import OwnerToken
 
 
-# The owner API of the agents. Each route needs the owner key
+# The owner API of the agents. The sessions module lists the agents with their leases. Each route needs the owner key
 # "mai1:owner:<secret>" as the bearer token. The answer that makes a key is the
 # only answer that holds it.
 @Controller("/api/agents")
@@ -35,22 +34,6 @@ class AgentsController:
             bool(token)
             and await self._credentials.authenticate_owner(token) is not None
         )
-
-    @Get("/")
-    @ApiBearerAuth()
-    @ApiOperation(summary="List the agents")
-    @ApiResponse(status=200, description="The agents")
-    @ApiResponse(status=401, description="No owner key")
-    async def list_agents(self, token: Annotated[str, OwnerToken()]) -> HttpResponse:
-        if not await self._is_owner(token):
-            return api_error(401, "BAD_KEY", "the owner key is required")
-        rows = await self._credentials.agent_list()
-        agents = [
-            {"name": r["agent"], "sessions": r["sessions"], "leases": 0}
-            for r in rows
-            if r["status"] == "active"
-        ]
-        return HttpResponse.json({"agents": agents})
 
     @Post("/")
     @ApiBearerAuth()

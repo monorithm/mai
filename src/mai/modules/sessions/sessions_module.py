@@ -4,7 +4,11 @@ from mai.modules.credentials import CredentialsModule
 from mai.platform.database import Database, DatabaseModule
 from mai.platform.mailserver import MailServerModule
 
-from .api.leases_controller import LeasesController, SessionLeasesController
+from .api.leases_controller import (
+    AgentLeasesController,
+    LeasesController,
+    SessionLeasesController,
+)
 from .api.session_tools import SessionTools
 from .application.lease_service import LeaseService
 from .application.log_in_command import LogInHandler
@@ -31,7 +35,7 @@ def _handle_store(database: Database) -> HandleStore:
 # adapter of the handle store. The migrations run in app_migrate.
 @Module(
     imports=[DatabaseModule, MailServerModule, CredentialsModule],
-    controllers=[LeasesController, SessionLeasesController],
+    controllers=[LeasesController, SessionLeasesController, AgentLeasesController],
     providers=[
         ClassProvider(provide=LeaseStore, use_class=InMemoryLeaseStore),
         ClassProvider(provide=NewMailCounter, use_class=ImapNewMailCounter),

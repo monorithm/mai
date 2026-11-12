@@ -53,7 +53,7 @@ def client(tmp_path):
 
 def test_agents_need_the_owner_key(client):
     test_client, _app, _store, _auth = client
-    response = test_client.get("/api/agents")
+    response = test_client.post("/api/agents", json={"name": "x"})
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "BAD_KEY"
     bad = {"authorization": "Bearer mai1:owner:" + "a" * 52}
@@ -83,8 +83,8 @@ def test_add_list_rotate_and_remove_an_agent(client):
     bad = test_client.post("/api/agents", json={"name": "Bad Name"}, headers=auth)
     assert bad.status_code == 400
 
-    listed = test_client.get("/api/agents", headers=auth).json()
-    assert listed == {"agents": [{"name": "cursor", "sessions": 0, "leases": 0}]}
+    listed = anyio.run(app.get(CredentialService).agent_list)
+    assert [(row["agent"], row["status"]) for row in listed] == [("cursor", "active")]
 
     rotated = test_client.post("/api/agents/cursor/key", headers=auth)
     assert rotated.status_code == 200
@@ -99,7 +99,8 @@ def test_add_list_rotate_and_remove_an_agent(client):
     assert test_client.delete("/api/agents/cursor", headers=auth).status_code == 404
     with pytest.raises(CredentialError):
         anyio.run(keys.check, second)
-    assert test_client.get("/api/agents", headers=auth).json() == {"agents": []}
+    listed = anyio.run(app.get(CredentialService).agent_list)
+    assert [row["status"] for row in listed] == ["revoked"]
 
     readded = test_client.post("/api/agents", json={"name": "cursor"}, headers=auth)
     assert readded.status_code == 201

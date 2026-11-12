@@ -142,3 +142,34 @@ class SessionLeasesController:
         if not await self._leases.end_session(login):
             return api_error(404, "NOT_FOUND", f"no lease on the session: {login}")
         return HttpResponse(status_code=204, body=b"")
+
+
+# The owner list of the agents, with the count of the sessions and leases of each.
+@Controller("/api/agents")
+@ApiTags("agents")
+class AgentLeasesController:
+    def __init__(self, leases: LeaseService, credentials: CredentialService) -> None:
+        self._leases = leases
+        self._credentials = credentials
+
+    @Get("/")
+    @ApiBearerAuth()
+    @ApiOperation(summary="List the agents")
+    @ApiResponse(status=200, description="The agents")
+    @ApiResponse(status=401, description="No owner key")
+    async def list_agents(self, request: HttpRequest) -> HttpResponse:
+        token = bearer(request)
+        if not token or await self._credentials.authenticate_owner(token) is None:
+            return api_error(401, "BAD_KEY", "the owner key is required")
+        agents = []
+        for row in await self._credentials.agent_list():
+            if row["status"] != "active":
+                continue
+            agents.append(
+                {
+                    "name": row["agent"],
+                    "sessions": row["sessions"],
+                    "leases": await self._leases.lease_count(row["agent"]),
+                }
+            )
+        return HttpResponse.json({"agents": agents})

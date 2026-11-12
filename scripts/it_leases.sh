@@ -67,6 +67,11 @@ lease=$(printf '%s' "$lease_json" | json 'd["lease"]')
 session=$(printf '%s' "$lease_json" | json 'd["session"]')
 [ "$session" = cursor.s1 ] || fail "the session of the lease is $session"
 echo "ok: POST /api/leases gives $session"
+agents=$(curl -fsS "$base/api/agents" -H "authorization: Bearer $owner")
+[ "$(printf '%s' "$agents" | json 'd["agents"][0]["leases"]')" = 1 ] || fail "GET /api/agents"
+sessions=$(curl -fsS "$base/api/sessions" -H "authorization: Bearer $owner")
+[ "$(printf '%s' "$sessions" | json 'd["sessions"][0]["leased"]')" = True ] || fail "GET /api/sessions"
+echo "ok: GET /api/agents and GET /api/sessions show the lease"
 
 beat=$(curl -fsS -X POST "$base/api/leases/current/heartbeat" -H "authorization: Bearer $lease")
 [ "$(printf '%s' "$beat" | json 'd["session"]')" = cursor.s1 ] || fail "heartbeat"
