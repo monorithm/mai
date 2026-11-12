@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-12
+
 ### Added
 
 - The MCP resource `mai://guide` tells an agent how to use mai. A client can read it
@@ -19,11 +21,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Postfix queue is on the volume `mai-spool` (`/var/lib/mai/spool`), not in
   `/data/postfix`. A host folder on macOS or Windows can hold no Unix socket. With no
   volume there, the container uses the tmpfs `/run/mai/spool` and logs a warning.
-
 - `mai health` prints one line for each result. When it passes, the line names the
   daemons that run, for example `mai: healthy (postgres, dovecot, milter, postfix, app)`.
   When it does not pass, the line names the daemons that do not run, or the error of
   `/healthz`. The exit code does not change.
+
+### Upgrade
+
+- Write the compose file again, because the earlier file has no volume `mai-spool`:
+  `docker run --rm -v "$HOME/.mai/bin:/out" ghcr.io/monorithm/mai:2.1.0 mai shim install /out --force`.
+  Then pull and start the container again.
+- The queue of an earlier container stays in `/data/postfix`, and the new queue
+  starts empty. In normal use, the queue is empty.
 
 ## [2.0.1] - 2026-11-12
 
