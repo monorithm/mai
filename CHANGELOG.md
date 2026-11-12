@@ -6,7 +6,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [3.0.0] - Unreleased
+## [3.0.0] - 2026-11-12
 
 mai 3.0 has no compatibility with 2.x. There is no migration of data,
 credentials, shims, or MCP entries. To remove a 2.x install, use
