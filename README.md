@@ -132,6 +132,19 @@ Use PowerShell. The examples use the shim `mai.cmd`.
 On Windows, use the path `"$env:USERPROFILE\.mai\bin\compose.yaml"`. The
 mail and the database stay in the volume of the container.
 
+### A pull gives "denied"
+
+If `docker pull ghcr.io/monorithm/mai` gives `denied: denied` or `403 Forbidden`, Docker
+has a stored login for `ghcr.io` that the registry refuses. Docker sends a stored login
+also for a public image. Remove the login, then pull again:
+
+```bash
+docker logout ghcr.io
+```
+
+If you use `ghcr.io` for private images too, log in again with a token that has the
+scope `read:packages`.
+
 ## Addresses on the host
 
 | Address | Service |

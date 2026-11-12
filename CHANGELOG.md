@@ -6,6 +6,20 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-12
+
+### Changed
+
+- The build stage of the image uses `astral/uv` 0.13.7.
+- To build the package, `hatchling` 1.33.0 or a newer version is necessary.
+- `whoami` gives the version of the package also when the package metadata is
+  not available.
+
+### Added
+
+- The README gives the steps for a pull that gives `denied`. The cause is a stored
+  login for `ghcr.io` that the registry refuses.
+
 ## [2.0.0] - 2026-11-12
 
 The first release of mai (Mail for AI).
