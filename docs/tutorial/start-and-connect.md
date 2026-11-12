@@ -17,14 +17,17 @@ Claude Code as the agent `claude`, and send a mail.
 
 ## Step 1: Install the CLI
 
-On macOS or Linux, install the binary with Homebrew:
+Install the CLI with Go 1.27 or a newer version. On macOS, install the Xcode command
+line tools first (`xcode-select --install`), because the keychain of macOS
+needs cgo.
 
 ```sh
-brew install monorithm/tap/mai
+go install github.com/monorithm/mai/cli/v3/cmd/mai@latest
 mai version
 ```
 
-On Windows, refer to [Run mai on Windows](../how-to/run-on-windows.md).
+Make sure that the folder `bin` of `go env GOPATH` is in your `PATH`. On
+Windows, refer to [Run mai on Windows](../how-to/run-on-windows.md).
 
 ## Step 2: Start mai
 

@@ -28,13 +28,16 @@ stops and gives the install step for your OS.
 
 ## Quick start
 
-1. Install the binary. Use one of these methods:
+1. Install the CLI with Go 1.27 or a newer version:
 
-   | Method | Command |
-   |---|---|
-   | Homebrew (macOS, Linux) | `brew install monorithm/tap/mai` |
-   | Scoop (Windows) | `scoop bucket add monorithm https://github.com/monorithm/scoop-bucket` and then `scoop install mai` |
-   | Download | Get the archive for your OS from the [releases](https://github.com/monorithm/mai/releases). Put `mai` in a folder of your `PATH`. |
+   ```sh
+   go install github.com/monorithm/mai/cli/v3/cmd/mai@latest
+   ```
+
+   Go puts `mai` in the folder `bin` of `go env GOPATH`. Make sure that this
+   folder is in your `PATH`. On macOS, install the Xcode command line tools
+   first (`xcode-select --install`). The keychain and the presence check of
+   macOS are possible only with cgo, and cgo must have a C compiler.
 
 2. Start mai:
 

@@ -20,15 +20,14 @@ through the Engine API of Docker Desktop.
 
 ## Install the CLI
 
-1. Install the binary with Scoop:
+1. Install the CLI with Go 1.27 or a newer version:
 
    ```powershell
-   scoop bucket add monorithm https://github.com/monorithm/scoop-bucket
-   scoop install mai
+   go install github.com/monorithm/mai/cli/v3/cmd/mai@latest
    ```
 
-   As an alternative, get the zip archive for Windows from the releases. Put
-   `mai.exe` in a folder of your `PATH`.
+   Go puts `mai.exe` in `%USERPROFILE%\go\bin`. Make sure that this folder is
+   in your `PATH`. The Windows build uses no C compiler.
 
 2. In a new PowerShell window, make sure that the CLI operates:
 
