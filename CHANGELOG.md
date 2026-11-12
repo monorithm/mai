@@ -6,6 +6,52 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.0] - Unreleased
+
+mai 3.0 has no compatibility with 2.x. There is no migration of data,
+credentials, shims, or MCP entries. To remove a 2.x install, use
+`mai uninstall --legacy`.
+
+### Added
+
+- The host CLI `mai`, one Go binary for macOS, Linux, and Windows, each amd64
+  and arm64. It operates the container through the Engine API of Docker or
+  Podman. You do not use `docker`, `podman`, or compose.
+- Leases. An app gets a session only through a lease of the bridge
+  `mai mcp --agent A`. The lease token is only in the memory of the bridge.
+- A presence check for each new lease: Touch ID, Windows Hello, or the password
+  of the user.
+- The owner key and the agent keys in the system keychain. The server keeps only
+  a hash of each key.
+- A copy of each mail to the owner, in the system mailbox `copies`.
+- An optional mail UI. `mai ui on`, `mai ui open`, and `mai ui off` control it.
+  It is off by default.
+- `mai uninstall` removes all the items that mai made. A manifest records each
+  item.
+- Releases with GoReleaser: six binaries, checksums, a Homebrew formula, and a
+  Scoop manifest. The macOS binaries have an ad-hoc signature with the hardened
+  runtime.
+
+### Removed
+
+- **Breaking:** the shims `bin/mai`, `bin/mai.ps1`, and `bin/mai.cmd`, the
+  command `mai shim install`, and `compose.yaml`. The image has no share folder.
+- **Breaking:** session credentials, credential files, `--credential-file`, and
+  `MAI_CREDENTIAL_FILE`. A lease replaces them.
+- **Breaking:** the MCP tool `login` and the argument `session`. The MCP
+  contract is 3.0.0. The session of the lease is the session of each tool call.
+- **Breaking:** the host ports 1993 (IMAPS) and 1587 (submission). The agents
+  use only MCP.
+- **Breaking:** the file `/data/secrets/owner.cred`. The CLI makes the owner key
+  on the host and gives only its hash to the container.
+
+### Changed
+
+- **Breaking:** 3.0 uses the new volumes `mai3-data` and `mai3-spool`. It does
+  not read 2.x data, and there is no import.
+- The CI job "CLI (os)" replaces the job "Shims (os)". It builds the Go CLI and
+  does a test of it on Linux, macOS, and Windows.
+
 ## [2.1.0] - 2026-11-12
 
 ### Added

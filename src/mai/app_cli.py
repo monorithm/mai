@@ -11,9 +11,7 @@ import argparse
 import asyncio
 import contextlib
 import json
-import os
 import sys
-from pathlib import Path
 
 
 def _call(token_path: str, method: str, *args, **kwargs):
@@ -369,48 +367,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="count the mails and write nothing"
     )
     im.set_defaults(func=cmd_import_maildir)
-    sh = sub.add_parser("shim", help="the host shims and compose file of the image")
-    shs = sh.add_subparsers(dest="shim_command", required=True)
-    si = shs.add_parser("install", help="write the shims and compose.yaml to a folder")
-    si.add_argument(
-        "dir", help="a folder in the container, for example a bind mount /out"
-    )
-    si.add_argument(
-        "--force", action="store_true", help="also write compose.yaml again"
-    )
-    si.set_defaults(func=cmd_shim_install)
-
     m = sub.add_parser("milter", help="run the Postfix milter")
     m.add_argument("--socket", help="the Unix socket path")
     m.set_defaults(func=cmd_milter)
     return p
-
-
-SHIM_FILES = ("mai", "mai.ps1", "mai.cmd")
-
-
-def cmd_shim_install(args) -> int:
-    """Write the host shims and the compose file of the image to a host folder.
-
-    The folder is a bind mount, for example -v "$HOME/.mai/bin:/out". The shims
-    are always written again, thus the command also updates them. The compose
-    file is written only if it does not exist, or with --force, because the
-    user can change it.
-    """
-    share = Path(os.environ.get("MAI_SHARE", "/opt/mai/share"))
-    target = Path(args.dir)
-    target.mkdir(parents=True, exist_ok=True)
-    for name in SHIM_FILES:
-        (target / name).write_bytes((share / name).read_bytes())
-        (target / name).chmod(0o755 if name == "mai" else 0o644)
-        print(f"wrote:   {target / name}")
-    compose = target / "compose.yaml"
-    if compose.exists() and not args.force:
-        print(f"kept:    {compose} (use --force to write it again)")
-    else:
-        compose.write_bytes((share / "compose.yaml").read_bytes())
-        print(f"wrote:   {compose}")
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

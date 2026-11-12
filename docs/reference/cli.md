@@ -1,30 +1,42 @@
 # Reference: CLI
 
-The command `mai` runs in the container. On the host, use a shim. Each shim
-runs `docker exec -i mai mai COMMAND ARGUMENTS`.
+mai has two command lines with the name `mai`:
 
-## Shims
+- The host CLI, a Go binary on the host. You use only this command.
+- The server CLI in the container. The host CLI runs it. For recovery,
+  `mai exec -- ARGS` runs it after a presence check.
 
-The command `mai shim install DIR` writes the shims to DIR on the host.
-The examples use the directory `~/.mai/bin`. In a clone, the shims are also
-in the directory `bin`.
+## Host CLI
 
-| Shim | Hosts | Shell |
-|---|---|---|
-| `mai` | macOS, Linux, WSL, Git Bash | POSIX sh |
-| `mai.cmd` | Windows: cmd, PowerShell and apps that start a command | cmd |
-| `mai.ps1` | Windows PowerShell 5.1 or PowerShell 7 | PowerShell |
+| Command | Function |
+|---|---|
+| `mai start [--data-dir PATH]` | Finds the engine and starts it if it is stopped. Pulls the image of the CLI version, makes the container, starts it, and waits until it is healthy. |
+| `mai stop` | Stops the container. The volumes stay. |
+| `mai pause`, `mai resume` | Freezes and resumes the container. |
+| `mai status` | Shows the health, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI. |
+| `mai logs [--follow]` | Shows the log of the container. |
+| `mai doctor` | Examines the engine, the port, the free disk space, the keychain, and the presence check. |
+| `mai upgrade` | Pulls the image of the new CLI version and makes the container again. |
+| `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes all items of the manifest. `--legacy` removes a 2.x install. |
+| `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
+| `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
+| `mai agent add NAME`, `mai agent list`, `mai agent remove NAME` | Manages the agent accounts through the owner API. |
+| `mai session list` | Shows the sessions, their leases, and the app and folder of each lease. |
+| `mai session end LOGIN` | Ends the lease of a session. |
+| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. |
+| `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge. |
+| `mai ui on`, `mai ui off` | Starts or stops the mail UI. |
+| `mai ui open` | Does a presence check, then opens the UI in the browser and signs you in. |
+| `mai backup`, `mai restore STAMP` | Makes or restores a backup through the owner API. |
+| `mai exec -- ARGS` | Runs the server CLI in the container, after a presence check. |
+| `mai version` | Shows the version of the CLI. |
 
-`mai.cmd` runs docker directly for all commands, except these commands:
+`APP` is one of `claude`, `cursor`, `copilot`, `codex`, and `antigravity`.
+No command shows a session secret.
 
-- `watch`
-- `hook`
-- `session new` with `--save`
+## Server CLI
 
-For these commands, `mai.cmd` starts `mai.ps1` in the same directory.
-Refer to [Run mai on Windows](../how-to/run-on-windows.md).
-
-## Commands
+### Commands
 
 | Command | Arguments | Function |
 |---|---|---|
@@ -44,51 +56,13 @@ Refer to [Run mai on Windows](../how-to/run-on-windows.md).
 | `backup` | | Makes a backup of the database and the mail. |
 | `restore` | `PATH` | Restores a backup. |
 | `import-maildir` | `PATH [--add-agents] [--rename-header-prefix OLD=NEW] [--dry-run]` | Imports a maildir of version 0.5.0. |
-| `shim install` | `DIR [--force]` | Writes the host shims and the compose file of the image to DIR. Refer to [Shim install](#shim-install). |
 | `project seed` | `PROJECT --supervisor AGENT --worker AGENT [--lane NAME] [--goal TEXT] [--min-coverage 80]` | Makes or updates a board project with a supervisor and one worker lane. The default lane name is the worker name. |
-
-## Shim install
-
-`mai shim install DIR [--force]` runs in a temporary container. Use the flag
-`-v` of `docker run` to attach a directory of the host to DIR. The command
-writes these files to DIR:
-
-| File | Content |
-|---|---|
-| `mai` | The sh shim, with mode 0755. |
-| `mai.ps1` | The PowerShell shim. |
-| `mai.cmd` | The cmd shim. |
-| `compose.yaml` | The compose file of the repository, without `build: .`. |
-
-The command always writes the shims again. It writes `compose.yaml` only if
-the file is not there. With `--force`, it also writes `compose.yaml` again.
-Thus your changes to `compose.yaml` stay after an update of the shims.
-
-The compose file has these values:
-
-- The project name `mai` and the container name `mai`.
-- The image `ghcr.io/monorithm/mai:${MAI_TAG:-latest}`.
-- The ports `127.0.0.1:8765` (HTTP: `/mcp`, `/ui`, `/healthz`),
-  `127.0.0.1:1993` (IMAPS) and `127.0.0.1:1587` (submission).
-
-On macOS and Linux, use `--user` to give the files your user and group:
-
-```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$HOME/.mai/bin:/out" ghcr.io/monorithm/mai:latest mai shim install /out
-```
-
-On Windows (PowerShell):
-
-```powershell
-docker run --rm -v "$env:USERPROFILE\.mai\bin:/out" ghcr.io/monorithm/mai:latest mai shim install /out
-```
 
 ## Flags of session new
 
 | Flag | Where | Function |
 |---|---|---|
-| `--save PATH` | Shim on the host | Writes only the credential line to PATH on the host. On macOS and Linux, the file gets mode 0600. On Windows, the file gets the access rules of the user profile. The shim makes the directory if it is not there. |
-| `--credential-only` | Container | Shows only the credential line. The shim uses this flag for `--save`. |
+| `--credential-only` | Container | Shows only the credential line. |
 | `--file PATH` | Container | Writes the credential to PATH in the container. The file gets mode 0600. |
 | `--expires` | Container | A number and a unit: `h` (hours) or `d` (days). The default is `7d`. |
 
@@ -131,41 +105,6 @@ account with the same name as the folder.
 | Code | Meaning |
 |---|---|
 | 0 | New mail is in the inbox. |
-| 2 | The login was not correct, or the shim cannot read the credential file. |
+| 2 | The login was not correct, or the command cannot read the credential file. |
 | 3 | The timeout occurred. |
 | 4 | The server version changed. |
-
-## Credential files on the host
-
-For `watch` and `hook`, the shim reads the credential file on the host. Then
-the shim sends the credential to the container on stdin
-(`--credential-file -`). Thus a mount for the credential files in the
-container is not necessary. A path that starts with `~/` gets the home directory.
-
-For other commands, a credential path is a path in the container.
-
-A hook never stops the app. On an error, the shim shows nothing and gives the exit
-code 0.
-
-## Shim settings
-
-| Variable | Function | Default |
-|---|---|---|
-| `MAI_CONTAINER` | The name of the container. | `mai` |
-| `MAI_DOCKER` | The docker binary. | `docker` |
-| `MAI_CREDENTIAL_FILE` | The credential file of `watch` and `hook` when the command has no `--credential-file`. | Empty |
-
-Set a variable in the shell before you start the shim.
-
-- macOS and Linux:
-
-  ```sh
-  MAI_CONTAINER=mai-test ~/.mai/bin/mai health
-  ```
-
-- Windows (PowerShell):
-
-  ```powershell
-  $env:MAI_CONTAINER = "mai-test"
-  & "$env:USERPROFILE\.mai\bin\mai.cmd" health
-  ```

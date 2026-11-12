@@ -1,26 +1,89 @@
 # Explanation: architecture
 
-mai is one container. The container has four servers:
+mai has two parts: the host CLI `mai` and one container.
 
-- PostgreSQL keeps the accounts, the sessions, the claims and the board.
-- Dovecot keeps the mail and gives IMAP access.
+The host CLI is one Go binary for macOS, Linux, and Windows. It operates the
+container through the Engine API of Docker or Podman. It keeps the owner key
+and the agent keys in the system keychain. Its bridge `mai mcp` connects the
+MCP stdio of an agent app to the HTTP endpoint of the server.
+
+The container has four servers:
+
+- PostgreSQL keeps the accounts, the sessions, the leases, the claims and the
+  board.
+- Dovecot keeps the mail and gives IMAP access in the container.
 - Postfix receives mail on SMTP and sends it to Dovecot.
-- The app is the MCP server and the web UI.
+- The app is the MCP server, the owner API, and the optional mail UI.
 
 ```mermaid
 flowchart LR
-  agent[Agent] -->|MCP stdio or HTTP| app[App]
-  app -->|IMAP| dovecot[Dovecot]
-  app -->|SMTP| postfix[Postfix]
-  postfix --> dovecot
-  app --> pg[(PostgreSQL)]
-  dovecot -->|mail_auth| pg
-  postfix -->|mail_auth| pg
+  subgraph host[Host]
+    appx[Agent app] -->|stdio| bridge[mai mcp]
+    you[You] --> cli[mai start, ui, uninstall]
+    bridge --> kc[(Keychain)]
+    cli --> kc
+  end
+  subgraph container[Container]
+    app[App]
+    app -->|IMAP| dovecot[Dovecot]
+    app -->|SMTP| postfix[Postfix]
+    postfix --> dovecot
+    app --> pg[(PostgreSQL)]
+    dovecot -->|mail_auth| pg
+    postfix -->|mail_auth| pg
+  end
+  cli -->|Engine API| container
+  bridge -->|HTTP /mcp, lease| app
+  cli -->|HTTP /api, owner key| app
 ```
+
+Only one port goes to the host: `127.0.0.1:8765`. IMAP and submission stay in
+the container.
+
+## The host CLI
+
+### The container
+
+`mai start` finds the engine and starts it if it is stopped. It pulls the image
+of the CLI version with no registry credential. Then it makes the container
+`mai` with these values:
+
+| Item | Value |
+|---|---|
+| Volumes | `mai3-data` at `/data`, `mai3-spool` at `/var/lib/mai/spool` |
+| tmpfs | `/run`, `/tmp`, `/etc/postfix`, `/etc/dovecot`, and `/var/lib/postgresql` |
+| Port | `127.0.0.1:8765` only |
+| Security | read-only root, all capabilities dropped, and six added |
+| Restart policy | `unless-stopped` |
+| Label | `dev.mai.managed-by=mai-cli` |
+
+### Leases
+
+The server makes and keeps all session credentials. They stay in the
+container. An app gets a session only through a lease. The bridge
+`mai mcp --agent A` sends a lease request with the agent key. The server gives
+a free session of the agent.
+
+The lease token is only in the memory of the bridge. The bridge sends a heartbeat each 30 s. The lease ends 90 s after the
+last heartbeat.
+
+Before the bridge reads the agent key for a new lease, it does a presence
+check: Touch ID, Windows Hello, or the password of the user.
+
+### Hooks
+
+The bridge writes a notice file in the state folder of the CLI. The file holds
+the session name and the count of new mail. `mai hook` reads the file of its
+bridge. The hook never calls the server.
+
+### The manifest
+
+The CLI records each item that it makes in a manifest. `mai uninstall` removes
+each item of the manifest, then does a check that each one is gone.
 
 ## The controller
 
-The command `mai run` is the controller of the container. It applies
+The server command `mai run` is the controller of the container. It applies
 all migrations first. Then it starts PostgreSQL, Dovecot, Postfix and the HTTP
 server, and it monitors them.
 
@@ -79,14 +142,14 @@ The app uses the bustan framework. The app has one module for each feature:
 
 | Module | Function |
 |---|---|
-| `credentials` | Agent accounts, system accounts and session credentials. |
-| `sessions` | `login`, `logout`, `whoami` and the session handles. |
+| `credentials` | Agent accounts, system accounts, session credentials, and the hashes of the keys. |
+| `sessions` | Leases and `whoami`. The session of the lease is the session of each tool call. |
 | `mail` | The mail tools. |
 | `threads` | Thread claims. |
 | `notices` | `watch` and `hook`, with the hook output format of each app. |
 | `board` | Items, sprints and reviews. |
 | `mcp` | The JSON-RPC dispatcher on stdio and HTTP. |
-| `ui` | The web UI. |
+| `ui` | The optional mail UI. |
 | `ops` | Backup, restore and import. |
 
 Each module has the layers `api`, `application`, `domain` and `infra`. The
@@ -99,9 +162,9 @@ Each storage port has two adapters. The memory adapter is for tests. The
 PostgreSQL adapter is for production. Dovecot and Postfix read the tables and
 views of the schema `mail_auth`. Thus production must use PostgreSQL.
 
-`/data` holds the database, the mail, the secrets, the TLS files, and the
-backups. It can be a named volume or a folder on the host (`MAI_DATA_DIR`). The
-Postfix queue is on the volume `mai-spool`, not in `/data`. The queue has Unix
+`/data` holds the database, the mail, the TLS files, and the backups. It can be
+the volume `mai3-data` or a folder on the host (`mai start --data-dir PATH`).
+The Postfix queue is on the volume `mai3-spool`, not in `/data`. The queue has Unix
 sockets, and a host folder on macOS or Windows can hold none.
 
 Each module declares its migrations. Each module has its own range of
@@ -118,8 +181,13 @@ versions:
 
 ## Trust
 
-- Each session logs in with its own credential to IMAP and SMTP.
+- No session secret is on the host. Each session uses its own credential to
+  IMAP and SMTP in the container.
+- The server keeps only a hash of the owner key and of each agent key.
+- Postfix sends a copy of each mail to the system mailbox `copies`. Only the
+  owner can read it.
 - The app proves the sender of each mail. Postfix refuses a forged sender.
 - A mail never gives user approval. Only the user can give approval.
-- The server has no MCP resources. Mail text goes to the agent only in a tool
-  result.
+- Mail text goes to the agent only in a tool result.
+- A program of your OS user that can use the Docker socket controls the
+  container. Refer to the design of 3.0 in `docs/design/mai-3.0.md`.
