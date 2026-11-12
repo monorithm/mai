@@ -14,7 +14,7 @@ production.
 | `MAI_HOSTS` | More `Host` values for the allowlist, separated by commas. | No | Empty |
 | `MAI_ORIGINS` | More `Origin` values for the allowlist, separated by commas. | No | Empty |
 | `MAI_CREDENTIAL_FILE` | The credential file for the login on stdio, as a path in the container. | No | Empty |
-| `MAI_CREDENTIAL` | The text of a credential for the login on stdio. The host shim sets it from `MAI_CREDENTIAL_FILE` on the host. The server removes it at start. | No | Empty |
+| `MAI_CREDENTIAL` | The text of a credential for the login on stdio. The server removes it at start. | No | Empty |
 | `MAI_CLIENT` | The name of the MCP client. | No | Empty |
 | `MAI_BOARD_CRED` | The credential that the board uses to send notices. | No | Empty |
 | `MAI_DOVEADM_SOCKET` | The socket of the doveadm server. The app sends each doveadm mail command to it, because the app user cannot read the mail files. The socket accepts only `move` and the `acl` commands. | No | `/run/dovecot/doveadm-server` |
