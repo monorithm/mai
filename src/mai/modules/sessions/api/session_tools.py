@@ -12,7 +12,9 @@ def _server_version() -> str:
 
         return version("mai")
     except Exception:  # noqa: BLE001 - any failure maps to one contract code
-        return "2.0.0"
+        from mai import __version__
+
+        return __version__
 
 
 @Injectable()
