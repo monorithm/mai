@@ -138,6 +138,8 @@ var (
 	// commandLine and argsLine match the two keys that mai writes in its table.
 	commandLine = regexp.MustCompile(`^\s*("command"|'command'|command)\s*=\s*(.*)$`)
 	argsLine    = regexp.MustCompile(`^\s*("args"|'args'|args)\s*=`)
+	// argsOfMai matches an args array whose first value is "mcp", as mai writes it.
+	argsOfMai = regexp.MustCompile(`^\s*("args"|'args'|args)\s*=\s*\[\s*("mcp"|'mcp')\s*[,\]]`)
 )
 
 // tomlEntry is the entry of mai in a config.toml.
@@ -254,8 +256,13 @@ func dropLines(body []byte, lines []tomlLine, drop map[int]bool, first int) []by
 		for j+1 < len(lines) && drop[j+1] {
 			j++
 		}
+		above := ""
+		if i > 0 {
+			above = string(body[lines[i-1].start:lines[i-1].end])
+		}
 		switch {
-		case i > 0 && lines[i-1].text == "" && !drop[i-1]:
+		case (above == "\n" || above == "\r\n") && !drop[i-1]:
+			// The blank line that mai wrote before its table: only a line break.
 			drop[i-1] = true
 		case i > 0 && i == first && j == len(lines)-1:
 			trimEnd = true
@@ -462,6 +469,9 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 			if i+1 < len(lines) && !lines[i+1].code {
 				return nil, false // an array on more than one line
 			}
+			if !argsOfMai.MatchString(l.text) {
+				return nil, false // a server of the user that runs a program named mai
+			}
 			haveArgs = true
 			if !sameKeyValue(l.text, newArgs) {
 				_, comment := splitComment(l.text)
@@ -497,8 +507,10 @@ func updateMaiTable(body []byte, lines []tomlLine, e tomlEntry, table, nl string
 	return out, true
 }
 
-// ownedTOML reports if the table of the entry names a mai binary as its command.
+// ownedTOML reports if the table of the entry is a server of mai: its command is a mai binary,
+// and its args, if any, start with "mcp".
 func ownedTOML(lines []tomlLine, e tomlEntry) bool {
+	command := false
 	for i := e.header + 1; i <= e.lastKey; i++ {
 		if !lines[i].code {
 			continue
@@ -506,8 +518,14 @@ func ownedTOML(lines []tomlLine, e tomlEntry) bool {
 		if m := commandLine.FindStringSubmatch(lines[i].text); m != nil {
 			code, _ := splitComment(m[2])
 			v, ok := tomlStringValue(code)
-			return ok && isMaiProgram(v)
+			if !ok || !isMaiProgram(v) {
+				return false
+			}
+			command = true
+		}
+		if argsLine.MatchString(lines[i].text) && !argsOfMai.MatchString(lines[i].text) {
+			return false
 		}
 	}
-	return false
+	return command
 }

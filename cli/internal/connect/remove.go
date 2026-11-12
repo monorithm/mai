@@ -105,7 +105,9 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 	if !found {
 		return body, nil
 	}
-	// 3.0.0 wrote its block with "\n" also in a file with CRLF, thus both line breaks count.
+	// The record has one kind of line break. 3.0.0 wrote "\n" also in a file with CRLF, and
+	// toml_edit of Codex writes "\n" after a key line in a file with CRLF. Thus the text counts
+	// as the same with each kind of line break.
 	same := false
 	var text []byte
 	for _, nl := range []string{layoutOf(body).nl, "\n"} {
@@ -113,8 +115,15 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 		if text == nil {
 			text = t
 		}
-		if hashOf(t) == it.Hash || (with300 != nil && hashOf(with300) == it.Hash) {
-			same = true
+		for _, v := range [][]byte{t, with300} {
+			if v == nil {
+				continue
+			}
+			lf := bytes.ReplaceAll(v, []byte("\r\n"), []byte("\n"))
+			crlf := bytes.ReplaceAll(lf, []byte("\n"), []byte("\r\n"))
+			if hashOf(v) == it.Hash || hashOf(lf) == it.Hash || hashOf(crlf) == it.Hash {
+				same = true
+			}
 		}
 	}
 	if force && !ownedTOML(lines, e) {
@@ -156,6 +165,9 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	}
 	inner := func(pointer string) string { return rec.Empty[pointer] }
 	finish := func(out []byte) []byte {
+		// Each empty container that mai made in the file goes, also one that is not on the
+		// path of this entry, for example "hooks" after the remove of "version".
+		out = pruneAllMade(out, made, inner)
 		// A file that held only white space gets that text back when no member stays.
 		if rec.Blank != nil {
 			if n, err := scanJSON(out); err == nil && n.kind == '{' && len(n.members) == 0 {
@@ -209,7 +221,7 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 					if !force {
 						return nil, changedErr(it, string(before[e.start:e.end]))
 					}
-					if !onlyMaiGroup(e, group) {
+					if !allMaiHooks(before, group) {
 						gi := 0
 						for j, h := range group.elems {
 							if h == hook {
@@ -267,7 +279,7 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	// An entry that mai writes only into a file with no such key, such as "version", stays when
 	// the file holds other content, because that content needs it. "/version" of 3.0.0 has no
 	// mark in its record.
-	if !appendItem && (rec.IfAbsent || it.Pointer == "/version") && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
+	if !appendItem && (rec.IfAbsent || it.Pointer == "/version") && !rec.HadContent && hasUserContent(before, nodes[len(nodes)-2], keys[len(keys)-1]) {
 		return nil, ErrKept
 	}
 	// Remove the member keys[level] of nodes[level]. When it is the only member of an object
@@ -312,6 +324,39 @@ func pruneMade(b []byte, keys []string, made map[string]bool, inner func(string)
 		b = removeChild(b, parent, i, inner(pointerOf(keys[:level-1])))
 	}
 	return b
+}
+
+// pruneAllMade removes each container in b that mai made and that is empty, until none stays.
+func pruneAllMade(b []byte, made map[string]bool, inner func(string) string) []byte {
+	for range 1000 {
+		root, err := scanJSON(b)
+		if err != nil || root.kind != '{' {
+			return b
+		}
+		parent, i, pointer := emptyMade(root, "", made)
+		if parent == nil {
+			return b
+		}
+		b = removeChild(b, parent, i, inner(pointer))
+	}
+	return b
+}
+
+// emptyMade returns an object that holds an empty container that mai made, the index of that
+// member, and the pointer of the object, or nil. It looks at the deepest containers first.
+func emptyMade(n *jnode, pointer string, made map[string]bool) (*jnode, int, string) {
+	for i, m := range n.members {
+		p := pointer + "/" + escapeKey(m.key)
+		if m.val.kind == '{' {
+			if parent, j, pp := emptyMade(m.val, p, made); parent != nil {
+				return parent, j, pp
+			}
+		}
+		if made[p] && (m.val.kind == '{' || m.val.kind == '[') && len(m.val.members) == 0 && len(m.val.elems) == 0 {
+			return n, i, pointer
+		}
+	}
+	return nil, 0, ""
 }
 
 // removeMaiHooks removes each hook of mai (an object with a command of mai, or a string of
