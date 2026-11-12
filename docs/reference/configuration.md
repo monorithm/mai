@@ -24,53 +24,43 @@ production.
 
 The file `.env.example` gives an example.
 
-## Shim settings on the host
+## Configuration file of the CLI
 
-The shims `mai`, `mai.cmd` and `mai.ps1` read these environment
-variables on the host. The app does not read them.
+The host CLI reads the file `config.json` in its configuration folder. A
+missing file or a missing field gets the default.
 
-| Key | Meaning | Necessary | Default |
+| Field | Meaning | Default |
+|---|---|---|
+| `instance` | The name of the container. The volumes are `<instance>3-data` and `<instance>3-spool`. | `mai` |
+| `port` | The port on `127.0.0.1` for the HTTP endpoint of the container. | `8765` |
+| `image` | The image of the container. | `ghcr.io/monorithm/mai:<version of the CLI>` |
+| `data_dir` | A folder on the host for `/data`. Empty gives the volume `<instance>3-data`. `mai start --data-dir PATH` sets it. | Empty |
+| `approval` | The approval rule of a new lease: `each-bridge` or `app-instance`. | `each-bridge` |
+
+Example:
+
+```json
+{
+  "instance": "mai",
+  "port": 8765,
+  "image": "ghcr.io/monorithm/mai:3.0.0",
+  "data_dir": "",
+  "approval": "each-bridge"
+}
+```
+
+## Folders of the CLI
+
+| OS | Configuration | State | Cache and log |
 |---|---|---|---|
-| `MAI_CONTAINER` | The name of the container that the shim uses with `docker exec`. | No | `mai` |
-| `MAI_DOCKER` | The docker binary. Give a full path if docker is not in `PATH`. | No | `docker` |
-| `MAI_CREDENTIAL_FILE` | The credential file on the host for `watch` and `hook`, when the command has no `--credential-file`. For `mcp`, the shim reads this file and gives its text to the container in `MAI_CREDENTIAL`. | No | Empty |
+| macOS | `~/Library/Application Support/mai` | `~/Library/Application Support/mai/state` | `~/Library/Caches/mai` |
+| Linux | `$XDG_CONFIG_HOME/mai` | `$XDG_STATE_HOME/mai` | `$XDG_CACHE_HOME/mai` |
+| Windows | `%AppData%\mai` | `%LocalAppData%\mai\state` | `%LocalAppData%\mai\cache` |
 
-## Compose settings on the host
+The state folder holds the manifest `manifest.json` and the notice files of
+the bridges. No folder holds a secret.
 
-The file `compose.yaml` reads this environment variable on the host. The
-command `mai shim install` writes this file to `~/.mai/bin`. In a clone, the
-file is in the root directory.
-
-| Key | Meaning | Necessary | Default |
-|---|---|---|---|
-| `MAI_TAG` | The tag of the image `ghcr.io/monorithm/mai`: `latest`, a release such as `2.0.0`, `2.0` or `2`, or `sha-<short>`. `docker compose pull` gets this tag. `docker compose build` in a clone gives this tag to the local image. | No | `latest` |
-
-| `MAI_DATA_DIR` | A folder on the host for `/data`: the database, the mail, the secrets, and the backups. Use an absolute path, or a path that starts with `./`. A name with no `/` is a name of a volume. | No | The volume `mai-data` |
-
-The Postfix queue is always on the volume `mai-spool`, at `/var/lib/mai/spool` in
-the container. A host folder on macOS or Windows can hold no Unix socket, and the
-queue has the sockets of Postfix, Dovecot, and the milter. With no volume there, the
-container uses `/run/mai/spool` and logs a warning: the queue then does not stay
-across a restart. `MAI_SPOOL_DIR` in the container changes the path.
-
-To pin a version, set `MAI_TAG` before the compose command.
-
-- macOS and Linux:
-
-  ```sh
-  MAI_TAG=2.0.0 docker compose -f ~/.mai/bin/compose.yaml pull
-  MAI_TAG=2.0.0 docker compose -f ~/.mai/bin/compose.yaml up -d
-  ```
-
-- Windows (PowerShell):
-
-  ```powershell
-  $env:MAI_TAG = "2.0.0"
-  docker compose -f "$env:USERPROFILE\.mai\bin\compose.yaml" pull
-  docker compose -f "$env:USERPROFILE\.mai\bin\compose.yaml" up -d
-  ```
-
-The image is public. For a pull, a login and a token are not necessary.
-
-The shim does not send the host variables to the container. For `mcp`, it
-sends only `MAI_CREDENTIAL` and `MAI_CLIENT`. Refer to [CLI](cli.md).
+The Postfix queue is always on the volume `<instance>3-spool`, at
+`/var/lib/mai/spool` in the container. A host folder on macOS or Windows can
+hold no Unix socket, and the queue has the sockets of Postfix, Dovecot, and the
+milter.

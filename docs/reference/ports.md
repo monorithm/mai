@@ -2,14 +2,15 @@
 
 | Port in the container | Port on the host | Service | Protocol |
 |---|---|---|---|
-| 8080 | 127.0.0.1:8765 | App: MCP (`POST /mcp`) and the web UI | HTTP |
-| 1993 | 127.0.0.1:1993 | Dovecot | IMAP with TLS |
-| 1587 | 127.0.0.1:1587 | Postfix submission | SMTP with STARTTLS |
+| 8080 | 127.0.0.1:8765 | App: MCP (`POST /mcp`), the API (`/api`), and the optional mail UI (`/ui`) | HTTP |
+| 1993 | Not published | Dovecot | IMAP with TLS |
+| 1587 | Not published | Postfix submission | SMTP with STARTTLS |
 | 1143 | Not published | Dovecot, for the app in the container | IMAP |
 | 5432 | Not published | PostgreSQL, socket in the container | PostgreSQL |
 
-Compose binds the ports to 127.0.0.1 only. Do not publish the ports on other
-addresses.
+The CLI publishes only the port 8080, on 127.0.0.1 only. The `port` field of
+the configuration file of the CLI changes the host port. Do not publish the
+port on other addresses.
 
 ## HTTP rules
 
