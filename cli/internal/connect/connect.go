@@ -56,6 +56,9 @@ type record struct {
 	// such as "version" of a hooks file. mai removes it only when no content of the user is
 	// in the file.
 	IfAbsent bool `json:"if_absent,omitempty"`
+	// HadContent marks an IfAbsent entry in a file that held other content before mai wrote
+	// the key: that content did not need the key, thus mai removes it again.
+	HadContent bool `json:"had_content,omitempty"`
 }
 
 func recordName(it manifest.Item) string {
@@ -201,7 +204,16 @@ func planFile(path string, before []byte, existed bool, cs []change, app string)
 		}
 		if res.item != nil {
 			fc.Items = append(fc.Items, *res.item)
-			fc.records[res.item.Pointer] = record{Text: string(res.entry), Created: created(orig, c.pointer), Blank: blank, IfAbsent: c.ifAbsent}
+			r := record{Text: string(res.entry), Created: created(orig, c.pointer), Blank: blank, IfAbsent: c.ifAbsent}
+			if c.ifAbsent {
+				key := splitPointer(c.pointer)[0]
+				for _, k := range orig.keys {
+					if k != key && hasValue(orig.vals[k]) {
+						r.HadContent = true
+					}
+				}
+			}
+			fc.records[res.item.Pointer] = r
 		}
 	}
 	if len(empty) > 0 {
@@ -357,28 +369,92 @@ func addText(b []byte, c change, app string, l layout) (addResult, error) {
 			return res, nil
 		}
 	}
-	for _, e := range v.elems {
+	for ei, e := range v.elems {
 		if c.inner == nil {
-			if c.ownsText(b, e) {
-				return replace(e, v, c.value)
+			if !c.ownsText(b, e) {
+				continue
 			}
-			continue
+			// A hook object of mai: set the keys of mai, keep each key of the user, and
+			// record the hook as it is now.
+			out := mergeObjectAt(b, func(root *jnode) *jnode { return elemAt(root, keys, ei) }, c.value.(*object), l)
+			return adopt(res, out, func(root *jnode) *jnode { return elemAt(root, keys, ei) }), nil
 		}
-		// A hook group. A group that holds only the hook of mai is the entry of mai. In a
-		// group that holds more, mai changes only its own hook object.
+		// A hook group. mai changes only its own hook object in the group, and keeps each key
+		// of the user in the hook and in the group (for example "matcher").
 		group, hook := maiHookInGroup(b, e, c.format, c.event)
 		if hook == nil {
 			continue
 		}
-		if onlyMaiGroup(e, group) {
-			return replace(e, v, c.value)
+		hi := 0
+		for j, h := range group.elems {
+			if h == hook {
+				hi = j
+			}
 		}
-		if hashOf(canonical(b, hook)) == hashOf(encodeJSON(c.inner, "")) {
-			return res, nil
+		hookAt := func(root *jnode) *jnode {
+			g := elemAt(root, keys, ei)
+			if g == nil {
+				return nil
+			}
+			_, hs := g.member("hooks")
+			if hs == nil || hi >= len(hs.elems) {
+				return nil
+			}
+			return hs.elems[hi]
 		}
-		return replace(hook, group, c.inner)
+		out := mergeObjectAt(b, hookAt, c.inner, l)
+		if allMaiHooks(b, group) {
+			// The group holds only hooks of mai: it is the entry of mai.
+			return adopt(res, out, func(root *jnode) *jnode { return elemAt(root, keys, ei) }), nil
+		}
+		res.text = out
+		return res, nil
 	}
 	return insert(v, pointerOf(keys), "", c.value)
+}
+
+// elemAt returns the element i of the array at keys, or nil.
+func elemAt(root *jnode, keys []string, i int) *jnode {
+	a := nodeAt(root, keys)
+	if a == nil || a.kind != '[' || i >= len(a.elems) {
+		return nil
+	}
+	return a.elems[i]
+}
+
+// adopt records the value that at finds in out as the entry, with its text now.
+func adopt(res addResult, out []byte, at func(*jnode) *jnode) addResult {
+	res.text = out
+	if root, err := scanJSON(out); err == nil {
+		if n := at(root); n != nil {
+			res.entry = canonical(out, n)
+			res.item.Hash = hashOf(res.entry)
+		}
+	}
+	return res
+}
+
+// mergeObjectAt sets each key of want in the object that at finds, and keeps each other key.
+// at runs on each new scan, because each change moves the bytes after it.
+func mergeObjectAt(b []byte, at func(*jnode) *jnode, want *object, l layout) []byte {
+	for _, k := range want.keys {
+		root, err := scanJSON(b)
+		if err != nil {
+			return b
+		}
+		n := at(root)
+		if n == nil || n.kind != '{' {
+			return b
+		}
+		_, cur := n.member(k)
+		switch {
+		case cur == nil:
+			b, _ = insertChild(b, n, k, want.vals[k], l)
+		case hashOf(canonical(b, cur)) != hashOf(encodeJSON(want.vals[k], "")):
+			b = replaceNode(b, cur, n, want.vals[k], l)
+		}
+	}
+	return b
 }
 
 // mergeMembers sets each key of want in the object at keys of the text b, and keeps each
@@ -432,9 +508,14 @@ func maiHookInGroup(b []byte, e *jnode, format, event string) (group, hook *jnod
 	return nil, nil
 }
 
-// onlyMaiGroup reports if the group e has only the key "hooks", and its array only one hook.
-func onlyMaiGroup(e, group *jnode) bool {
-	return len(e.members) == 1 && len(group.elems) == 1
+// allMaiHooks reports if each hook in the array group has a hook command of mai.
+func allMaiHooks(b []byte, group *jnode) bool {
+	for _, h := range group.elems {
+		if !hasMaiHook(b, h, "", "") {
+			return false
+		}
+	}
+	return len(group.elems) > 0
 }
 
 // ownsText reports if the value n of the text b is an earlier entry of mai for c.
@@ -457,7 +538,7 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 	}
 	e, found := findMaiTOML(lines)
 	if otherMaiTable(lines, e, found) || (found && !e.marked) {
-		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers.mai, and mai did not write that table; remove it, or run mai disconnect codex --force", ErrExists, c.path)
+		return nil, nil, nil, fmt.Errorf("%w: %s defines mcp_servers.mai, and mai did not write that table; remove that table from the file, or give that server a different name, then run mai connect again", ErrExists, c.path)
 	}
 	if !found {
 		return append(append([]byte(nil), body...), block...), item, block, nil
@@ -467,7 +548,7 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 	}
 	out, ok := updateMaiTable(body, lines, e, c.toml, nl)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("%w: the table of mai in %s names a different program, or has an args array on more than one line; correct it, or run mai disconnect codex --force", ErrExists, c.path)
+		return nil, nil, nil, fmt.Errorf("%w: the table [mcp_servers.mai] in %s names a server that is not mai, or has an args array on more than one line; remove that table from the file, or give that server a different name, then run mai connect again", ErrExists, c.path)
 	}
 	// The record is the table as it is now, with the keys of the user in it.
 	nlines := tomlLines(out)
@@ -573,11 +654,23 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 				break
 			}
 		}
+		// The containers that mai made are one list for the whole file: an earlier remove can
+		// forget the record that knew a container, while a different entry is still in it.
+		var fileCreated []string
+		for _, old := range m.Of(manifest.AppEntry) {
+			if old.Name == p.App && old.Path == f.Path {
+				fileCreated = union(fileCreated, loadRecord(old).Created)
+			}
+		}
+		for _, it := range f.Items {
+			fileCreated = union(fileCreated, f.records[it.Pointer].Created)
+			fileCreated = union(fileCreated, extra[it.Pointer])
+		}
 		for _, it := range f.Items {
 			// An earlier connect of the same entry knows which containers mai made, and their
 			// bytes before. Keep that knowledge, and remove the record of a replaced entry.
 			r := f.records[it.Pointer]
-			r.Created = union(r.Created, extra[it.Pointer])
+			r.Created = union(r.Created, fileCreated)
 			for _, old := range m.Of(manifest.AppEntry) {
 				if old.Name != it.Name || old.Path != it.Path || old.Pointer != it.Pointer {
 					continue

@@ -23,6 +23,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In a hook group of Claude Code or Codex, `mai connect` and
   `mai disconnect --force` change only the hook of mai. The other hooks of the
   group stay.
+- A second `mai connect` keeps each key that the user adds to a hook of mai or
+  to its group, for example `"matcher"`. `mai disconnect --force` removes a
+  group that holds only hooks of mai, also with a key of the user.
+- A server of the user that runs a program named `mai` with arguments other than
+  `mcp` is not an entry of mai, also in `config.toml`.
 - `mai connect codex` finds the table of mai by its comment and its header.
   Thus it keeps the tables and the comments that Codex or the user adds after
   the table of mai. A second `mai connect codex` changes only the keys `command`
@@ -48,7 +53,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hook of mai for Antigravity is one element of the array `PreInvocation`, thus
   a hook of the user in that array stays.
 - `mai disconnect cursor` keeps `"version": 1` in a hooks file that holds hooks,
-  also for a record of 3.0.0. It removes `version` after the other entries.
+  also for a record of 3.0.0. It removes `version` after the other entries. When
+  the file held hooks before `mai connect`, `version` goes again.
+- Each empty object or array that mai made in a file goes at `mai disconnect`,
+  also after an earlier disconnect kept one entry.
 - After an upgrade from 3.0.0, `mai connect antigravity` moves the record of the
   hook set `mai` to the record of the hook. Thus `mai disconnect` keeps the
   hooks of the user.
