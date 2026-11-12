@@ -103,6 +103,16 @@ func Save(dir string, c Config) error {
 // Update applies o to the fields of the file in dir and writes the file. A field that the
 // file does not hold stays out of the file, so that its default can change with the CLI.
 func Update(dir string, o Overrides) error {
+	return update(dir, func(raw *Config) { *raw = raw.Apply(o) })
+}
+
+// PinImage writes the image field of the file. An empty image removes the pin, so that the
+// CLI uses the image of its version.
+func PinImage(dir, image string) error {
+	return update(dir, func(raw *Config) { raw.Image = image })
+}
+
+func update(dir string, change func(*Config)) error {
 	raw := Config{}
 	b, err := os.ReadFile(Path(dir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -113,7 +123,7 @@ func Update(dir string, o Overrides) error {
 			return err
 		}
 	}
-	raw = raw.Apply(o)
+	change(&raw)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

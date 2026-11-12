@@ -586,10 +586,12 @@ func runUpgrade(args []string) int {
 			return lcFail("%v", err)
 		}
 	}
-	if o.Image != config.DefaultImage() {
-		if err := config.Update(s.dirs.Config, config.Overrides{Image: o.Image}); err != nil {
-			return lcFail("write the configuration: %v", err)
-		}
+	pin := o.Image
+	if pin == config.DefaultImage() {
+		pin = ""
+	}
+	if err := config.PinImage(s.dirs.Config, pin); err != nil {
+		return lcFail("write the configuration: %v", err)
 	}
 	fmt.Fprintf(lcOut, "mai: the server runs %s\n", s.cfg.Image)
 	return 0

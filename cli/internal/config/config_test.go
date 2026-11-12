@@ -71,6 +71,32 @@ func TestApplyOverrides(t *testing.T) {
 	}
 }
 
+func TestUpdateKeepsDefaultsOutOfTheFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := Update(dir, Overrides{Port: 18765}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Port != 18765 || c.Image != DefaultImage() || c.Instance != "mai" {
+		t.Fatalf("got %+v", c)
+	}
+	if err := PinImage(dir, "img:2"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = Load(dir); c.Image != "img:2" || c.Port != 18765 {
+		t.Fatalf("after the pin: %+v", c)
+	}
+	if err := PinImage(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = Load(dir); c.Image != DefaultImage() {
+		t.Fatalf("after the unpin: %+v", c)
+	}
+}
+
 func TestLoadBadJSON(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(`{`), 0o600); err != nil {
