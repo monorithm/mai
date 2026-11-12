@@ -653,13 +653,11 @@ func runDoctor(args []string) int {
 	} else {
 		ok("keychain", "set, get, and delete of a test item succeeded")
 	}
-	switch err := presence.Check("mai doctor examines the presence check"); {
-	case err == nil:
+	// Available asks the OS without a prompt. Doctor never shows a Touch ID or password prompt.
+	if presence.Available() {
 		ok("presence", "the presence check is available")
-	case errors.Is(err, presence.ErrUnavailable):
-		bad("presence", "this build has no presence check", "install a release build of mai")
-	default:
-		bad("presence", err.Error(), "agree to the prompt of the OS when mai shows it")
+	} else {
+		bad("presence", "this system or build has no presence check", "on Linux, install the polkit action of the package; on Windows, 3.0.0 has no presence check")
 	}
 	if problems > 0 {
 		fmt.Fprintf(lcOut, "%d problem(s)\n", problems)
