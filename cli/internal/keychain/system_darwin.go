@@ -6,6 +6,7 @@ package keychain
 #cgo CFLAGS: -Wno-deprecated-declarations
 #cgo LDFLAGS: -framework Security -framework CoreFoundation
 #include <stdlib.h>
+#include <string.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 
@@ -114,6 +115,52 @@ static int maiDefaultUnlocked(void) {
 	return (status & kSecUnlockStateStatus) && (status & kSecWritePermStatus) ? 1 : 0;
 }
 
+// maiDecryptApps examines the access list of an item and reads no secret. It returns the
+// number of trusted applications of the smallest entry that permits decrypt, 0 when an
+// entry lets each application decrypt, and -1 when the item or its access list is missing.
+static int maiDecryptApps(const char *service, const char *account) {
+	SecKeychainItemRef item = NULL;
+	OSStatus st = SecKeychainFindGenericPassword(NULL,
+		(UInt32)strlen(service), service, (UInt32)strlen(account), account,
+		NULL, NULL, &item);
+	if (st != errSecSuccess || item == NULL) {
+		return -1;
+	}
+	SecAccessRef access = NULL;
+	st = SecKeychainItemCopyAccess(item, &access);
+	CFRelease(item);
+	if (st != errSecSuccess || access == NULL) {
+		return -1;
+	}
+	CFArrayRef acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
+	CFRelease(access);
+	if (acls == NULL) {
+		return -1;
+	}
+	int result = -1;
+	for (CFIndex i = 0; i < CFArrayGetCount(acls); i++) {
+		SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
+		CFArrayRef apps = NULL;
+		CFStringRef desc = NULL;
+		SecKeychainPromptSelector prompt = 0;
+		if (SecACLCopyContents(acl, &apps, &desc, &prompt) != errSecSuccess) {
+			continue;
+		}
+		int n = apps == NULL ? 0 : (int)CFArrayGetCount(apps);
+		if (apps != NULL) {
+			CFRelease(apps);
+		}
+		if (desc != NULL) {
+			CFRelease(desc);
+		}
+		if (result < 0 || n < result) {
+			result = n;
+		}
+	}
+	CFRelease(acls);
+	return result;
+}
+
 // maiErrorMessage writes the text of a status into buf.
 static void maiErrorMessage(OSStatus st, char *buf, long size) {
 	buf[0] = 0;
@@ -196,6 +243,15 @@ func (s securityStore) Delete(service, account string) error {
 		return statusError("delete", st)
 	}
 	return nil
+}
+
+// decryptApps returns the number of applications in the access list of an item that can
+// read the secret. 0 means each application. -1 means no item. It reads no secret.
+func decryptApps(service, account string) int {
+	cs, ca := C.CString(service), C.CString(account)
+	defer C.free(unsafe.Pointer(cs))
+	defer C.free(unsafe.Pointer(ca))
+	return int(C.maiDecryptApps(cs, ca))
 }
 
 // defaultUnlocked tells if the default keychain is unlocked and writable.

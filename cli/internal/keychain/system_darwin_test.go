@@ -96,6 +96,25 @@ func TestSecurityStoreAccountsAreSeparate(t *testing.T) {
 	}
 }
 
+func TestSecurityStoreAccessListHoldsOnlyThisProgram(t *testing.T) {
+	s, account := liveStore(t)
+	if got := decryptApps(testService, account); got != -1 {
+		t.Fatalf("access list before set = %d, want -1", got)
+	}
+	if err := s.Set(testService, account, "value-acl"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := decryptApps(testService, account); got != 1 {
+		t.Fatalf("applications that can decrypt = %d, want 1", got)
+	}
+	if err := s.Set(testService, account, "value-acl-2"); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	if got := decryptApps(testService, account); got != 1 {
+		t.Fatalf("applications that can decrypt after overwrite = %d, want 1", got)
+	}
+}
+
 func TestStatusErrorHasNoSecret(t *testing.T) {
 	err := statusError("get", -25293)
 	if err == nil || err.Error() == "" {
