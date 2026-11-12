@@ -6,6 +6,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-12
+
+### Fixed
+
+- `mai connect` writes the full path of the mai binary in the MCP entries and
+  in the hooks. An app starts its MCP servers and hooks with its own `PATH`, thus
+  the app did not find the command `mai` that 3.0.0 wrote. Run
+  `mai connect APP --agent NAME` again: it replaces the entries of 3.0.0.
+- `mai connect` and `mai disconnect` change only the entries of mai. Each other
+  byte of the file of an app stays the same, and `mai disconnect` gives back the
+  bytes from before `mai connect`.
+- After the mai binary moves, `mai connect` replaces the entries of mai and adds
+  no second entry.
+- The diff of `mai connect` shows the removed lines before the added lines.
+
 ## [3.0.0] - 2026-11-12
 
 mai 3.0 has no compatibility with 2.x. There is no migration of data,
