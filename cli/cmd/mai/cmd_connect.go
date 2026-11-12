@@ -93,6 +93,9 @@ func runConnect(args []string, in io.Reader, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "%s has the entries of mai already\n", app)
 		return 0
 	}
+	if bin, err := connect.BinaryPath(); err == nil {
+		fmt.Fprintf(out, "The entries name the mai binary %s.\n", bin)
+	}
 	fmt.Fprint(out, p.Diff())
 	if !*yes {
 		fmt.Fprint(out, "Write these changes? [y/N] ")
@@ -123,20 +126,11 @@ func runDisconnect(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return fail(errOut, err)
 	}
+	disconnect := connect.Disconnect
 	if *force {
-		for _, it := range m.Of(manifest.AppEntry) {
-			if it.Name != app {
-				continue
-			}
-			if err := connect.ForceRemoveEntry(it); err != nil {
-				return fail(errOut, err)
-			}
-			if err := m.Remove(it); err != nil {
-				return fail(errOut, err)
-			}
-		}
+		disconnect = connect.DisconnectForce
 	}
-	if err := connect.Disconnect(app, m); err != nil {
+	if err := disconnect(app, m); err != nil {
 		for _, e := range unwrapAll(err) {
 			var ce *connect.ErrChanged
 			if errors.As(e, &ce) {

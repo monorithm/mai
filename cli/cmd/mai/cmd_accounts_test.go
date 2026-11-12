@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monorithm/mai/cli/v3/internal/connect"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
@@ -221,6 +222,10 @@ func TestUIOnOff(t *testing.T) {
 
 func TestConnectCommandThenDisconnect(t *testing.T) {
 	_, _, home := testEnv(t)
+	// The test binary is a temporary build, which connect refuses. Use a fixed path.
+	oldBinary := connect.Binary
+	connect.Binary = func() (string, error) { return "/opt/mai/bin/mai", nil }
+	t.Cleanup(func() { connect.Binary = oldBinary })
 	settings := filepath.Join(home, ".claude", "settings.json")
 	orig := "{\n  \"model\": \"opus\"\n}\n"
 	_ = os.MkdirAll(filepath.Dir(settings), 0o700)
@@ -230,7 +235,8 @@ func TestConnectCommandThenDisconnect(t *testing.T) {
 	if code := runConnect([]string{"claude", "--agent", "cursor"}, strings.NewReader("n\n"), &out, &errOut); code != 1 {
 		t.Fatalf("connect with no: %d %s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "+++ "+settings) || !strings.Contains(out.String(), "mai hook --format claude --event Stop") {
+	if !strings.Contains(out.String(), "+++ "+settings) || !strings.Contains(out.String(), "/opt/mai/bin/mai hook --format claude --event Stop") ||
+		!strings.Contains(out.String(), "The entries name the mai binary /opt/mai/bin/mai.") {
 		t.Fatalf("no diff:\n%s", out.String())
 	}
 	if b, _ := os.ReadFile(settings); string(b) != orig {

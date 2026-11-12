@@ -295,7 +295,7 @@ func LegacyAppFiles(home, goos string) []string {
 	files := []string{
 		filepath.Join(home, ".claude.json"),
 		filepath.Join(home, ".cursor", "mcp.json"),
-		filepath.Join(home, ".codex", "config.toml"),
+		filepath.Join(codexHome(home), "config.toml"),
 		filepath.Join(home, ".gemini", "settings.json"),
 		filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
 		filepath.Join(home, ".copilot", "mcp-config.json"),
@@ -311,4 +311,12 @@ func LegacyAppFiles(home, goos string) []string {
 		files = append(files, filepath.Join(home, ".config", "Code", "User", "mcp.json"))
 	}
 	return files
+}
+
+// codexHome is the folder of Codex: CODEX_HOME when it is set, else ~/.codex.
+func codexHome(home string) string {
+	if h := os.Getenv("CODEX_HOME"); h != "" {
+		return h
+	}
+	return filepath.Join(home, ".codex")
 }

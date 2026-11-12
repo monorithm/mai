@@ -59,12 +59,13 @@ func lineOps(a, b []string) []diffOp {
 			ops = append(ops, diffOp{' ', ma[i]})
 			i++
 			j++
-		case j < len(mb) && (i == len(ma) || lcs[i][j+1] >= lcs[i+1][j]):
-			ops = append(ops, diffOp{'+', mb[j]})
-			j++
-		default:
+		case i < len(ma) && (j == len(mb) || lcs[i+1][j] >= lcs[i][j+1]):
+			// A removed line comes before an added line, as in diff -u.
 			ops = append(ops, diffOp{'-', ma[i]})
 			i++
+		default:
+			ops = append(ops, diffOp{'+', mb[j]})
+			j++
 		}
 	}
 	for _, l := range a[len(a)-suf:] {

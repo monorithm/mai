@@ -6,6 +6,95 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-11-12
+
+### Fixed
+
+- `mai connect` writes the full path of the mai binary in the MCP entries and
+  in the hooks. An app starts its MCP servers and hooks with its own `PATH`, thus
+  the app did not find the command `mai` that 3.0.0 wrote. Run
+  `mai connect APP --agent NAME` again: it replaces the entries of 3.0.0.
+- `mai connect` and `mai disconnect` change only the entries of mai. Each other
+  byte of the file of an app stays the same, and `mai disconnect` gives back the
+  bytes from before `mai connect`.
+- After the mai binary moves, `mai connect` replaces the entries of mai and adds
+  no second entry.
+- The diff of `mai connect` shows the removed lines before the added lines.
+- In a hook group of Claude Code or Codex, `mai connect` and
+  `mai disconnect --force` change only the hook of mai. The other hooks of the
+  group stay.
+- A second `mai connect` keeps each key that the user adds to a hook of mai or
+  to its group, for example `"matcher"`. `mai disconnect --force` removes a
+  group that holds only hooks of mai, also with a key of the user.
+- A server of the user that runs a program named `mai` with arguments other than
+  `mcp` is not an entry of mai, also in `config.toml`.
+- `mai connect codex` finds the table of mai by its comment and its header.
+  Thus it keeps the tables and the comments that Codex or the user adds after
+  the table of mai. A second `mai connect codex` changes only the keys `command`
+  and `args`, and keeps each key that the user adds to the table. A sub-table of
+  the user, for example `[mcp_servers.mai.env]`, stays, and
+  `mai disconnect codex --force` removes it with the table of mai.
+- `mai disconnect codex` removes the lines of mai as whole lines, thus no two
+  lines of the user join. The scan of `config.toml` reads multi-line strings,
+  with escapes, and arrays on more than one line, as TOML does.
+- A second `mai connect codex` keeps a comment of the user on the line of
+  `command` or `args`.
+- `mai disconnect --force` keeps a server of the user named `mai`, in
+  `config.toml` and in a JSON file. In a hook set of 3.0.0 that holds hooks of
+  the user, it removes only the hooks of mai.
+- `mai disconnect --force` removes the entries in the correct sequence, thus it
+  also removes a hooks file that `mai connect` made.
+- `mai connect codex` gives an error, not a second table, for a table
+  `mcp_servers.mai` in a different form of TOML, and for an inline table
+  `mcp_servers = { ... }`.
+- When the comment of mai above its table is gone, `mai disconnect codex` gives
+  an error and keeps the record of the table.
+- An MCP entry of mai keeps each key that the user adds, for example `env`. The
+  hook of mai for Antigravity is one element of the array `PreInvocation`, thus
+  a hook of the user in that array stays.
+- `mai disconnect cursor` keeps `"version": 1` in a hooks file that holds hooks,
+  also for a record of 3.0.0. It removes `version` after the other entries. When
+  the file held hooks before `mai connect`, `version` goes again.
+- Each empty object or array that mai made in a file goes at `mai disconnect`,
+  also after an earlier disconnect kept one entry.
+- After an upgrade from 3.0.0, `mai connect antigravity` moves the record of the
+  hook set `mai` to the record of the hook. Thus `mai disconnect` keeps the
+  hooks of the user.
+- `mai disconnect --force` keeps an entry at the place of mai that is not an
+  entry of mai.
+- `mai uninstall` keeps a file of an app that `mai connect` made, when the file
+  holds content of the user.
+- `mai disconnect` gives no error for an entry of mai that the user removed.
+- When an app writes its file before you agree to the diff of `mai connect`,
+  the write of the app stays.
+- `mai connect` writes through a symbolic link, also a link to a missing file,
+  and the link stays. When the user replaces a file that mai made with a link,
+  `mai disconnect` keeps the file that the link names.
+- `mai disconnect` removes the empty folders that `mai connect` made for a file,
+  also a folder for two files. A link of the user in the place of such a folder
+  stays.
+- A dotfile that the user links after `mai connect` keeps its own containers
+  and its `version`. A file that the user moves into a dotfiles folder and links
+  (`stow --adopt`) loses the empty containers that mai made.
+- `mai connect codex` writes the files in `CODEX_HOME` when it is set.
+- A second `mai connect codex` keeps an `args` array on more than one line, with
+  its comments, when the values do not change. A string that `toml_edit` writes
+  in a different form (`'C:\Users\...'`) counts as the same value.
+- After `codex mcp remove mai`, `mai disconnect codex` removes the end comment of
+  3.0.0.
+- `mai connect` and `mai disconnect` read a JSON file with a byte order mark,
+  and keep the mark.
+- The record of the table of mai in `config.toml` uses one kind of line break.
+  Thus Codex, an editor, or git can change the line breaks, and the table counts
+  as unchanged.
+- `mai disconnect codex --force` also removes a table of mai with `args` on more
+  than one line. It also removes the begin comment of mai above a comment of
+  the user.
+- A file with CRLF line breaks keeps CRLF. An empty object or array, and a file
+  with only white space, come back byte for byte after `mai disconnect`.
+- `mai connect` refuses a path of the binary that is not valid UTF-8, and a
+  binary of `go run`.
+
 ## [3.0.0] - 2026-11-12
 
 mai 3.0 has no compatibility with 2.x. There is no migration of data,

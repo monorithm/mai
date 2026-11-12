@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/moby/moby/client"
@@ -23,6 +24,15 @@ import (
 // CLI that writes the entries sets it. When it is nil, the uninstall keeps each entry and
 // shows a warning.
 var RemoveAppEntry func(manifest.Item) error
+
+// RemoveCreatedAppFile removes a file of an app that mai connect made, only when the file holds
+// nothing of the user after the remove of the entries. The result is false for a file that
+// stays. The part of the CLI that writes app entries sets it; nil keeps each such file.
+var RemoveCreatedAppFile func(manifest.Item) (bool, error)
+
+// IsKept reports if an error of RemoveAppEntry means that the entry stays, because other
+// content of the file needs it. nil counts each error as a failure.
+var IsKept func(error) bool
 
 // States of a result.
 const (
@@ -72,6 +82,7 @@ type Plan struct {
 	Volumes    []string
 	Images     []manifest.Item
 	AppEntries []manifest.Item
+	AppFiles   []manifest.Item // files of apps that mai connect made
 	Keys       []string
 	Paths      []string
 	Manifest   *manifest.Manifest
@@ -130,14 +141,20 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	p.Images = man.Of(manifest.Image)
 	p.AppEntries = man.Of(manifest.AppEntry)
+	// A "version" entry goes after the other entries of its file, because a hook that stays
+	// needs it.
+	sort.SliceStable(p.AppEntries, func(i, j int) bool {
+		return p.AppEntries[i].Pointer != "/version" && p.AppEntries[j].Pointer == "/version"
+	})
 	for _, it := range man.Of(manifest.KeychainKey) {
 		p.Keys = appendNew(p.Keys, it.Name)
 	}
 	p.Keys = appendNew(p.Keys, keychain.OwnerAccount(inst))
-	for _, typ := range []string{manifest.File, manifest.Folder} {
-		for _, it := range man.Of(typ) {
-			p.Paths = appendNew(p.Paths, it.Path)
-		}
+	// A file of an app can hold content of the user after mai connect made it, thus it does
+	// not go with the folders of mai.
+	p.AppFiles = man.Of(manifest.File)
+	for _, it := range man.Of(manifest.Folder) {
+		p.Paths = appendNew(p.Paths, it.Path)
 	}
 	p.Paths = appendNew(p.Paths, u.Dirs.Cache)
 	p.Paths = appendNew(p.Paths, u.Dirs.State)
@@ -167,6 +184,9 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 	}
 	for _, it := range p.AppEntries {
 		fmt.Fprintf(w, "  app entry  %s in %s\n", it.Name, it.Path)
+	}
+	for _, it := range p.AppFiles {
+		fmt.Fprintf(w, "  app file   %s (only when it holds nothing else)\n", it.Path)
 	}
 	for _, k := range p.Keys {
 		fmt.Fprintf(w, "  keychain   %s / %s\n", u.service(), k)
@@ -380,10 +400,30 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			continue
 		}
 		if err := RemoveAppEntry(it); err != nil {
+			if IsKept != nil && IsKept(err) {
+				rs = append(rs, Result{Item: item, State: Skipped, Detail: "it stays, because the file holds content that needs it"})
+				continue
+			}
 			rs = append(rs, Result{Item: item, State: Failure, Detail: err.Error()})
 			continue
 		}
 		rs = append(rs, Result{Item: item, State: Gone})
+	}
+	for _, it := range p.AppFiles {
+		item := "app file " + it.Path
+		if RemoveCreatedAppFile == nil {
+			rs = append(rs, Result{Item: item, State: Skipped, Detail: "the file stays"})
+			continue
+		}
+		gone, err := RemoveCreatedAppFile(it)
+		switch {
+		case err != nil:
+			rs = append(rs, Result{Item: item, State: Failure, Detail: err.Error()})
+		case !gone:
+			rs = append(rs, Result{Item: item, State: Skipped, Detail: "it holds content that is not of mai, thus it stays"})
+		default:
+			rs = append(rs, Result{Item: item, State: Gone})
+		}
 	}
 	for _, k := range p.Keys {
 		err := u.Keychain.Delete(u.service(), k)
