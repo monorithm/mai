@@ -18,6 +18,9 @@ maillog_file = /dev/stdout
 smtputf8_enable = no
 biff = no
 message_size_limit = 26214400
+# Postfix adds one copy recipient to each new mail. The owner reads the
+# copies in shared/copies/INBOX. The milter refuses this address from a client.
+always_bcc = copies@mai.internal
 
 virtual_mailbox_domains = mai.internal
 virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-mailbox.cf

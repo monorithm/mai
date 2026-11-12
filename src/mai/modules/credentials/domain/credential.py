@@ -32,6 +32,17 @@ ACL_RIGHTS = (
 )
 # The board account reads each agent queue.
 BOARD_ACL_RIGHTS = ("lookup", "read")
+# The system principal "copies" holds a copy of each mail (Postfix always_bcc).
+# It has no password and no session. Only the owner has rights on its INBOX.
+COPIES_LOGIN = "copies"
+COPIES_ACL_RIGHTS = (
+    "lookup",
+    "read",
+    "write",
+    "write-seen",
+    "write-deleted",
+    "expunge",
+)
 
 # An agent name is the local part of the agent address. It has no dot,
 # because a dot separates the agent and the label in a session login.
@@ -117,7 +128,7 @@ def check_agent_name(name: object) -> str:
     """Return the name when it is a valid agent name, else raise ValueError."""
     if not isinstance(name, str) or not _AGENT_RE.match(name):
         raise ValueError(f"agent name must match [a-z0-9][a-z0-9-]{{0,47}}: {name!r}")
-    if name in {login for login, _kind in SYSTEM_ACCOUNTS}:
+    if name in {login for login, _kind in SYSTEM_ACCOUNTS} | {COPIES_LOGIN}:
         raise ValueError(f"agent name is a system account: {name}")
     return name
 

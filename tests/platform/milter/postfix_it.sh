@@ -70,7 +70,7 @@ postfix -c /tmp/pf set-permissions >/dev/null 2>&1 || true
 postfix -c /tmp/pf start 2>&1 | tail -2 || true
 mkdir -p /tmp/pfq/private
 chown postfix /tmp/pfq/private
-su -s /bin/sh postfix -c "PYTHONPATH=/src python3 -m mai.app_milter --socket /tmp/pfq/private/mai-milter" &
+su -s /bin/sh postfix -c "PYTHONPATH=/src python3 -m mai.app_milter --no-envelope --socket /tmp/pfq/private/mai-milter" &
 dovecot -c /tmp/dv/dovecot.conf || true
 sleep 2
 ls -l /tmp/pfq/private/mai-milter

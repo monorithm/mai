@@ -118,7 +118,7 @@ def test_init_accounts_is_idempotent_and_grants_board_rights(tmp_path):
         return first, second
 
     first, second = run(go)
-    assert sorted(first["created"]) == ["board", "owner"]
+    assert sorted(first["created"]) == ["board", "copies", "owner"]
     assert first["agents"] == []
     assert second["created"] == [] and second["agents"] == ["cursor"]
     assert ("grant", "cursor", "board", ("lookup", "read")) in acl.calls
@@ -374,3 +374,52 @@ def test_account_kind_tells_the_kind_or_none(tmp_path):
         ]
 
     assert run(go) == ["owner", "system", "agent", None]
+
+
+COPIES_RIGHTS = (
+    "lookup",
+    "read",
+    "write",
+    "write-seen",
+    "write-deleted",
+    "expunge",
+)
+
+
+def test_init_accounts_makes_copies_with_no_secret_and_an_owner_grant(tmp_path):
+    service, store, acl, files = make_service(tmp_path)
+
+    async def go():
+        await service.init_accounts()
+        return await store.get("copies")
+
+    copies = run(go)
+    assert copies is not None
+    assert copies.kind == "system"
+    assert copies.password_hash is None
+    assert files.read(files.system_path("copies")) is None
+    assert ("grant", "copies", "owner", COPIES_RIGHTS) in acl.calls
+    assert not [c for c in acl.calls if c[1] == "copies" and c[2] != "owner"]
+
+
+def test_grant_mailbox_access_gives_the_owner_the_copies(tmp_path):
+    service, _store, acl, _files = make_service(tmp_path)
+
+    async def go():
+        await service.init_accounts(write_secrets=False)
+        acl.calls.clear()
+        return await service.grant_mailbox_access()
+
+    result = run(go)
+    assert ("copies", "owner") in result["granted"]
+    assert acl.calls[0] == ("grant", "copies", "owner", COPIES_RIGHTS)
+
+
+def test_copies_is_not_an_agent_name(tmp_path):
+    service, _store, _acl, _files = make_service(tmp_path)
+
+    async def go():
+        await service.agent_add("copies")
+
+    with pytest.raises(ValueError, match="system account"):
+        run(go)
