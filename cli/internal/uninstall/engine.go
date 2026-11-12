@@ -8,6 +8,7 @@ package uninstall
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/moby/moby/client"
 )
@@ -38,10 +39,24 @@ type Engine interface {
 	CopyFromContainer(ctx context.Context, id string, opts client.CopyFromContainerOptions) (client.CopyFromContainerResult, error)
 }
 
-// IsNotFound tells if an engine error means that the object does not exist.
+// IsNotFound tells if an engine error means that the object does not exist. The client
+// keeps the error class out of reach without a further module, thus the text of the answer
+// of the engine is also examined.
 func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
 	var nf interface{ NotFound() }
-	return err != nil && errors.As(err, &nf)
+	if errors.As(err, &nf) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, m := range []string{"no such container", "no such volume", "no such image", "image not known", "volume not found"} {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // NotFoundError is an engine error for a missing object. The fake engine of the tests uses it.

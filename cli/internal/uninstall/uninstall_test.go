@@ -307,6 +307,24 @@ func TestBinaryRunsThePackageManager(t *testing.T) {
 	}
 }
 
+func TestIsNotFoundReadsTheAnswerOfTheEngine(t *testing.T) {
+	for _, msg := range []string{
+		"Error response from daemon: No such container: mai",
+		"Error response from daemon: get mai3-data: no such volume",
+		"Error response from daemon: No such image: mai:wf",
+	} {
+		if !IsNotFound(errors.New(msg)) {
+			t.Errorf("%q is not a missing object", msg)
+		}
+	}
+	if IsNotFound(errors.New("Error response from daemon: conflict: unable to remove")) {
+		t.Error("a conflict is a missing object")
+	}
+	if !IsNotFound(NotFoundError{What: "x"}) || IsNotFound(nil) {
+		t.Error("the error class is not used")
+	}
+}
+
 func TestLoadConfigDefaults(t *testing.T) {
 	c, err := LoadConfig(t.TempDir())
 	if err != nil {
