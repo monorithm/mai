@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import struct
 
+from .envelope import Envelope, bare_address
 from .from_policy import FromHeaderPolicy
+from .recipient_policy import CopiesRecipientPolicy
 
 VERSION = 6
 MAX_PACKET = 1024 * 1024
@@ -45,16 +47,15 @@ SMFIP_NORCPT = 0x08
 SMFIP_NOBODY = 0x10
 SMFIP_NOUNKNOWN = 0x100
 SMFIP_NODATA = 0x200
+# The milter wants RCPT TO: it refuses the copies address and keeps each
+# recipient for the envelope record.
 WANTED_SKIPS = (
-    SMFIP_NOCONNECT
-    | SMFIP_NOHELO
-    | SMFIP_NORCPT
-    | SMFIP_NOBODY
-    | SMFIP_NOUNKNOWN
-    | SMFIP_NODATA
+    SMFIP_NOCONNECT | SMFIP_NOHELO | SMFIP_NOBODY | SMFIP_NOUNKNOWN | SMFIP_NODATA
 )
 
 REJECT_TEXT = "550 5.7.1 From header rejected: {reason}"
+RCPT_REJECT_TEXT = "550 5.7.1 Recipient rejected: {reason}"
+RECORD_FAILED_TEXT = "451 4.3.0 The envelope record failed, try again later"
 
 
 class ProtocolError(Exception):
@@ -94,18 +95,39 @@ class MilterSession:
     """The state of one milter connection from Postfix.
 
     One connection can carry more than one message. The state of a message
-    is reset at each MAIL FROM, at abort and at the end of the message.
+    is reset at each MAIL FROM, at abort and at the end of the message. At
+    the end of an accepted message, take_envelope() gives its envelope once.
     """
 
-    def __init__(self, policy: FromHeaderPolicy) -> None:
+    def __init__(
+        self,
+        policy: FromHeaderPolicy,
+        recipients: CopiesRecipientPolicy | None = None,
+    ) -> None:
         self._policy = policy
+        self._recipients = recipients or CopiesRecipientPolicy()
         self._macros: dict[bytes, dict[str, str]] = {}
+        self._done: Envelope | None = None
         self._reset_message()
 
     def _reset_message(self) -> None:
         self._login: str | None = None
         self._from_values: list[str] = []
-        self._macros.pop(CMD_MAIL, None)
+        self._envelope = Envelope()
+        for scope in (CMD_MAIL, CMD_RCPT, CMD_BODYEOB):
+            self._macros.pop(scope, None)
+
+    def take_envelope(self) -> Envelope | None:
+        """Return the envelope of the message that the milter just accepted."""
+        envelope, self._done = self._done, None
+        return envelope
+
+    def _queue_id(self) -> str | None:
+        for scope in (CMD_BODYEOB, CMD_RCPT, CMD_MAIL):
+            value = self._macros.get(scope, {}).get("i")
+            if value:
+                return value
+        return None
 
     def _macro(self, name: str) -> str | None:
         for scope in (CMD_MAIL, CMD_CONNECT, CMD_HELO):
@@ -136,13 +158,27 @@ class MilterSession:
             if mail_macros is not None:
                 self._macros[CMD_MAIL] = mail_macros
             self._login = self._macro("auth_authen")
+            args = split_nul(data)
+            self._envelope.sender = bare_address(args[0]) if args else ""
+            return pack(REPLY_CONTINUE)
+        if cmd == CMD_RCPT:
+            args = split_nul(data)
+            recipient = args[0] if args else ""
+            reason = self._recipients.check(recipient)
+            if reason is not None:
+                text = RCPT_REJECT_TEXT.format(reason=reason)
+                return pack(REPLY_REPLYCODE, text.encode() + b"\0")
+            self._envelope.recipients.append(bare_address(recipient))
             return pack(REPLY_CONTINUE)
         if cmd == CMD_HEADER:
             fields = split_nul(data)
             name = fields[0] if fields else ""
             value = fields[1] if len(fields) > 1 else ""
-            if name.strip().lower() == "from":
+            key = name.strip().lower()
+            if key == "from":
                 self._from_values.append(value)
+            elif key == "message-id" and self._envelope.message_id is None:
+                self._envelope.message_id = " ".join(value.split()) or None
             return pack(REPLY_CONTINUE)
         if cmd == CMD_EOH:
             reason = self._policy.check(self._login, self._from_values)
@@ -151,6 +187,8 @@ class MilterSession:
                 return pack(REPLY_REPLYCODE, text.encode() + b"\0")
             return pack(REPLY_CONTINUE)
         if cmd == CMD_BODYEOB:
+            self._envelope.queue_id = self._queue_id()
+            self._done = self._envelope
             self._reset_message()
             return pack(REPLY_ACCEPT)
         if cmd == CMD_ABORT:
@@ -160,6 +198,6 @@ class MilterSession:
             self._macros.clear()
             self._reset_message()
             return None
-        if cmd in (CMD_CONNECT, CMD_HELO, CMD_RCPT, CMD_DATA, CMD_BODY, CMD_UNKNOWN):
+        if cmd in (CMD_CONNECT, CMD_HELO, CMD_DATA, CMD_BODY, CMD_UNKNOWN):
             return pack(REPLY_CONTINUE)
         raise ProtocolError(f"unknown command {cmd!r}")

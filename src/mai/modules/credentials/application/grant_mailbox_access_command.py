@@ -2,7 +2,7 @@
 
 Dovecot keeps the ACL of a mailbox, thus a grant succeeds only while Dovecot
 runs. The board account must read each agent queue, else the router sees an
-empty queue. Each live session must have its rights on the queue of its agent.
+empty queue. The owner must read the INBOX of the account copies. Each live session must have its rights on the queue of its agent.
 The command gives all these rights again. A grant that is already there does
 not change, thus the command is idempotent and repairs a grant that failed.
 """
@@ -15,7 +15,12 @@ from datetime import UTC, datetime
 
 from bustan import Injectable
 
-from ..domain.credential import ACL_RIGHTS, BOARD_ACL_RIGHTS
+from ..domain.credential import (
+    ACL_RIGHTS,
+    BOARD_ACL_RIGHTS,
+    COPIES_ACL_RIGHTS,
+    COPIES_LOGIN,
+)
 from ..domain.credential_store import CredentialStore
 from ..domain.mailbox_acl import MailboxAcl
 
@@ -38,6 +43,7 @@ class GrantMailboxAccessHandler:
     async def execute(self, command: GrantMailboxAccessCommand) -> dict:
         now = datetime.now(UTC)
         granted, failed = [], []
+        await self._one(COPIES_LOGIN, "owner", COPIES_ACL_RIGHTS, granted, failed)
         for agent in await self._store.agents():
             await self._one(agent.login, "board", BOARD_ACL_RIGHTS, granted, failed)
         for session in await self._store.sessions(None):

@@ -22,7 +22,38 @@ CREATE TABLE IF NOT EXISTS mail_auth.sent_request (
 );
 """
 
-MIGRATIONS = [Migration(400, "create the table mail_auth.sent_request", _V400)]
+# The milter writes the envelope of each accepted mail: the copy in the
+# mailbox "copies" holds the headers only, thus it does not show a Bcc
+# recipient. The milter connects as the role postfix, which gets INSERT only.
+# The app role mai reads the rows for the owner.
+_V410 = """
+CREATE TABLE IF NOT EXISTS mail_auth.envelope (
+  queue_id    text,
+  message_id  text,
+  sender      text NOT NULL,
+  recipients  text[] NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS envelope_message_id_idx ON mail_auth.envelope (message_id);
+CREATE INDEX IF NOT EXISTS envelope_created_at_idx ON mail_auth.envelope (created_at);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postfix') THEN
+    GRANT USAGE ON SCHEMA mail_auth TO postfix;
+    GRANT INSERT ON mail_auth.envelope TO postfix;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mai')
+     AND current_user <> 'mai' THEN
+    GRANT SELECT, DELETE ON mail_auth.envelope TO mai;
+  END IF;
+END
+$$;
+"""
+
+MIGRATIONS = [
+    Migration(400, "create the table mail_auth.sent_request", _V400),
+    Migration(410, "create the table mail_auth.envelope", _V410),
+]
 
 _LIVE = "(kind <> 'session' OR (status IN ('issued','active') AND (expires_at IS NULL OR expires_at > now())))"
 
