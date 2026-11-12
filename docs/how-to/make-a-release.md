@@ -14,42 +14,43 @@ Use this procedure to publish a new version of mai.
 3. In `CHANGELOG.md`, move the lines of `[Unreleased]` to a new section
    `[X.Y.Z] - YYYY-MM-DD`.
 4. Commit the change with the message `chore(release): vX.Y.Z`.
-5. Make the tag and push it:
+5. Make the two tags on the same commit, and push them:
 
    ```sh
-   git tag vX.Y.Z
-   git push origin main vX.Y.Z
+   git tag -a vX.Y.Z -m "mai X.Y.Z"
+   git tag -a cli/vX.Y.Z -m "mai CLI X.Y.Z"
+   git push origin vX.Y.Z cli/vX.Y.Z
    ```
 
-The workflow `release.yml` runs CI, builds the packages, pushes the image
-and publishes the release. Then GoReleaser on macOS builds the six binaries
-of the host CLI and adds them and their checksums to the release.
+The tag `vX.Y.Z` starts the workflow `release.yml`. The workflow runs CI,
+builds the packages, pushes the image, and publishes the release. The tag
+`cli/vX.Y.Z` releases the Go module of the CLI. It starts no workflow.
 
-## The binaries of the CLI
+## The Go module of the CLI
 
-The file `.goreleaser.yaml` gives the release of the CLI:
+The CLI is a Go module in the folder `cli`. Users install it with
+`go install`. The release has no binaries and no packages at this time.
 
 | Item | Value |
 |---|---|
-| Binaries | macOS, Linux, and Windows, each `amd64` and `arm64` |
-| cgo | On for macOS, off for Linux and Windows |
-| Version | `-X github.com/monorithm/mai/cli/internal/version.Version` from the tag |
-| Signature | An ad-hoc signature with the hardened runtime on macOS |
-| Packages | A Homebrew formula in `monorithm/homebrew-tap` and a Scoop manifest in `monorithm/scoop-bucket` |
+| Module path | `github.com/monorithm/mai/cli/v3` |
+| Tag | `cli/vX.Y.Z`. Go finds the version of a module in a folder by the tag with the folder as a prefix. |
+| Install | `go install github.com/monorithm/mai/cli/v3/cmd/mai@vX.Y.Z` |
+| Version | The CLI reads `vX.Y.Z` from the build information of Go. A local build shows `3.0.0-dev`. |
+| cgo | On macOS, the keychain and the presence check need cgo, thus a C compiler. The builds for Linux and Windows use no C compiler. |
+| Signature | None. On Apple silicon, the linker gives each binary an ad-hoc signature. |
 
-For the release, the repository secrets `HOMEBREW_TAP_TOKEN` and
-`SCOOP_BUCKET_TOKEN` are necessary. If a token is missing, GoReleaser writes the formula or
-the manifest to `dist/` and does not upload it.
-
-To make a test build with no upload, run this command on macOS:
+After the push of the tags, make sure that the Go module proxy has the
+version:
 
 ```sh
-goreleaser release --snapshot --clean
+GOPROXY=https://proxy.golang.org go list -m github.com/monorithm/mai/cli/v3@vX.Y.Z
 ```
 
 > [!NOTE]
-> A Developer ID signature and notarization are not part of the release. After
-> each upgrade, macOS shows one keychain prompt for the new binary.
+> The file `.goreleaser.yaml` stays in the repository. A subsequent release can
+> use it for binaries, a Homebrew formula, and a Scoop manifest. The release
+> workflow does not run it at this time.
 
 ## Image tags
 

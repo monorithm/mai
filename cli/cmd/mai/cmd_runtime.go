@@ -9,12 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/monorithm/mai/cli/internal/bridge"
-	"github.com/monorithm/mai/cli/internal/hook"
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/paths"
-	"github.com/monorithm/mai/cli/internal/presence"
-	"github.com/monorithm/mai/cli/internal/procchain"
+	"github.com/monorithm/mai/cli/v3/internal/bridge"
+	"github.com/monorithm/mai/cli/v3/internal/hook"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/presence"
+	"github.com/monorithm/mai/cli/v3/internal/procchain"
 )
 
 func init() {

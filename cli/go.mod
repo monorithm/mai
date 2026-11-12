@@ -1,4 +1,4 @@
-module github.com/monorithm/mai/cli
+module github.com/monorithm/mai/cli/v3
 
 go 1.27
 

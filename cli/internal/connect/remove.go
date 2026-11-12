@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monorithm/mai/cli/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 // ErrChanged means that the entry in the file is not the entry that mai wrote. Diff shows the

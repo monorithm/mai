@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monorithm/mai/cli/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 // setup makes a temp HOME and MAI_HOME, so that no test touches a real file of an app.

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
-	"github.com/monorithm/mai/cli/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 const testOwnerKey = "mai1:owner:testownersecret"

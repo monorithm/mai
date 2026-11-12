@@ -6,7 +6,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [3.0.0] - Unreleased
+## [3.0.0] - 2026-11-12
 
 mai 3.0 has no compatibility with 2.x. There is no migration of data,
 credentials, shims, or MCP entries. To remove a 2.x install, use
@@ -28,9 +28,9 @@ credentials, shims, or MCP entries. To remove a 2.x install, use
   It is off by default.
 - `mai uninstall` removes all the items that mai made. A manifest records each
   item.
-- Releases with GoReleaser: six binaries, checksums, a Homebrew formula, and a
-  Scoop manifest. The macOS binaries have an ad-hoc signature with the hardened
-  runtime.
+- The CLI is a Go module. Install it with
+  `go install github.com/monorithm/mai/cli/v3/cmd/mai@v3.0.0`. On macOS, the
+  keychain and the presence check need cgo, thus the Xcode command line tools.
 
 ### Removed
 

@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monorithm/mai/cli/internal/api"
-	"github.com/monorithm/mai/cli/internal/connect"
-	"github.com/monorithm/mai/cli/internal/manifest"
-	"github.com/monorithm/mai/cli/internal/paths"
+	"github.com/monorithm/mai/cli/v3/internal/api"
+	"github.com/monorithm/mai/cli/v3/internal/connect"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 func init() {

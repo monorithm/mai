@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monorithm/mai/cli/internal/version"
+	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
 func TestLoadMissingFileGivesDefaults(t *testing.T) {

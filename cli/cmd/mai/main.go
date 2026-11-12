@@ -10,7 +10,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/monorithm/mai/cli/internal/version"
+	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
 // command is one subcommand. run gets the arguments after the name and returns the exit code.

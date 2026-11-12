@@ -679,8 +679,9 @@ image tag if you pin one. No folder holds a secret.
    through the package manager after you agree.
 6. **A reply from the UI.** Recommendation: read only in 3.0.0, and replies in
    3.1.
-7. **Install channels for 3.0.0.** Recommendation: a download, Homebrew, and
-   Scoop first. winget after the first release.
+7. **Install channels for 3.0.0.** Decided by the user on 12 November 2026:
+   3.0.0 is a Go module only, and you install it with `go install`. Binaries
+   and packages come in a subsequent release.
 
 ## 19. Assumptions to prove
 

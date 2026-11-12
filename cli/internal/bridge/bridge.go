@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monorithm/mai/cli/internal/hook"
-	"github.com/monorithm/mai/cli/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/hook"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
 )
 
 // Exit codes of Run.

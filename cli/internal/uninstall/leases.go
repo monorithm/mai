@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/monorithm/mai/cli/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keychain"
 )
 
 // EndLeases ends each lease of the server through the owner API. It never fails: it gives a
