@@ -70,7 +70,18 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `mai connect` writes through a symbolic link, also a link to a missing file,
   and the link stays. When the user replaces a file that mai made with a link,
   `mai disconnect` keeps the file that the link names.
-- `mai disconnect` removes the empty folders that `mai connect` made for a file.
+- `mai disconnect` removes the empty folders that `mai connect` made for a file,
+  also a folder for two files. A link of the user in the place of such a folder
+  stays.
+- A dotfile that the user links after `mai connect` keeps its own containers
+  and its `version`. A file that the user moves into a dotfiles folder and links
+  (`stow --adopt`) loses the empty containers that mai made.
+- `mai connect codex` writes the files in `CODEX_HOME` when it is set.
+- A second `mai connect codex` keeps an `args` array on more than one line, with
+  its comments, when the values do not change. A string that `toml_edit` writes
+  in a different form (`'C:\Users\...'`) counts as the same value.
+- After `codex mcp remove mai`, `mai disconnect codex` removes the end comment of
+  3.0.0.
 - `mai connect` and `mai disconnect` read a JSON file with a byte order mark,
   and keep the mark.
 - The record of the table of mai in `config.toml` uses one kind of line break.

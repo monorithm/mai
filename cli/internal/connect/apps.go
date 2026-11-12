@@ -200,13 +200,18 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 			})
 		}
 	case "codex":
+		// Codex reads its folder from CODEX_HOME when it is set, else ~/.codex.
+		codexHome := os.Getenv("CODEX_HOME")
+		if codexHome == "" {
+			codexHome = filepath.Join(home, ".codex")
+		}
 		out = append(out, change{
-			path:    filepath.Join(home, ".codex", "config.toml"),
+			path:    filepath.Join(codexHome, "config.toml"),
 			pointer: TOMLPointer,
 			toml:    fmt.Sprintf("[mcp_servers.mai]\ncommand = %s\nargs = [\"mcp\", \"--agent\", %s]\n", tomlString(bin), tomlString(agent)),
 			mcp:     true,
 		})
-		hooks := filepath.Join(home, ".codex", "hooks.json")
+		hooks := filepath.Join(codexHome, "hooks.json")
 		for _, e := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
 			inner := obj("type", "command", "command", hookCommand("codex", e), "timeout", 10)
 			out = append(out, change{

@@ -103,6 +103,15 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 	lines := tomlLines(body)
 	e, found := findMaiTOML(lines)
 	if !found {
+		// The table is gone (for example "codex mcp remove mai"). An end comment of 3.0.0 is
+		// a line of mai, and it goes.
+		if len(e.ends) > 0 {
+			drop := map[int]bool{}
+			for _, i := range e.ends {
+				drop[i] = true
+			}
+			return dropLines(body, lines, drop, -1), nil
+		}
 		return body, nil
 	}
 	// The record has one kind of line break. 3.0.0 wrote "\n" also in a file with CRLF, and
@@ -125,6 +134,9 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 				same = true
 			}
 		}
+	}
+	if !same && sameTOMLTable(text, []byte(loadRecord(it).Text)) {
+		same = true // the same keys and values, in a different form (a literal string of toml_edit)
 	}
 	if force && !ownedTOML(lines, e) {
 		return body, nil // a server of the user named mai replaced the table of mai: it stays
@@ -167,9 +179,16 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	}
 	rec := loadRecord(it)
 	if rec.Target != "" && linkTarget(it.Path) != rec.Target {
-		// The path names a different file now: the notes of mai about its containers are not
-		// for this file.
-		rec.Created, rec.Empty, rec.Blank = nil, nil, nil
+		// The path names a different file now. A key that mai writes only when it is absent
+		// ("version") stays in that file. The notes of mai about containers apply only when the
+		// file holds the entry of mai as mai wrote it: the user moved the file of mai into a
+		// dotfiles folder and linked it (stow --adopt).
+		if rec.IfAbsent || it.Pointer == "/version" {
+			return before, nil
+		}
+		if !entryPresent(before, it) {
+			rec.Created, rec.Empty, rec.Blank = nil, nil, nil
+		}
 	}
 	made := map[string]bool{}
 	for _, p := range rec.Created {
@@ -536,13 +555,47 @@ func RemoveCreatedFile(it manifest.Item) (bool, error) {
 			return false, err
 		}
 	}
-	// The folders that mai made for the file go when they are empty.
+	// The folders that mai made for the file go when they are empty. A link of the user in the
+	// place of a folder stays.
 	for _, d := range it.Dirs {
-		if err := os.Remove(d); err != nil {
-			break
+		if st, err := os.Lstat(d); err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			continue
 		}
+		_ = os.Remove(d) // a folder with other files stays
 	}
 	return true, nil
+}
+
+// entryPresent reports if the JSON text b holds the entry of the item as mai wrote it.
+func entryPresent(b []byte, it manifest.Item) bool {
+	if bom := []byte("\xef\xbb\xbf"); bytes.HasPrefix(b, bom) {
+		b = b[len(bom):]
+	}
+	root, err := scanJSON(b)
+	if err != nil || root.kind != '{' {
+		return false
+	}
+	keys := splitPointer(it.Pointer)
+	if len(keys) == 0 {
+		return false
+	}
+	appendItem := keys[len(keys)-1] == "-"
+	if appendItem {
+		keys = keys[:len(keys)-1]
+	}
+	v := nodeAt(root, keys)
+	if v == nil {
+		return false
+	}
+	if !appendItem {
+		return hashOf(canonical(b, v)) == it.Hash
+	}
+	for _, e := range v.elems {
+		if hashOf(canonical(b, e)) == it.Hash {
+			return true
+		}
+	}
+	return false
 }
 
 // Disconnect removes each entry of app in m, and each file that mai connect made for app and

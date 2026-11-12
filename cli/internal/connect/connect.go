@@ -621,6 +621,14 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 	if err != nil {
 		return err
 	}
+	// The folders that mai makes, for each new file, before the first write: two files of an
+	// app can be in one new folder.
+	dirsOf := map[string][]string{}
+	for _, f := range p.Files {
+		if _, existed, err := readFile(f.Path); err == nil && !existed {
+			dirsOf[f.Path] = missingDirs(filepath.Dir(linkTarget(f.Path)))
+		}
+	}
 	for i, f := range p.Files {
 		cur, existed, err := readFile(f.Path)
 		if err != nil {
@@ -633,10 +641,7 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 			}
 			p.Files[i], f = nf, nf
 		}
-		var dirs []string
-		if !f.Existed {
-			dirs = missingDirs(filepath.Dir(linkTarget(f.Path)))
-		}
+		dirs := dirsOf[f.Path]
 		if !f.Existed || !bytes.Equal(f.Before, f.After) {
 			if err := writeFile(f.Path, f.After); err != nil {
 				return err
@@ -681,9 +686,13 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 		var fileCreated []string
 		var fileEmpty map[string]string
 		var fileBlank *string
+		curTarget := linkTarget(f.Path)
 		for _, old := range m.Of(manifest.AppEntry) {
 			if old.Name == p.App && old.Path == f.Path {
 				o := loadRecord(old)
+				if o.Target != "" && o.Target != curTarget && !entryPresent(f.Before, old) {
+					continue // the notes of a different file (the user linked a dotfile)
+				}
 				fileCreated = union(fileCreated, o.Created)
 				fileEmpty = mergeEmpty(fileEmpty, o.Empty)
 				if o.Blank != nil {
@@ -709,11 +718,12 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 				if old.Name != it.Name || old.Path != it.Path || old.Pointer != it.Pointer {
 					continue
 				}
-				o := loadRecord(old)
-				r.Created = union(r.Created, o.Created)
-				r.Empty = mergeEmpty(r.Empty, o.Empty)
-				if o.Blank != nil {
-					r.Blank = o.Blank
+				if o := loadRecord(old); o.Target == "" || o.Target == curTarget || entryPresent(f.Before, old) {
+					r.Created = union(r.Created, o.Created)
+					r.Empty = mergeEmpty(r.Empty, o.Empty)
+					if o.Blank != nil {
+						r.Blank = o.Blank
+					}
 				}
 				if old.Hash != it.Hash {
 					forget(old)
@@ -792,6 +802,10 @@ func linkTarget(path string) string {
 		return real
 	}
 	for range 40 {
+		// The folder of the path can be a link too: read the path from the real folder.
+		if dir, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+			path = filepath.Join(dir, filepath.Base(path))
+		}
 		st, err := os.Lstat(path)
 		if err != nil || st.Mode()&os.ModeSymlink == 0 {
 			return path
@@ -802,11 +816,7 @@ func linkTarget(path string) string {
 		}
 		if !filepath.IsAbs(dest) {
 			// The system reads ".." of the link from the real folder of the link.
-			dir := filepath.Dir(path)
-			if real, err := filepath.EvalSymlinks(dir); err == nil {
-				dir = real
-			}
-			dest = filepath.Join(dir, dest)
+			dest = filepath.Join(filepath.Dir(path), dest)
 		}
 		path = dest
 	}
