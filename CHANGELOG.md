@@ -30,7 +30,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the user, for example `[mcp_servers.mai.env]`, stays, and
   `mai disconnect codex --force` removes it with the table of mai.
 - `mai disconnect codex` removes the lines of mai as whole lines, thus no two
-  lines of the user join.
+  lines of the user join. The scan of `config.toml` reads multi-line strings,
+  with escapes, and arrays on more than one line, as TOML does.
+- A second `mai connect codex` keeps a comment of the user on the line of
+  `command` or `args`.
+- `mai disconnect --force` keeps a server of the user named `mai`, in
+  `config.toml` and in a JSON file. In a hook set of 3.0.0 that holds hooks of
+  the user, it removes only the hooks of mai.
+- `mai disconnect --force` removes the entries in the correct sequence, thus it
+  also removes a hooks file that `mai connect` made.
 - `mai connect codex` gives an error, not a second table, for a table
   `mcp_servers.mai` in a different form of TOML, and for an inline table
   `mcp_servers = { ... }`.

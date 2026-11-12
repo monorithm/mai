@@ -199,20 +199,10 @@ func addOldRecord(t *testing.T, m *manifest.Manifest, app, path, pointer string,
 	return it
 }
 
+// forceDisconnect runs mai disconnect APP --force.
 func forceDisconnect(t *testing.T, app string, m *manifest.Manifest) error {
 	t.Helper()
-	for _, it := range m.Of(manifest.AppEntry) {
-		if it.Name != app {
-			continue
-		}
-		if err := ForceRemoveEntry(it); err != nil {
-			return err
-		}
-		if err := m.Remove(it); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return Disconnect(app, m)
+	return DisconnectForce(app, m)
 }
 
 func TestAntigravityUpgradeFromTheHookSetEntry(t *testing.T) {

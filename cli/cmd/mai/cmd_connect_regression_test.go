@@ -104,3 +104,28 @@ func TestConnectKeepsAWriteOfTheAppDuringTheQuestion(t *testing.T) {
 		t.Fatalf("connect wrote the old text over the write of Claude Code:\n%s", got)
 	}
 }
+
+func TestForceDisconnectRemovesTheHooksFileThatConnectMade(t *testing.T) {
+	_, _, home := testEnv(t)
+	fixedConnectBinary(t)
+	for _, c := range []struct{ app, file string }{
+		{"cursor", filepath.Join(home, ".cursor", "hooks.json")},
+		{"copilot", filepath.Join(home, ".copilot", "hooks", "mai.json")},
+	} {
+		t.Run(c.app, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			if code := runConnect([]string{c.app, "--agent", "a", "--yes"}, strings.NewReader(""), &out, &errOut); code != 0 {
+				t.Fatalf("connect: %d %s", code, errOut.String())
+			}
+			if _, err := os.Stat(c.file); err != nil {
+				t.Fatalf("connect made no hooks file: %v", err)
+			}
+			if code := runDisconnect([]string{c.app, "--force"}, &out, &errOut); code != 0 {
+				t.Fatalf("disconnect --force: %d %s", code, errOut.String())
+			}
+			if b, err := os.ReadFile(c.file); err == nil {
+				t.Fatalf("mai disconnect %s --force keeps the file that mai connect made:\n%s", c.app, b)
+			}
+		})
+	}
+}
