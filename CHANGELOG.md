@@ -20,6 +20,23 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - After the mai binary moves, `mai connect` replaces the entries of mai and adds
   no second entry.
 - The diff of `mai connect` shows the removed lines before the added lines.
+- In a hook group of Claude Code or Codex, `mai connect` and
+  `mai disconnect --force` change only the hook of mai. The other hooks of the
+  group stay.
+- `mai connect codex` finds the table of mai by its comment and its header.
+  Thus it keeps the tables that Codex adds after the table of mai. A table
+  `mcp_servers.mai` in a different form of TOML gives an error, not a second
+  table.
+- `mai uninstall` keeps a file of an app that `mai connect` made, when the file
+  holds content of the user.
+- `mai disconnect` gives no error for an entry of mai that the user removed.
+- When an app writes its file before you agree to the diff of `mai connect`,
+  the write of the app stays.
+- `mai connect` writes through a symbolic link, and the link stays.
+- A file with CRLF line breaks keeps CRLF. An empty object or array, and a file
+  with only white space, come back byte for byte after `mai disconnect`.
+- `mai connect` refuses a path of the binary that is not valid UTF-8, and a
+  binary of `go run`.
 
 ## [3.0.0] - 2026-11-12
 

@@ -254,9 +254,25 @@ func spaced(b []byte, n *jnode) bool {
 	return n.start+1 < len(b) && b[n.start+1] == ' '
 }
 
-// reindent puts prefix after each line break of text.
-func reindent(text []byte, prefix string) string {
-	return strings.ReplaceAll(string(text), "\n", "\n"+prefix)
+// layout is the form of a JSON text: the indent unit ("" for a minified text) and the line
+// break ("\n", or "\r\n" for a text that a Windows program wrote).
+type layout struct {
+	unit string
+	nl   string
+}
+
+// layoutOf returns the layout of the text b. A text with no line break gets two spaces.
+func layoutOf(b []byte) layout {
+	l := layout{unit: detectIndent(b), nl: "\n"}
+	if bytes.Contains(b, []byte("\r\n")) {
+		l.nl = "\r\n"
+	}
+	return l
+}
+
+// reindent puts the line break of the layout and prefix at each line break of text.
+func (l layout) reindent(text []byte, prefix string) string {
+	return strings.ReplaceAll(string(text), "\n", l.nl+prefix)
 }
 
 // encodeInline writes v on one line, with ": " and ", " as in a JSON text that a person wrote.
@@ -314,9 +330,9 @@ func writeInline(b *strings.Builder, v any, pad bool) {
 	}
 }
 
-// childText returns the text of a new child value v of the container n. key is the quoted key
-// and ": " for an object member, or "" for an array element. unit is the indent unit of the
-// file, "" for a minified file.
+// childText returns the text of a new child value v of the container n, when the child goes on
+// the line of the container. key is the quoted key and ": " for an object member, or "" for an
+// array element.
 func childText(b []byte, n *jnode, key string, v any, unit string) (text string, inline bool) {
 	switch {
 	case unit == "":
@@ -330,56 +346,63 @@ func childText(b []byte, n *jnode, key string, v any, unit string) (text string,
 }
 
 // insertChild adds the value v as the last child of the container n: a member with the key
-// for an object, an element for an array (key is ""). The layout follows the container.
-func insertChild(b []byte, n *jnode, key string, v any, unit string) []byte {
+// for an object, an element for an array (key is ""). The layout follows the container. For
+// an empty container, the result also gives the bytes between its brackets before the
+// insert, so that a remove can put them back.
+func insertChild(b []byte, n *jnode, key string, v any, l layout) (out []byte, emptyInner *string) {
 	kt := ""
 	if n.kind == '{' {
 		kt = string(encodeJSON(key, "")) + ": "
 	}
 	starts, ends := n.childSpans()
-	if text, inline := childText(b, n, kt, v, unit); inline {
+	if len(starts) == 0 {
+		inner := string(b[n.start+1 : n.end-1])
+		emptyInner = &inner
+	}
+	if text, inline := childText(b, n, kt, v, l.unit); inline {
 		if len(starts) == 0 {
-			return splice(b, n.start+1, n.end-1, text)
+			return splice(b, n.start+1, n.end-1, text), emptyInner
 		}
 		sep := ", "
-		if unit == "" {
+		if l.unit == "" {
 			sep = ","
 		}
-		return splice(b, ends[len(ends)-1], ends[len(ends)-1], sep+text)
+		return splice(b, ends[len(ends)-1], ends[len(ends)-1], sep+text), emptyInner
 	}
 	if len(starts) == 0 {
 		// An empty container gets the child on a new line, and the closing bracket on the
 		// next line with the indent of the line of the opening bracket.
 		ind := lineIndent(b, n.start)
-		child := ind + unit
-		return splice(b, n.start+1, n.end-1, "\n"+child+kt+reindent(encodeJSON(v, unit), child)+"\n"+ind)
+		child := ind + l.unit
+		return splice(b, n.start+1, n.end-1, l.nl+child+kt+l.reindent(encodeJSON(v, l.unit), child)+l.nl+ind), emptyInner
 	}
-	child := lineIndent(b, n.start) + unit
+	child := lineIndent(b, n.start) + l.unit
 	if startsLine(b, starts[0]) {
 		child = lineIndent(b, starts[0])
 	}
 	last := ends[len(ends)-1]
-	return splice(b, last, last, ",\n"+child+kt+reindent(encodeJSON(v, unit), child))
+	return splice(b, last, last, ","+l.nl+child+kt+l.reindent(encodeJSON(v, l.unit), child)), nil
 }
 
 // replaceNode replaces the value n with v. parent is the container of n.
-func replaceNode(b []byte, n, parent *jnode, v any, unit string) []byte {
+func replaceNode(b []byte, n, parent *jnode, v any, l layout) []byte {
 	switch {
-	case unit == "":
+	case l.unit == "":
 		return splice(b, n.start, n.end, string(encodeJSON(v, "")))
 	case !multiline(b, parent):
 		return splice(b, n.start, n.end, encodeInline(v, spaced(b, parent)))
 	}
-	return splice(b, n.start, n.end, reindent(encodeJSON(v, unit), lineIndent(b, n.start)))
+	return splice(b, n.start, n.end, l.reindent(encodeJSON(v, l.unit), lineIndent(b, n.start)))
 }
 
 // removeChild removes the child i of the container n with its comma. When n has no other
-// child, the result is the empty container "{}" or "[]".
-func removeChild(b []byte, n *jnode, i int) []byte {
+// child, the bytes between its brackets become inner: the bytes from before mai connect, or ""
+// for "{}" and "[]".
+func removeChild(b []byte, n *jnode, i int, inner string) []byte {
 	starts, ends := n.childSpans()
 	switch {
 	case len(starts) == 1:
-		return splice(b, n.start+1, n.end-1, "")
+		return splice(b, n.start+1, n.end-1, inner)
 	case i > 0:
 		return splice(b, ends[i-1], ends[i], "")
 	default:

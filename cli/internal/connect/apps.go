@@ -30,6 +30,10 @@ type change struct {
 	mcp      bool
 	format   string
 	event    string
+	// inner is the hook object of a hook group, for an app that puts hooks in groups
+	// {"hooks": [...]} (Claude Code, Codex). A group can hold hooks of the user too, thus mai
+	// changes only its own hook object in a group that holds more.
+	inner *object
 }
 
 func obj(kv ...any) *object {
@@ -84,12 +88,24 @@ func tomlString(s string) string {
 	return b.String()
 }
 
-// isMaiProgram reports if the program p of a command is a mai binary: its base name is mai or
-// mai.exe, with or without quotes.
+// isMaiProgram reports if the program p of a command is a mai binary: its base name is mai,
+// mai.exe, or the base name of the running mai binary, with or without quotes. The names are
+// not case-sensitive, as on Windows and macOS.
 func isMaiProgram(p string) bool {
+	base := strings.ToLower(baseName(p))
+	if base == "mai" || base == "mai.exe" {
+		return true
+	}
+	if bin, err := Binary(); err == nil {
+		return base == strings.ToLower(baseName(bin))
+	}
+	return false
+}
+
+// baseName returns the last part of the path p, with no quotes around p.
+func baseName(p string) string {
 	p = strings.Trim(strings.TrimSpace(p), `'"`)
-	base := p[strings.LastIndexAny(p, `/\`)+1:]
-	return base == "mai" || base == "mai.exe"
+	return p[strings.LastIndexAny(p, `/\`)+1:]
 }
 
 // isMaiHook reports if cmd is the hook command of mai for format and event, with any path of
@@ -139,12 +155,14 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 		})
 		settings := filepath.Join(home, ".claude", "settings.json")
 		for _, e := range []string{"SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"} {
+			inner := obj("type", "command", "command", hookCommand("claude", e), "timeout", 10)
 			out = append(out, change{
 				path:    settings,
 				pointer: "/hooks/" + e + "/-",
-				value:   obj("hooks", []any{obj("type", "command", "command", hookCommand("claude", e), "timeout", 10)}),
+				value:   obj("hooks", []any{inner}),
 				format:  "claude",
 				event:   e,
+				inner:   inner,
 			})
 		}
 	case "cursor":
@@ -190,12 +208,14 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 		})
 		hooks := filepath.Join(home, ".codex", "hooks.json")
 		for _, e := range []string{"SessionStart", "UserPromptSubmit", "Stop"} {
+			inner := obj("type", "command", "command", hookCommand("codex", e), "timeout", 10)
 			out = append(out, change{
 				path:    hooks,
 				pointer: "/hooks/" + e + "/-",
-				value:   obj("hooks", []any{obj("type", "command", "command", hookCommand("codex", e), "timeout", 10)}),
+				value:   obj("hooks", []any{inner}),
 				format:  "codex",
 				event:   e,
+				inner:   inner,
 			})
 		}
 	case "antigravity":
@@ -220,6 +240,9 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].path < out[j].path })
 	return out, nil
 }
+
+// groupApps are the apps that put hooks in groups {"hooks": [...]}.
+var groupApps = map[string]bool{"claude": true, "codex": true}
 
 // Known reports if mai connect knows the app.
 func Known(app string) bool {

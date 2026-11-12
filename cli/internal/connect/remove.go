@@ -90,27 +90,26 @@ func remove(it manifest.Item, force bool) error {
 	return nil
 }
 
+// removeTOML removes the table of mai from the config.toml of Codex. A table that is gone
+// gives no error. A table with a different text gives *ErrChanged, unless force is set.
 func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
-	start := bytes.Index(body, []byte("\n"+tomlBegin))
-	if start < 0 {
+	r, found := findMaiTOML(body)
+	if !found {
 		return body, nil
 	}
-	rest := body[start:]
-	end := bytes.Index(rest, []byte(tomlEnd))
-	if end < 0 {
-		return nil, changedErr(it, string(rest))
+	region := body[r.start:r.end]
+	if hashOf(region) != it.Hash && !force {
+		return nil, changedErr(it, strings.TrimRight(string(region), "\r\n"))
 	}
-	block := rest[:end+len(tomlEnd)]
-	if hashOf(block) != it.Hash && !force {
-		return nil, changedErr(it, strings.TrimSuffix(string(block), "\n"))
-	}
-	out := append([]byte(nil), body[:start]...)
-	return append(out, rest[end+len(tomlEnd):]...), nil
+	return r.replace(body, ""), nil
 }
 
 // removeJSON removes the entry of the item from the JSON text before. Each other byte stays.
 // When the entry was the last child of a container that mai connect made, the container goes
-// too, from the deepest one up.
+// too, from the deepest one up. A container that was empty before gets its bytes back. An
+// entry that is gone gives no error. An entry with a different text gives *ErrChanged, unless
+// force is set; in a hook group that holds hooks of the user, force removes only the hook
+// object of mai.
 func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	if len(bytes.TrimSpace(before)) == 0 {
 		return before, nil
@@ -123,9 +122,20 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("connect: the item has no pointer")
 	}
+	rec := loadRecord(it)
 	made := map[string]bool{}
-	for _, p := range loadRecord(it).Created {
+	for _, p := range rec.Created {
 		made[p] = true
+	}
+	inner := func(pointer string) string { return rec.Empty[pointer] }
+	finish := func(out []byte) []byte {
+		// A file that held only white space gets that text back when no member stays.
+		if rec.Blank != nil {
+			if n, err := scanJSON(out); err == nil && n.kind == '{' && len(n.members) == 0 {
+				return []byte(*rec.Blank)
+			}
+		}
+		return out
 	}
 	appendItem := keys[len(keys)-1] == "-"
 	if appendItem {
@@ -156,19 +166,45 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 				break
 			}
 		}
-		if found < 0 && force {
+		if found < 0 {
+			// The entry is not there in the form that mai wrote. Find the hook of mai for
+			// the app and the event of the item.
+			event := keys[len(keys)-1]
 			for i, e := range target.elems {
-				if hasMaiHook(before, e) {
+				if groupApps[it.Name] {
+					group, hook := maiHookInGroup(before, e, it.Name, event)
+					if hook == nil {
+						continue
+					}
+					if !force {
+						return nil, changedErr(it, string(before[e.start:e.end]))
+					}
+					if !onlyMaiGroup(e, group) {
+						gi := 0
+						for j, h := range group.elems {
+							if h == hook {
+								gi = j
+							}
+						}
+						return finish(removeChild(before, group, gi, "")), nil
+					}
+					found = i
+					break
+				}
+				if hasMaiHook(before, e, it.Name, event) {
+					if !force {
+						return nil, changedErr(it, string(before[e.start:e.end]))
+					}
 					found = i
 					break
 				}
 			}
-		}
-		if found < 0 {
-			return nil, changedErr(it, string(before[target.start:target.end]))
+			if found < 0 {
+				return before, nil // the user removed the entry
+			}
 		}
 		if len(target.elems) > 1 || !made[pointerOf(keys)] {
-			return removeChild(before, target, found), nil
+			return finish(removeChild(before, target, found, inner(pointerOf(keys)))), nil
 		}
 		// The array has only this element, and mai made the array: remove the array.
 	} else if hashOf(canonical(before, target)) != it.Hash && !force {
@@ -180,17 +216,18 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	for level > 0 && len(nodes[level].members) == 1 && made[pointerOf(keys[:level])] {
 		level--
 	}
-	return removeChild(before, nodes[level], idx[level]), nil
+	return finish(removeChild(before, nodes[level], idx[level], inner(pointerOf(keys[:level])))), nil
 }
 
-// hasMaiHook reports if the value n of the text b holds a hook command of mai.
-func hasMaiHook(b []byte, n *jnode) bool {
+// hasMaiHook reports if the value n of the text b holds the hook command of mai for format
+// and event.
+func hasMaiHook(b []byte, n *jnode, format, event string) bool {
 	v, err := parseJSON(b[n.start:n.end])
 	if err != nil {
 		return false
 	}
 	for _, s := range stringsIn(v) {
-		if isMaiHook(s, "", "") {
+		if isMaiHook(s, format, event) {
 			return true
 		}
 	}
