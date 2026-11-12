@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -69,20 +70,51 @@ func readFile(path string) ([]byte, bool, error) {
 	return b, err == nil, err
 }
 
+// Binary gives the path of the mai binary that the entries name. The apps start mai with the
+// PATH of the app, not the PATH of the shell of the user, thus the entries use a full path.
+// The default is the path of the running binary. A test replaces it.
+var Binary = runningBinary
+
+func runningBinary() (string, error) {
+	p, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("connect: find the path of the mai binary: %w", err)
+	}
+	p = filepath.Clean(p)
+	if isTemporaryBuild(p) {
+		return "", errors.New("connect: this mai is a temporary build of \"go run\"; install mai with \"go install\", then run mai connect again")
+	}
+	return p, nil
+}
+
+// isTemporaryBuild reports if p is in the build cache of "go run", which Go deletes.
+func isTemporaryBuild(p string) bool {
+	return strings.Contains(filepath.ToSlash(p), "/go-build")
+}
+
+// BinaryPath returns the path of the mai binary that Prepare writes in the entries.
+func BinaryPath() (string, error) { return Binary() }
+
 // Prepare computes the changes for app and agent in the files under home. It writes nothing.
+// A file that exists keeps each byte outside the entries of mai.
 func Prepare(home, app, agent string) (*Plan, error) {
 	if agent == "" {
 		return nil, errors.New("connect: the agent name is empty")
 	}
-	cs, err := changes(home, app, agent)
+	bin, err := Binary()
+	if err != nil {
+		return nil, err
+	}
+	cs, err := changes(home, app, agent, bin, runtime.GOOS)
 	if err != nil {
 		return nil, err
 	}
 	p := &Plan{App: app, Agent: agent}
 	byPath := map[string]*FileChange{}
-	docs := map[string]any{}
+	texts := map[string][]byte{}
+	units := map[string]string{}
+	fresh := map[string]bool{}
 	origs := map[string]*object{}
-	tomls := map[string][]byte{}
 	for _, c := range cs {
 		fc, ok := byPath[c.path]
 		if !ok {
@@ -93,45 +125,49 @@ func Prepare(home, app, agent string) (*Plan, error) {
 			fc = &FileChange{Path: c.path, Before: before, Existed: existed, records: map[string]record{}}
 			byPath[c.path] = fc
 			p.Files = append(p.Files, fc)
-			if c.pointer == TOMLPointer {
-				tomls[c.path] = append([]byte(nil), before...)
-			} else {
-				doc, err := loadDoc(c.path, before)
+			texts[c.path] = append([]byte(nil), before...)
+			if c.pointer != TOMLPointer {
+				orig, err := loadDoc(c.path, before)
 				if err != nil {
 					return nil, err
 				}
-				docs[c.path] = doc
-				orig, _ := loadDoc(c.path, before)
 				origs[c.path] = orig
+				units[c.path] = detectIndent(before)
+				if len(bytes.TrimSpace(before)) == 0 {
+					// A new or empty file starts as an empty object with an indent of two spaces.
+					texts[c.path] = []byte("{}")
+					units[c.path] = "  "
+					fresh[c.path] = true
+				}
 			}
 		}
 		if c.pointer == TOMLPointer {
-			body, item, text, err := addTOML(tomls[c.path], c, app)
+			body, item, text, err := addTOML(texts[c.path], c, app)
 			if err != nil {
 				return nil, err
 			}
-			tomls[c.path] = body
+			texts[c.path] = body
 			if item != nil {
 				fc.Items = append(fc.Items, *item)
 				fc.records[item.Pointer] = record{Text: string(text)}
 			}
 			continue
 		}
-		item, text, err := addJSON(docs[c.path].(*object), c, app)
+		body, item, text, err := addText(texts[c.path], c, app, units[c.path])
 		if err != nil {
 			return nil, err
 		}
+		texts[c.path] = body
 		if item != nil {
 			fc.Items = append(fc.Items, *item)
 			fc.records[item.Pointer] = record{Text: string(text), Created: created(origs[c.path], c.pointer)}
 		}
 	}
 	for _, fc := range p.Files {
-		if t, ok := tomls[fc.Path]; ok {
-			fc.After = t
-			continue
+		fc.After = texts[fc.Path]
+		if fresh[fc.Path] {
+			fc.After = append(fc.After, '\n')
 		}
-		fc.After = renderDoc(fc.Before, docs[fc.Path])
 	}
 	return p, nil
 }
@@ -149,38 +185,6 @@ func loadDoc(path string, b []byte) (*object, error) {
 		return nil, fmt.Errorf("connect: %s does not hold a JSON object", path)
 	}
 	return o, nil
-}
-
-// renderDoc encodes doc with the indent and the final line break of the original text.
-func renderDoc(before []byte, doc any) []byte {
-	out := encodeJSON(doc, detectIndent(before))
-	if len(bytes.TrimSpace(before)) == 0 || bytes.HasSuffix(before, []byte("\n")) {
-		out = append(out, '\n')
-	}
-	return out
-}
-
-// walk returns the object at keys. With create set, it makes each missing object.
-func walk(root *object, keys []string, create bool) (*object, error) {
-	cur := root
-	for _, k := range keys {
-		v, ok := cur.get(k)
-		if !ok {
-			if !create {
-				return nil, nil
-			}
-			n := newObject()
-			cur.set(k, n)
-			cur = n
-			continue
-		}
-		o, isObj := v.(*object)
-		if !isObj {
-			return nil, fmt.Errorf("connect: the key %q is not an object", k)
-		}
-		cur = o
-	}
-	return cur, nil
 }
 
 // created returns the pointer of each container on the path of pointer that orig does not
@@ -209,50 +213,77 @@ func created(orig *object, pointer string) []string {
 	return out
 }
 
-func addJSON(doc *object, c change, app string) (*manifest.Item, []byte, error) {
-	keys := splitPointer(c.pointer)
+// addText adds the entry of c to the JSON text b. Each other byte of b stays. The result is the
+// new text, the manifest item, and the compact text of the entry. A nil item means that the
+// entry is not recorded: an ifAbsent entry whose key exists.
+func addText(b []byte, c change, app, unit string) ([]byte, *manifest.Item, []byte, error) {
+	root, err := scanJSON(b)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("connect: %s is not plain JSON (comments are not supported): %w", c.path, err)
+	}
+	if root.kind != '{' {
+		return nil, nil, nil, fmt.Errorf("connect: %s does not hold a JSON object", c.path)
+	}
 	text := encodeJSON(c.value, "")
 	h := hashOf(text)
 	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: h}
-	if keys[len(keys)-1] == "-" {
-		parent, err := walk(doc, keys[:len(keys)-2], true)
-		if err != nil {
-			return nil, nil, err
-		}
-		k := keys[len(keys)-2]
-		v, ok := parent.get(k)
-		var arr []any
-		if ok {
-			a, isArr := v.([]any)
-			if !isArr {
-				return nil, nil, fmt.Errorf("connect: %s: %s is not an array", c.path, k)
-			}
-			arr = a
-		}
-		for _, e := range arr {
-			if hashOf(encodeJSON(e, "")) == h {
-				return item, text, nil
-			}
-		}
-		parent.set(k, append(arr, c.value))
-		return item, text, nil
+	keys := splitPointer(c.pointer)
+	appendItem := keys[len(keys)-1] == "-"
+	if appendItem {
+		keys = keys[:len(keys)-1]
 	}
-	parent, err := walk(doc, keys[:len(keys)-1], true)
-	if err != nil {
-		return nil, nil, err
+	leaf := c.value
+	if appendItem {
+		leaf = []any{c.value}
 	}
-	k := keys[len(keys)-1]
-	if v, ok := parent.get(k); ok {
-		if c.ifAbsent {
-			return nil, nil, nil
+	// Each key before the last one is an object. A missing object goes in with the entry.
+	cur := root
+	for i, k := range keys[:len(keys)-1] {
+		_, v := cur.member(k)
+		if v == nil {
+			return insertChild(b, cur, k, nest(keys[i+1:], leaf), unit), item, text, nil
 		}
-		if hashOf(encodeJSON(v, "")) == h {
-			return item, text, nil
+		if v.kind != '{' {
+			return nil, nil, nil, fmt.Errorf("connect: %s: the key %q is not an object", c.path, k)
 		}
-		return nil, nil, fmt.Errorf("%w: %s at %s", ErrExists, c.path, c.pointer)
+		cur = v
 	}
-	parent.set(k, c.value)
-	return item, text, nil
+	last := keys[len(keys)-1]
+	_, v := cur.member(last)
+	if v == nil {
+		return insertChild(b, cur, last, leaf, unit), item, text, nil
+	}
+	if !appendItem {
+		switch {
+		case c.ifAbsent:
+			return b, nil, nil, nil
+		case hashOf(canonical(b, v)) == h:
+			return b, item, text, nil
+		case c.ownsText(b, v):
+			return replaceNode(b, v, cur, c.value, unit), item, text, nil
+		}
+		return nil, nil, nil, fmt.Errorf("%w: %s at %s", ErrExists, c.path, c.pointer)
+	}
+	if v.kind != '[' {
+		return nil, nil, nil, fmt.Errorf("connect: %s: %s is not an array", c.path, last)
+	}
+	for _, e := range v.elems {
+		if hashOf(canonical(b, e)) == h {
+			return b, item, text, nil
+		}
+	}
+	for _, e := range v.elems {
+		if c.ownsText(b, e) {
+			return replaceNode(b, e, v, c.value, unit), item, text, nil
+		}
+	}
+	return insertChild(b, v, "", c.value, unit), item, text, nil
+}
+
+// ownsText reports if the value n of the text b is an earlier entry of mai for c.
+func (c change) ownsText(b []byte, n *jnode) bool {
+	v, err := parseJSON(b[n.start:n.end])
+	return err == nil && c.owns(v)
 }
 
 func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte, error) {
@@ -260,6 +291,13 @@ func addTOML(body []byte, c change, app string) ([]byte, *manifest.Item, []byte,
 	item := &manifest.Item{Type: manifest.AppEntry, Name: app, Path: c.path, Pointer: c.pointer, Hash: hashOf(block)}
 	if bytes.Contains(body, block) {
 		return body, item, block, nil
+	}
+	// A block between the markers of mai is an earlier entry of mai: replace it.
+	if start := bytes.Index(body, []byte("\n"+tomlBegin)); start >= 0 {
+		if end := bytes.Index(body[start:], []byte(tomlEnd)); end >= 0 {
+			end += start + len(tomlEnd)
+			return splice(body, start, end, string(block)), item, block, nil
+		}
 	}
 	if bytes.Contains(body, []byte(tomlBegin)) || bytes.Contains(body, []byte("[mcp_servers.mai]")) {
 		return nil, nil, nil, fmt.Errorf("%w: %s at %s", ErrExists, c.path, c.pointer)
@@ -320,6 +358,19 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 			}
 		}
 		for _, it := range f.Items {
+			// An earlier connect of the same entry knows which containers mai made before the
+			// file had them. Keep that knowledge, and remove the record of a replaced entry.
+			r := f.records[it.Pointer]
+			for _, old := range m.Of(manifest.AppEntry) {
+				if old.Name != it.Name || old.Path != it.Path || old.Pointer != it.Pointer {
+					continue
+				}
+				r.Created = union(r.Created, loadRecord(old).Created)
+				if old.Hash != it.Hash {
+					forget(old)
+				}
+			}
+			f.records[it.Pointer] = r
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return err
 			}
@@ -352,4 +403,17 @@ func writeFile(path string, b []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// union returns the items of a and b, each one time, in the sequence of a and then b.
+func union(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range append(append([]string(nil), a...), b...) {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }

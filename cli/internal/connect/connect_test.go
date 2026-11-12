@@ -10,9 +10,21 @@ import (
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
+// testBin is the path of mai that the entries of the tests name.
+const testBin = "/opt/mai/bin/mai"
+
+// useBinary makes Prepare write path as the mai binary until the end of the test.
+func useBinary(t *testing.T, path string) {
+	t.Helper()
+	old := Binary
+	Binary = func() (string, error) { return path, nil }
+	t.Cleanup(func() { Binary = old })
+}
+
 // setup makes a temp HOME and MAI_HOME, so that no test touches a real file of an app.
 func setup(t *testing.T) (home string, m *manifest.Manifest) {
 	t.Helper()
+	useBinary(t, testBin)
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)

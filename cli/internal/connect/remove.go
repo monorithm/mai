@@ -108,10 +108,16 @@ func removeTOML(body []byte, it manifest.Item, force bool) ([]byte, error) {
 	return append(out, rest[end+len(tomlEnd):]...), nil
 }
 
+// removeJSON removes the entry of the item from the JSON text before. Each other byte stays.
+// When the entry was the last child of a container that mai connect made, the container goes
+// too, from the deepest one up.
 func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
-	doc, err := loadDoc(it.Path, before)
+	if len(bytes.TrimSpace(before)) == 0 {
+		return before, nil
+	}
+	root, err := scanJSON(before)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect: %s is not plain JSON (comments are not supported): %w", it.Path, err)
 	}
 	keys := splitPointer(it.Pointer)
 	if len(keys) == 0 {
@@ -125,58 +131,70 @@ func removeJSON(before []byte, it manifest.Item, force bool) ([]byte, error) {
 	if appendItem {
 		keys = keys[:len(keys)-1]
 	}
-	parents := []*object{doc}
-	for _, k := range keys[:len(keys)-1] {
-		v, ok := parents[len(parents)-1].get(k)
-		o, isObj := v.(*object)
-		if !ok || !isObj {
+	// nodes[i] is the object that holds keys[i] at idx[i]; nodes[len(keys)] is the value.
+	nodes, idx := []*jnode{root}, []int{}
+	for _, k := range keys {
+		cur := nodes[len(nodes)-1]
+		if cur.kind != '{' {
 			return before, nil
 		}
-		parents = append(parents, o)
+		i, v := cur.member(k)
+		if v == nil {
+			return before, nil
+		}
+		nodes, idx = append(nodes, v), append(idx, i)
 	}
-	parent := parents[len(parents)-1]
-	last := keys[len(keys)-1]
-	v, ok := parent.get(last)
-	if !ok {
-		return before, nil
-	}
+	target := nodes[len(nodes)-1]
 	if appendItem {
-		arr, isArr := v.([]any)
-		if !isArr {
-			return nil, changedErr(it, string(encodeJSON(v, "  ")))
+		if target.kind != '[' {
+			return nil, changedErr(it, string(before[target.start:target.end]))
 		}
-		out := arr[:0:0]
-		found := false
-		for _, e := range arr {
-			if !found && hashOf(encodeJSON(e, "")) == it.Hash {
-				found = true
-				continue
+		found := -1
+		for i, e := range target.elems {
+			if hashOf(canonical(before, e)) == it.Hash {
+				found = i
+				break
 			}
-			if force && !found && strings.Contains(string(encodeJSON(e, "")), `"mai hook `) {
-				found = true
-				continue
+		}
+		if found < 0 && force {
+			for i, e := range target.elems {
+				if hasMaiHook(before, e) {
+					found = i
+					break
+				}
 			}
-			out = append(out, e)
 		}
-		if !found {
-			return nil, changedErr(it, string(encodeJSON(arr, "  ")))
+		if found < 0 {
+			return nil, changedErr(it, string(before[target.start:target.end]))
 		}
-		if len(out) > 0 || !made[pointerOf(keys)] {
-			parent.set(last, out)
-			return renderDoc(before, doc), nil
+		if len(target.elems) > 1 || !made[pointerOf(keys)] {
+			return removeChild(before, target, found), nil
 		}
-	} else if hashOf(encodeJSON(v, "")) != it.Hash && !force {
-		return nil, changedErr(it, string(encodeJSON(v, "  ")))
+		// The array has only this element, and mai made the array: remove the array.
+	} else if hashOf(canonical(before, target)) != it.Hash && !force {
+		return nil, changedErr(it, string(before[target.start:target.end]))
 	}
-	parent.del(last)
-	// Remove each object that mai made and that is empty now, from the deepest one up.
-	for i := len(parents) - 1; i > 0; i-- {
-		if len(parents[i].keys) > 0 || !made[pointerOf(keys[:i])] {
-			break
-		}
-		parents[i-1].del(keys[i-1])
+	// Remove the member keys[level] of nodes[level]. When it is the only member of an object
+	// that mai made, remove that object from its parent instead.
+	level := len(keys) - 1
+	for level > 0 && len(nodes[level].members) == 1 && made[pointerOf(keys[:level])] {
+		level--
 	}
-	return renderDoc(before, doc), nil
+	return removeChild(before, nodes[level], idx[level]), nil
+}
+
+// hasMaiHook reports if the value n of the text b holds a hook command of mai.
+func hasMaiHook(b []byte, n *jnode) bool {
+	v, err := parseJSON(b[n.start:n.end])
+	if err != nil {
+		return false
+	}
+	for _, s := range stringsIn(v) {
+		if isMaiHook(s, "", "") {
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveCreatedFile removes a file that mai connect made, when it holds no content now. A

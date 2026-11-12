@@ -93,6 +93,9 @@ func runConnect(args []string, in io.Reader, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "%s has the entries of mai already\n", app)
 		return 0
 	}
+	if bin, err := connect.BinaryPath(); err == nil {
+		fmt.Fprintf(out, "The entries name the mai binary %s.\n", bin)
+	}
 	fmt.Fprint(out, p.Diff())
 	if !*yes {
 		fmt.Fprint(out, "Write these changes? [y/N] ")
