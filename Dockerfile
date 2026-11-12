@@ -1,4 +1,4 @@
-FROM astral/uv:0.13.6 AS uv
+FROM astral/uv:0.13.7 AS uv
 
 FROM postgres:18.6-alpine AS build
 RUN apk add --no-cache python3
