@@ -4,7 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -39,7 +39,7 @@ func (p polkit) actionInstalled() bool {
 		return err == nil && code == 0
 	}
 	for _, dir := range polkitActionDirs {
-		if p.exists(filepath.Join(dir, polkitPolicyFile)) {
+		if p.exists(path.Join(dir, polkitPolicyFile)) {
 			return true
 		}
 	}

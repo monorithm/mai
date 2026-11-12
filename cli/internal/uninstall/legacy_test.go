@@ -50,17 +50,18 @@ func TestSelectContainerOfCompose(t *testing.T) {
 
 func TestLegacyUninstall(t *testing.T) {
 	home := t.TempDir()
+	slashHome := filepath.ToSlash(home)
 	if err := os.MkdirAll(filepath.Join(home, ".mai", "bin"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(home, ".mai", "compose.yaml"), []byte("services: {}\n"), 0o600)
 	cursor := filepath.Join(home, ".cursor", "mcp.json")
 	_ = os.MkdirAll(filepath.Dir(cursor), 0o700)
-	entry := `{"mcpServers":{"mai":{"command":"` + home + `/.mai/bin/mai","args":["mcp"]},"x":{"command":"npx"}}}`
+	entry := `{"mcpServers":{"mai":{"command":"` + slashHome + `/.mai/bin/mai","args":["mcp"]},"x":{"command":"npx"}}}`
 	_ = os.WriteFile(cursor, []byte(entry), 0o600)
 	codex := filepath.Join(home, ".codex", "config.toml")
 	_ = os.MkdirAll(filepath.Dir(codex), 0o700)
-	_ = os.WriteFile(codex, []byte("[mcp_servers.mai]\ncommand = \""+home+"/.mai/bin/mai\"\n"), 0o600)
+	_ = os.WriteFile(codex, []byte("[mcp_servers.mai]\ncommand = \""+slashHome+"/.mai/bin/mai\"\n"), 0o600)
 
 	e := newFakeEngine()
 	e.containers = []fakeContainer{

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/moby/moby/client"
@@ -91,7 +92,7 @@ func TestWriteBackupMakesOneArchive(t *testing.T) {
 	if got["mai-1.pgdump"] != "dump" || got["mai-1.mail.tar.gz"] != "mail" || len(got) != 2 {
 		t.Errorf("archive %v", got)
 	}
-	if fi, _ := os.Stat(dest); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(dest); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", fi.Mode().Perm())
 	}
 }
