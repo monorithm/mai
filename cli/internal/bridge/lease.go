@@ -35,8 +35,19 @@ type lease struct {
 	newMail   int
 	updatedAt string
 	ended     bool
+	renewing  *renewal // The renew that runs, or nil. Hold mu.
 
 	renewMu sync.Mutex
+}
+
+// renewal is a renew of a lease that runs. The other calls that need a renew of the same
+// lease wait for done, and then get err.
+type renewal struct {
+	done chan struct{}
+	err  error
+	// stopped is true when the context of the renew ended before the lease request. The
+	// result is then not a result of the server.
+	stopped bool
 }
 
 // leaseAnswer is the answer of POST /api/leases. Session is "" when the answer has
@@ -314,14 +325,54 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 // or a new pool lease for the pool lease. When a different call renewed l before, renew
 // does nothing.
 //
+// Calls at the same time that need a renew of l share one renew. Each of them gets the result
+// of its lease request: nil for the new lease, or the same error. Thus a server that does not
+// reply does not make each call wait for the lease request of each call before it. A call
+// after the end of that renew sends a new lease request.
+//
 // When the request is not successful, l keeps its token. Thus the next call or heartbeat
 // gets LEASE_UNKNOWN again and tries again. The pool lease then has no session.
 //
 // When the request is successful, renew writes the notice file. Thus the notice has the
 // session of the new lease immediately, also when a tool call (not a heartbeat) renewed l.
 func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
-	l.renewMu.Lock()
-	defer l.renewMu.Unlock()
+	for {
+		l.mu.Lock()
+		switch {
+		case l.ended:
+			l.mu.Unlock()
+			return errEnded
+		case l.token != old:
+			l.mu.Unlock()
+			return nil
+		}
+		if r := l.renewing; r != nil {
+			l.mu.Unlock()
+			<-r.done
+			if r.stopped && ctx.Err() == nil {
+				// The renew stopped before its lease request, for example at the end of the
+				// heartbeat loop. This call tries again.
+				continue
+			}
+			return r.err
+		}
+		r := &renewal{done: make(chan struct{})}
+		l.renewing = r
+		l.mu.Unlock()
+		l.renewMu.Lock()
+		r.err = b.renewOnce(ctx, l, old)
+		r.stopped = r.err != nil && ctx.Err() != nil && errors.Is(r.err, ctx.Err())
+		l.mu.Lock()
+		l.renewing = nil
+		l.mu.Unlock()
+		l.renewMu.Unlock()
+		close(r.done)
+		return r.err
+	}
+}
+
+// renewOnce does the steps of renew for one lease request. Hold l.renewMu.
+func (b *Bridge) renewOnce(ctx context.Context, l *lease, old string) error {
 	if l.isEnded() {
 		return errEnded
 	}

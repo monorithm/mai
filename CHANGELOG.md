@@ -48,7 +48,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with its label or its login. Each subsequent call with the same label,
   login, or handle uses the same lease. Calls at the same time for the same
   session make one lease request, and each of these calls gets the result of
-  that request. A `login` to that session gives the handle of the same lease.
+  that request. The same rule applies to the new lease after a restart of the
+  server, for a named session and for the pool lease. A `login` to that
+  session gives the handle of the same lease.
   When the lease request is not successful, the call gets the tool error of
   `login` with the path `session`. Examples are `BAD_LABEL` for a label of
   the pool, and `SESSION_BUSY`. A value that is not a label, a login, or a

@@ -19,7 +19,7 @@ of the bridge `mai mcp` is necessary as the bearer token.
    no lease for that session, the first call gets the lease, as a `login`
    does. Each subsequent call with the same label, login, or handle uses the
    same lease. Calls at the same time for the same session make one lease
-   request.
+   request, also for the new lease after a restart of the server.
 4. The tool `login` is optional. It takes the label or the login of a named
    session, gets the lease as a call with the label does, and gives a handle.
    A `login` to a session that the bridge holds gives the handle of that
