@@ -106,3 +106,29 @@ func TestLoadBadJSON(t *testing.T) {
 		t.Fatal("no error for bad JSON")
 	}
 }
+
+// The port, the image, and the data folder of config.json are of the instance that the file
+// names. An update to a different instance must not give these values to that instance.
+func TestUpdateToADifferentInstanceKeepsNoValueOfTheInstanceBefore(t *testing.T) {
+	dir := t.TempDir()
+	if err := Update(dir, Overrides{Instance: "b", Port: 18993, Image: "img:b", DataDir: "/data-of-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(dir, Overrides{Instance: "a", Port: 18992}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c != (Config{Instance: "a", Port: 18992, Image: DefaultImage()}) {
+		t.Fatalf("after the update to the instance a, config.json gives %+v", c)
+	}
+	// An update of the same instance keeps the other fields.
+	if err := Update(dir, Overrides{Instance: "a", DataDir: "/data-of-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = Load(dir); c.Port != 18992 || c.DataDir != "/data-of-a" {
+		t.Fatalf("after an update of the same instance, config.json gives %+v", c)
+	}
+}

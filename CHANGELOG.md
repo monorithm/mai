@@ -128,6 +128,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `mai start --instance NAME` uses the port and the data folder of that
+  instance, also when `config.json` names a different instance. Before, the
+  start took the port and the data folder of the instance of `config.json`.
+  Thus two containers could use one data folder. Then `config.json` named
+  the new instance with the port of the other instance. Thus the subsequent
+  commands sent the keys of the new instance to the other server. The start
+  also refuses a data folder that a container of a different instance
+  mounts, and `config.json` changes only after a successful start.
 - The bridge ends each lease and removes its notice file when the app exits
   during a call, for example during `wait_for_mail`. Before, the write of
   the result to the closed stdout or stderr stopped the bridge with the

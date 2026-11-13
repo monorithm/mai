@@ -49,6 +49,24 @@ sessions with these labels. `mai session new AGENT --label s1` gives
 `BAD_LABEL` and exit code 2, and it does not call the server. To make pool
 sessions, use `--count N`.
 
+### Instances
+
+The lifecycle commands take `--instance NAME`. The default is the instance
+of `config.json`. The file `config.json` names one instance, with its port,
+its image, and its data folder. When `--instance` names a different instance,
+the CLI does not use these values of `config.json`:
+
+- For an instance that has a container, the CLI reads the port and the data
+  folder from that container. The port is the host port of `8080/tcp`, and
+  the data folder is the mount at `/data`.
+- For a new instance, `mai start` uses `--port`, `--data-dir`, and
+  `--image`, or the defaults. It refuses a port that a different program
+  uses. It also refuses a data folder that a container of a different
+  instance mounts.
+- After a successful start, `config.json` names the instance of the start,
+  with its port and its data folder. A start that is not successful does not
+  change `config.json`.
+
 ## Bridge
 
 `mai mcp --agent A` gets the pool lease of the agent when it starts. Then it

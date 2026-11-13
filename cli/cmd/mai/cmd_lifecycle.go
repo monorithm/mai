@@ -61,7 +61,19 @@ type lcSession struct {
 	dirs paths.Dirs
 	cfg  config.Config
 	eng  *engine.Engine
+	// file is the instance that config.json names.
+	file string
+	// flags holds the values of the flags of the command.
+	flags config.Overrides
+	// known is true when cfg.Port is the port of the server of the instance: the port of
+	// config.json when the file names the instance, the flag --port, or the host port of the
+	// container of the instance.
+	known bool
 }
+
+// other tells if the instance is not the instance of config.json. Then the port, the image,
+// and the data folder of config.json are of a different instance.
+func (s *lcSession) other() bool { return s.cfg.Instance != s.file }
 
 func lcFail(format string, a ...any) int {
 	fmt.Fprintf(lcErr, "mai: "+format+"\n", a...)
@@ -100,7 +112,13 @@ func lcOpen(o config.Overrides, connect bool) (*lcSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", config.Path(dirs.Config), err)
 	}
-	s := &lcSession{dirs: dirs, cfg: cfg.Apply(o)}
+	s := &lcSession{dirs: dirs, file: cfg.Instance, flags: o, known: true}
+	if o.Instance != "" && o.Instance != cfg.Instance {
+		// The values of config.json are of a different instance. The session uses the flags,
+		// the values of the container of the instance (owned), or the defaults.
+		cfg, s.known = config.Defaults(), o.Port != 0
+	}
+	s.cfg = cfg.Apply(o)
 	if !connect {
 		return s, nil
 	}
@@ -133,7 +151,9 @@ func lcLegacyMessage(name string) string {
 	return fmt.Sprintf("a container %q exists that mai 3 did not make. A 2.x install holds the name. Run \"mai uninstall --legacy\" to remove the 2.x install, or use --instance NAME.", name)
 }
 
-// owned finds the container of the instance and refuses a container of a 2.x install.
+// owned finds the container of the instance and refuses a container of a 2.x install. For an
+// instance that config.json does not name, the session then uses the port and the data folder
+// of the container.
 func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool, error) {
 	c, ok, err := s.eng.Container(ctx, s.cfg.Instance)
 	if err != nil || !ok {
@@ -142,7 +162,43 @@ func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool,
 	if engine.Owned(c) != nil {
 		return c, true, errors.New(lcLegacyMessage(s.cfg.Instance))
 	}
+	if s.other() {
+		if p := engine.HostPort(c); p != 0 {
+			s.cfg.Port, s.known = p, true
+		}
+		s.cfg.DataDir = engine.DataDir(c)
+	}
 	return c, true, nil
+}
+
+// saveConfig writes config.json after a successful start. For the instance of config.json, it
+// writes the flags of the command. For a different instance, the file then names that instance
+// with its port and its data folder, and no value of the instance before it stays.
+func (s *lcSession) saveConfig() error {
+	o := s.flags
+	if s.other() {
+		o.Instance, o.Port, o.DataDir = s.cfg.Instance, s.cfg.Port, s.cfg.DataDir
+	}
+	if o == (config.Overrides{}) {
+		return nil
+	}
+	return config.Update(s.dirs.Config, o)
+}
+
+// checkDataDir gives an error when a container of a different instance mounts the folder dir,
+// a folder in dir, or a folder that holds dir. Two servers must not use one data folder.
+func (s *lcSession) checkDataDir(ctx context.Context, dir string) error {
+	mounts, err := s.eng.BindMounts(ctx)
+	if err != nil {
+		return fmt.Errorf("examine the folders of the containers: %w", err)
+	}
+	for _, m := range mounts {
+		if m.Instance != s.cfg.Instance && engine.Overlap(dir, m.Source) {
+			return fmt.Errorf("the container %s of the instance %s mounts the folder %s. Two servers must not use one data folder. "+
+				"Use a different --data-dir", m.Container, m.Instance, m.Source)
+		}
+	}
+	return nil
 }
 
 // lcNewOwnerKey makes an owner key in the format mai1:owner:<secret>.
@@ -207,6 +263,11 @@ func (s *lcSession) create(ctx context.Context, noPull bool, m *manifest.Manifes
 	sp := s.spec()
 	if !lcPortFree(sp.Port) {
 		return "", fmt.Errorf("the port 127.0.0.1:%d is in use. Stop the program that uses it, or use --port N", sp.Port)
+	}
+	if sp.DataDir != "" {
+		if err := s.checkDataDir(ctx, sp.DataDir); err != nil {
+			return "", err
+		}
 	}
 	imageID, pulled, err := s.eng.EnsureImage(ctx, sp.Image, noPull, lcErr)
 	if errors.Is(err, engine.ErrPullRefused) {
@@ -284,15 +345,7 @@ func runStart(args []string) int {
 		}
 		o.DataDir = abs
 	}
-	dirs, err := paths.Default()
-	if err != nil {
-		return lcFail("%v", err)
-	}
-	if o != (config.Overrides{}) {
-		if err := config.Update(dirs.Config, o); err != nil {
-			return lcFail("write the configuration: %v", err)
-		}
-	}
+	// config.json changes only after a successful start.
 	s, err := lcOpen(o, true)
 	if err != nil {
 		return lcFail("%v", err)
@@ -324,6 +377,9 @@ func runStart(args []string) int {
 		if err := s.setOwner(ctx, id); err != nil {
 			return lcFail("%v", err)
 		}
+	}
+	if err := s.saveConfig(); err != nil {
+		return lcFail("write the configuration: %v", err)
 	}
 	fmt.Fprintf(lcOut, "mai: the server is healthy at http://127.0.0.1:%d\n", s.cfg.Port)
 	return 0
