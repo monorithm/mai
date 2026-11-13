@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
+	"github.com/godbus/dbus/v5"
 	"github.com/zalando/go-keyring"
 )
 
@@ -14,8 +16,10 @@ import (
 type goKeyring struct{ service string }
 
 // wrap gives the error of this package for an error of go-keyring. On Linux and the other
-// systems with a Secret Service, an error other than "not found" means that no Secret
-// Service is available, thus the keychain holds no item.
+// systems with a Secret Service, an error other than "not found" usually means that no
+// Secret Service is available. Then the keychain holds no item. But when a Secret Service
+// is available and refuses the request, the item can exist. Then the error is not
+// ErrUnavailable, and the CLI does not make a new key in place of the item.
 func (g goKeyring) wrap(err error) error {
 	switch {
 	case err == nil:
@@ -25,9 +29,31 @@ func (g goKeyring) wrap(err error) error {
 	case errors.Is(err, keyring.ErrUnsupportedPlatform):
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	case runtime.GOOS != "darwin" && runtime.GOOS != "windows":
+		if secretServiceRefused(err) {
+			return fmt.Errorf("keychain: the Secret Service refused the request: %w", err)
+		}
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	return err
+}
+
+// secretErrors is the prefix of the names of the errors of the Secret Service API.
+const secretErrors = "org.freedesktop.Secret.Error."
+
+// unlockFailed is the start of the text of go-keyring when the unlock of a collection or of
+// an item fails, for example because the user refused the prompt.
+const unlockFailed = "failed to unlock correct collection"
+
+// secretServiceRefused tells if an error of go-keyring comes from a Secret Service that is
+// available and refused the request: a failed unlock, or an error of the Secret Service API,
+// for example IsLocked. The error NoSuchObject means that the collection does not exist,
+// thus the collection holds no item.
+func secretServiceRefused(err error) bool {
+	var de dbus.Error
+	if errors.As(err, &de) {
+		return strings.HasPrefix(de.Name, secretErrors) && de.Name != secretErrors+"NoSuchObject"
+	}
+	return strings.HasPrefix(err.Error(), unlockFailed)
 }
 
 func (g goKeyring) Get(account string) (string, error) {
