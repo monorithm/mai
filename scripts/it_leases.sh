@@ -293,6 +293,12 @@ for session in s1 cursor.s1; do
   is_true "'pool' in d['error']['message']" "the message of BAD_LABEL for $session"
 done
 echo "ok: a lease request for s1 or cursor.s1 gives BAD_LABEL"
+# JSON "s1\n" is the label s1 with a line break at the end.
+owner_call POST /api/sessions '{"agent":"cursor","label":"s1\n"}'
+expect 400 BAD_LABEL "session new with the label s1 and a line break"
+lease_call "$agent" '{"app":"it","folder":"/it/l","pid":8,"session":"s1\n"}'
+expect 400 BAD_LABEL "a lease request for s1 with a line break"
+echo "ok: the label s1 with a line break gives BAD_LABEL"
 
 # A full pool: 8 pool leases, then a lease with no session.
 pool_tokens=""

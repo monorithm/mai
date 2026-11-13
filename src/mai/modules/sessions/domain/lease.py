@@ -22,7 +22,7 @@ EXPIRES_SECONDS = 90
 MAX_SESSIONS = 8
 # The maximum number of leases with no session for each agent.
 MAX_UNBOUND_LEASES = 16
-_TOKEN_RE = re.compile(r"^lease_[A-Za-z0-9_-]{43}$")
+_TOKEN_RE = re.compile(r"lease_[A-Za-z0-9_-]{43}")
 _POOL_LABEL_RE = re.compile(r"s[0-9]+")
 
 
@@ -33,7 +33,7 @@ def new_token() -> str:
 
 def is_token(text: object) -> bool:
     """True when TEXT has the form of a lease token."""
-    return isinstance(text, str) and bool(_TOKEN_RE.match(text))
+    return isinstance(text, str) and bool(_TOKEN_RE.fullmatch(text))
 
 
 def token_hash(token: str) -> str:

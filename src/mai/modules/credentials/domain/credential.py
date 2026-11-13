@@ -46,9 +46,10 @@ COPIES_ACL_RIGHTS = (
 
 # An agent name is the local part of the agent address. It has no dot,
 # because a dot separates the agent and the label in a session login.
-_AGENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
-_LABEL_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
-_LOGIN_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
+# Each check uses fullmatch: with match, "$" also accepts a line break at the end.
+_AGENT_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
+_LABEL_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+_LOGIN_RE = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
 _SECRET_RE = re.compile(r"[a-z2-7]{20,}")
 
 
@@ -119,14 +120,14 @@ def parse_credential(text: object) -> tuple[str, str]:
     login, secret = parts[1], parts[2]
     if login.endswith("@" + DOMAIN):
         login = login[: -len(DOMAIN) - 1]
-    if not _LOGIN_RE.match(login) or not _SECRET_RE.fullmatch(secret):
+    if not _LOGIN_RE.fullmatch(login) or not _SECRET_RE.fullmatch(secret):
         raise CredentialError("LOGIN_FAILED")
     return login, secret
 
 
 def check_agent_name(name: object) -> str:
     """Return the name when it is a valid agent name, else raise ValueError."""
-    if not isinstance(name, str) or not _AGENT_RE.match(name):
+    if not isinstance(name, str) or not _AGENT_RE.fullmatch(name):
         raise ValueError(f"agent name must match [a-z0-9][a-z0-9-]{{0,47}}: {name!r}")
     if name in {login for login, _kind in SYSTEM_ACCOUNTS} | {COPIES_LOGIN}:
         raise ValueError(f"agent name is a system account: {name}")
@@ -134,7 +135,7 @@ def check_agent_name(name: object) -> str:
 
 
 def check_label(label: object) -> str:
-    if not isinstance(label, str) or not _LABEL_RE.match(label):
+    if not isinstance(label, str) or not _LABEL_RE.fullmatch(label):
         raise ValueError("label must match [a-z0-9][a-z0-9-]{0,31}")
     return label
 
