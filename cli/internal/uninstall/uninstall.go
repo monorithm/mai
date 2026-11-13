@@ -519,8 +519,8 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 }
 
 // removeKeys removes the keys of the instance from the key file and the legacy keychain
-// items of the instance, and does a check of each one. It gives the instances whose keys stay
-// in the key file.
+// items of the instance, and does a check of each one. It gives the other instances whose keys
+// stay in the key file. It gives a failure for a key of the instance that stays in that file.
 func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	for _, k := range p.Keys {
 		err := u.Keys.Delete(k)
@@ -552,6 +552,15 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 		err := u.Keys.DeleteLegacy(k)
 		rs = append(rs, check(item, err, func() (bool, error) { return u.Keys.HasLegacyItem(k) }))
 	}
+	// A bridge that read a keychain item before its delete can write the key to the key file
+	// after the first remove. Thus the keys of the instance go again.
+	late, err := u.Keys.DeleteInstance(p.Instance)
+	if err != nil {
+		rs = append(rs, Result{Item: "keys of " + p.Instance + " in " + u.Keys.Path(), State: Failure, Detail: err.Error()})
+	}
+	for _, k := range late {
+		rs = append(rs, Result{Item: "key " + k, State: Gone})
+	}
 	rest, err := u.Keys.Accounts()
 	if err != nil {
 		rs = append(rs, Result{Item: "key file " + u.Keys.Path(), State: Failure, Detail: err.Error()})
@@ -559,9 +568,21 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 		// different instance.
 		return rs, []string{"unknown"}
 	}
-	var others []string
+	var others, mine []string
 	for _, a := range rest {
+		if keys.InstanceOf(a) == p.Instance {
+			mine = append(mine, a)
+			continue
+		}
 		others = appendNew(others, keys.InstanceOf(a))
+	}
+	if len(others) > 0 {
+		// The key file stays for the keys of the other instances. With no other instance, the
+		// key file goes with its folder.
+		for _, a := range mine {
+			rs = append(rs, Result{Item: "key " + a, State: Failure, Detail: "a different process wrote the key during the remove. " +
+				"Stop each app that runs mai mcp, and then run " + again + " again"})
+		}
 	}
 	sort.Strings(others)
 	return rs, others
