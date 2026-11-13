@@ -166,6 +166,29 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   connected again and sent the mail a second time.
 - A pool lease request runs doveadm only when it makes a pool session. A
   doveadm command stops after 10 s.
+- A `wait_for_mail` with `timeout_sec` more than 30 gives its result. In
+  3.0.1, the request limit of the HTTP server (30 s) stopped each wait with
+  no new mail. The call then got HTTP 504 with no code. The request limit is
+  75 s, more than the longest wait (50 s).
+- A lease request or a bind at the time of an agent removal does not make a
+  new pool session for the removed agent. A lease request gives `BAD_KEY`, and
+  a bind ends the lease with `LEASE_UNKNOWN`. The credentials refuse a new
+  session of an agent that is not active.
+- A lease request ends the expired leases at the same time. Before, the
+  logouts ran one after the other, and many expired leases made the request
+  go past its time limit.
+- The end of a lease closes its mail connections also when the store does
+  not reply or fails.
+- A revoke during the IMAP login of a lease request gives `SESSION_REVOKED`,
+  and the pool tries the next free pool session. Before, the result was
+  `LOGIN_FAILED` with `retry_safe` false. After an owner rotate of the
+  selected pool session, the pool tries one different free session.
+- A store that does not reply during the mail login gives
+  `STORE_UNAVAILABLE`. Only the connection to the mail server and doveadm
+  give `MAIL_SERVER_DOWN`.
+- At a stop, the bridge ends its leases at the same time, and it waits a
+  maximum of 10 s for each lease. Before, all the leases had one wait of 5 s,
+  and a slow end of one lease kept the other leases on the server.
 
 ## [3.0.1] - 2026-11-12
 

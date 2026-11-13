@@ -111,7 +111,8 @@ the logout ends.
 The bridge stops when the app closes the stdin of the bridge. On Unix, the
 bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on
 Ctrl+C or when the console closes. Before it stops, it ends each lease and
-removes its notice file.
+removes its notice file. The bridge ends the leases at the same time, and it
+waits a maximum of 10 seconds for the end of each lease.
 
 The server makes a lease before it sends the result of the lease request.
 Thus the bridge does not stop a lease request that it sent. When a logout

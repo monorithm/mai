@@ -8,6 +8,7 @@ from bustan import Injectable
 
 from mai.modules.credentials import CredentialService
 from mai.platform.contract import ToolError
+from mai.platform.contract.time_limit import time_limit_part
 from mai.platform.mailserver import MailClientFactory
 
 from ..domain.handle_store import HandleStore
@@ -101,7 +102,8 @@ class LogInHandler:
                     _close(session)
 
         try:
-            await anyio.to_thread.run_sync(connect, abandon_on_cancel=True)
+            with time_limit_part("MAIL_SERVER_DOWN"):
+                await anyio.to_thread.run_sync(connect, abandon_on_cancel=True)
         except anyio.get_cancelled_exc_class():
             with guard:
                 flags["stopped"] = True

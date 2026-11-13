@@ -437,12 +437,16 @@ errors of the lease API: `{"error": {"code": ..., "message": ...}}`.
 | A heartbeat takes more than its time limit (10 s) | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true. The lease stays. |
 
 Each time limit of the server is less than the request limit of the HTTP
-server (30 s). It is also less than the wait of the bridge: 30 s for a lease
+server (75 s). It is also less than the wait of the bridge: 30 s for a lease
 request and 15 s for a heartbeat. Thus the bridge gets the code of each
 failure. A tool
 call on a lease has the time limit of a lease request for the steps of the
 lease. If the server cannot count the new mail in 5 s, the heartbeat gives
 `"new_mail": null`.
+
+The request limit of the HTTP server (75 s) is more than the longest wait of
+`wait_for_mail` (50 s). Thus a wait with no new mail gives the result
+`timed_out` true, not an HTTP error.
 
 A heartbeat never gives an error with no code. At a tool
 call on a lease with no session, a failure of the mail login gives its tool

@@ -217,6 +217,12 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	if !ok {
 		return nil
 	}
+	if isCall && l.handle == "" && l.session() == "" {
+		// The call can bind a pool session to the pool lease, also when its answer is an
+		// error. The heartbeat gives that session, thus the notice file gets the pool entry
+		// at once.
+		defer l.beatSoon()
+	}
 	token := l.current()
 	answer, err := b.post(ctx, token, line)
 	if isLeaseUnknown(err) {
@@ -240,11 +246,6 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 			b.writeError(id, -32603, "mai: "+err.Error())
 		}
 		return nil
-	}
-	if isCall && l.handle == "" && l.session() == "" {
-		// The call can bind a pool session to the pool lease. The heartbeat gives that
-		// session, thus the notice file gets the pool entry at once.
-		l.beatSoon()
 	}
 	if !hasID || len(answer) == 0 {
 		return nil

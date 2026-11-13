@@ -458,12 +458,17 @@ func (b *Bridge) drop(l *lease, why error) {
 	b.writeNotice()
 }
 
+// leaseEndTimeout is the longest time that the bridge waits for the end of one lease. The
+// server ends the mail login of the lease before it answers: the logout can take 3 s, and
+// the close of the mail connections 2 s.
+const leaseEndTimeout = 10 * time.Second
+
 // deleteLease ends one lease on the server.
 func (b *Bridge) deleteLease(token string) {
 	if token == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), leaseEndTimeout)
 	defer cancel()
 	if err := b.callJSON(ctx, http.MethodDelete, "/api/leases/current", token, nil, nil); err != nil && !isLeaseUnknown(err) {
 		b.logf("the end of the lease failed: %v", err)
@@ -554,15 +559,23 @@ func (b *Bridge) endAll() {
 	}
 	b.named, b.byLogin = map[string]*lease{}, map[string]string{}
 	b.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// The bridge ends the leases at the same time, each with its own wait. Thus a slow
+	// end of one lease does not stop the end of the other leases.
+	var ends sync.WaitGroup
 	for _, l := range all {
 		token := l.finish()
 		if token == "" {
 			continue
 		}
-		if err := b.callJSON(ctx, http.MethodDelete, "/api/leases/current", token, nil, nil); err != nil && !isLeaseUnknown(err) {
-			b.logf("the end of the lease of %s failed: %v", l.describe(), err)
-		}
+		ends.Add(1)
+		go func(l *lease, token string) {
+			defer ends.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), leaseEndTimeout)
+			defer cancel()
+			if err := b.callJSON(ctx, http.MethodDelete, "/api/leases/current", token, nil, nil); err != nil && !isLeaseUnknown(err) {
+				b.logf("the end of the lease of %s failed: %v", l.describe(), err)
+			}
+		}(l, token)
 	}
+	ends.Wait()
 }
