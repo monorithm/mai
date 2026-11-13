@@ -60,7 +60,7 @@ echo "ok: mai start --instance $instance --port $port --image $image --no-pull"
 [ "$("$mai" agent add cursor)" = cursor ] || fail "mai agent add cursor"
 echo "ok: mai agent add cursor"
 
-for label in lane-a lane-b; do
+for label in lane-a lane-b lane-c; do
   out=$("$mai" session new cursor --label "$label") || fail "mai session new cursor --label $label"
   [ "$out" = "cursor.$label" ] || fail "mai session new cursor --label $label printed $out"
   echo "ok: mai session new cursor --label $label prints only cursor.$label"
@@ -70,6 +70,11 @@ if "$mai" session new cursor --label lane-a >/dev/null 2>"$work/dup.log"; then
 fi
 grep -q SESSION_EXISTS "$work/dup.log" || fail "a second session new gave no SESSION_EXISTS"
 echo "ok: a second mai session new cursor --label lane-a gives SESSION_EXISTS"
+if "$mai" session new cursor --label s1 >/dev/null 2>"$work/pool-label.log"; then
+  fail "mai session new cursor --label s1 did not fail"
+fi
+grep -q BAD_LABEL "$work/pool-label.log" || fail "mai session new cursor --label s1 gave no BAD_LABEL"
+echo "ok: mai session new cursor --label s1 gives BAD_LABEL, because s1 is a label of the pool"
 
 cat >"$work/driver.py" <<'PY'
 """Drive one or two bridges "mai mcp --agent cursor" with JSON-RPC lines."""
@@ -87,6 +92,9 @@ import time
 MAI, WORK = sys.argv[1], sys.argv[2]
 HANDLE = re.compile(r"^ses-[a-z2-7]{16}$")
 POOL = re.compile(r"^cursor\.s[0-9]+$")
+INIT = {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it", "version": "0"}}
+# Each bridge that the driver starts. At the end, the driver stops each of them.
+BRIDGES = []
 
 
 class Fail(Exception):
@@ -102,10 +110,25 @@ def check(cond, text):
         raise Fail(text)
 
 
+def wait_until(cond, text, timeout=5):
+    """Examine cond until it is true, for a maximum of TIMEOUT seconds.
+
+    A heartbeat of a bridge can change the state of a lease between two calls, thus each
+    check of the state of a lease waits for the state.
+    """
+    end = time.monotonic() + timeout
+    while True:
+        if cond():
+            return
+        check(time.monotonic() < end, f"{text} (after {timeout} s)")
+        time.sleep(0.2)
+
+
 class Bridge:
     """One bridge process. The driver is its app, thus the parent of the bridge."""
 
     def __init__(self, name):
+        BRIDGES.append(self)
         self.name = name
         self.folder = os.path.join(WORK, "chat-" + name)
         os.makedirs(self.folder, exist_ok=True)
@@ -173,9 +196,13 @@ class Bridge:
         return self.proc.returncode
 
     def tail(self):
+        return "\n".join(self.text().splitlines()[-20:])
+
+    def text(self):
+        """The log of the bridge (its stderr)."""
         self.log.flush()
         with open(self.log_path, "rb") as f:
-            return b"".join(f.readlines()[-20:]).decode(errors="replace")
+            return f.read().decode(errors="replace")
 
 
 def result(r, what):
@@ -205,27 +232,29 @@ def sessions():
     return {s["login"]: s for s in json.loads(mai("session", "list", "--json"))}
 
 
+def leased(login):
+    return sessions()[login]["leased"] is True
+
+
 def main():
-    one = Bridge("one")
-    two = None
     try:
+        one = Bridge("one")
         run(one)
         two = Bridge("two")
         run_second(one, two)
         run_end(one)
+        run_pool_full()
     except Exception:
-        for b in (one, two):
-            if b is not None:
-                print(f"--- bridge {b.name} log ---\n{b.tail()}", file=sys.stderr)
+        for b in BRIDGES:
+            print(f"--- bridge {b.name} log ---\n{b.tail()}", file=sys.stderr)
         raise
     finally:
-        for b in (one, two):
-            if b is not None:
-                b.close()
+        for b in BRIDGES:
+            b.close()
 
 
 def run(one):
-    init = one.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it", "version": "0"}})
+    init = one.request("initialize", INIT)
     check(init["serverInfo"]["version"] == "3.1.0", f"the contract is {init['serverInfo']}")
     check("call login with the label of your session" in init["instructions"], "the instructions do not tell about login")
     one.notify("notifications/initialized")
@@ -330,6 +359,7 @@ def run_second(one, two):
     check(exit_code == 0, f"bridge two gave exit {exit_code}")
     ok("bridge two stops with exit 0 when its stdin closes")
 
+    wait_until(lambda: leased("cursor.lane-a") and leased("cursor.lane-b"), "lane-a and lane-b are not leased")
     table = mai("session", "list")
     print(table.rstrip(), flush=True)
     s = sessions()
@@ -348,24 +378,39 @@ def run_second(one, two):
     ok("logout of B gives the handle B and cursor.lane-b")
     check(error_code(one.call("whoami", session=one.hb), "whoami B after logout") == "SESSION_UNKNOWN", "B after logout")
     ok("whoami with session B after the logout gives SESSION_UNKNOWN")
-    check(sessions()["cursor.lane-b"]["leased"] is False, "lane-b is leased after the logout")
+    wait_until(lambda: not leased("cursor.lane-b"), "lane-b is leased after the logout")
     ok("mai session list shows lane-b as not leased after the logout")
 
     check(mai("session", "revoke", "cursor.lane-b", "--yes").strip() == "cursor.lane-b", "mai session revoke")
-    check(sessions()["cursor.lane-b"]["status"] == "revoked", "lane-b is not revoked")
+    wait_until(lambda: sessions()["cursor.lane-b"]["status"] == "revoked", "lane-b is not revoked")
     ok("mai session revoke cursor.lane-b --yes")
     code = error_code(one.call("login", {"session": "lane-b"}), "login lane-b after revoke")
     check(code == "SESSION_REVOKED", f"login lane-b after the revoke gave {code}")
     ok("login lane-b after the revoke gives SESSION_REVOKED")
 
 
+def renews(bridge, login):
+    """The number of new leases for LOGIN in the log of the bridge."""
+    return bridge.text().count(f"the bridge has a new lease for the session {login}")
+
+
+def live_leases():
+    return [x for x, v in sessions().items() if v["leased"]]
+
+
 def run_end(one):
+    before = renews(one, "cursor.lane-a")
     check(mai("session", "rotate", "cursor.lane-a").strip() == "cursor.lane-a", "mai session rotate")
-    check(sessions()["cursor.lane-a"]["leased"] is False, "lane-a is leased after the rotate")
+    # A heartbeat of bridge one can get a new lease for lane-a before this check. The log of
+    # the bridge then has one more new lease for lane-a.
+    wait_until(
+        lambda: not leased("cursor.lane-a") or renews(one, "cursor.lane-a") > before,
+        "lane-a is leased after the rotate, and bridge one got no new lease for it",
+    )
     ok("mai session rotate cursor.lane-a ends the lease of lane-a")
     w = result(one.call("whoami", session=one.ha), "whoami A after rotate")
     check(w["login"] == "cursor.lane-a", f"whoami A after the rotate is {w['login']}")
-    check(sessions()["cursor.lane-a"]["leased"] is True, "lane-a has no new lease")
+    wait_until(lambda: leased("cursor.lane-a"), "lane-a has no new lease")
     ok("whoami with session A after the rotate gives cursor.lane-a: the bridge got a new lease")
 
     notice = os.path.join(os.environ["MAI_HOME"], "state", "notices", f"{os.getpid()}-cursor.json")
@@ -373,9 +418,65 @@ def run_end(one):
     exit_code = one.close()
     check(exit_code == 0, f"bridge one gave exit {exit_code}")
     check(not os.path.exists(notice), "the notice file stays after the stop of bridge one")
-    left = [x for x, v in sessions().items() if v["leased"]]
-    check(not left, f"leases stay after the stop of bridge one: {left}")
+    wait_until(lambda: not live_leases(), "leases stay after the stop of bridge one")
     ok("bridge one stops with exit 0, removes its notice file, and ends each of its leases")
+
+
+def run_pool_full():
+    """A bridge starts and serves named sessions when the pool of its agent is full."""
+    pool = []
+    for i in range(1, 9):
+        p = Bridge(f"pool{i}")
+        pool.append(p)
+        p.request("initialize", INIT)
+        p.notify("notifications/initialized")
+        w = result(p.call("whoami"), f"whoami of bridge pool{i}")
+        check(POOL.match(w["login"] or ""), f"whoami of bridge pool{i} is {w['login']}")
+        p.pool = w["login"]
+    logins = sorted({p.pool for p in pool})
+    check(len(logins) == 8, f"the 8 pool bridges have the pool sessions {logins}")
+    ok("8 bridges hold the 8 pool sessions of cursor")
+
+    full = Bridge("full")
+    init = full.request("initialize", INIT)
+    check(init["serverInfo"]["version"] == "3.1.0", f"the contract is {init['serverInfo']}")
+    full.notify("notifications/initialized")
+    wait_until(lambda: "no free pool session" in full.text(), "the log of the bridge does not tell that no pool session is free")
+    ok("a ninth bridge starts with a pool lease with no session, and initialize gives the contract 3.1.0")
+    tools = {t["name"] for t in full.request("tools/list")["tools"]}
+    check({"login", "logout", "whoami"} <= tools, f"tools/list gave {sorted(tools)}")
+    ok("tools/list works on the pool lease with no session")
+    r = full.call("whoami")
+    check(error_code(r, "whoami with no free pool session") == "NO_FREE_SESSION", f"whoami with no session gave {r}")
+    check(r["structuredContent"]["error"].get("retry_safe") is True, f"NO_FREE_SESSION is not retry_safe: {r}")
+    ok("whoami with no session gives NO_FREE_SESSION with retry_safe true")
+
+    c = result(full.call("login", {"session": "lane-c"}), "login lane-c")
+    check(HANDLE.match(c["session"]) and c["login"] == "cursor.lane-c", f"login lane-c gave {c}")
+    w = result(full.call("whoami", session=c["session"]), "whoami C")
+    check(w["login"] == "cursor.lane-c", f"whoami C is {w['login']}")
+    ok("login lane-c and whoami with its handle work in the bridge with no pool session")
+    for name in ("s2", "cursor.s2"):
+        code = error_code(full.call("login", {"session": name}), f"login {name}")
+        check(code == "BAD_LABEL", f"login {name} gave {code}")
+    ok("login s2 and login cursor.s2 give BAD_LABEL: a login never takes a pool session")
+
+    last = pool[-1]
+    exit_code = last.close()
+    check(exit_code == 0, f"bridge {last.name} gave exit {exit_code}")
+    wait_until(lambda: not leased(last.pool), f"{last.pool} is leased after the stop of bridge {last.name}")
+    w = result(full.call("whoami"), "whoami after a pool session is free")
+    check(w["login"] == last.pool, f"whoami after the bind is {w['login']}, not {last.pool}")
+    wait_until(lambda: leased(last.pool) and sessions()[last.pool]["pid"] == full.proc.pid, f"{last.pool} has no lease of the ninth bridge")
+    ok(f"whoami with no session binds the free pool session {last.pool} to the pool lease of the ninth bridge")
+    wait_until(lambda: f"the pool lease has the session {last.pool}" in full.text(), "no heartbeat gave the pool session", timeout=45)
+    ok(f"a heartbeat gives the session {last.pool}, and the ninth bridge records it")
+
+    for b in [*pool[:-1], full]:
+        exit_code = b.close()
+        check(exit_code == 0, f"bridge {b.name} gave exit {exit_code}")
+    wait_until(lambda: not live_leases(), "leases stay after the stop of the bridges")
+    ok("each bridge stops with exit 0 and ends each of its leases")
 
 
 try:
@@ -385,6 +486,13 @@ except Fail as e:
     sys.exit(1)
 PY
 python3 -I "$work/driver.py" "$mai" "$work" || fail "the bridge test"
+
+# The server CLI also refuses a label of the pool.
+if "$mai" exec -- mai session new cursor --label s1 >/dev/null 2>"$work/server-label.log"; then
+  fail "the server CLI made the session cursor.s1 with --label s1"
+fi
+grep -q BAD_LABEL "$work/server-label.log" || fail "the server CLI gave no BAD_LABEL for --label s1"
+echo "ok: the server CLI mai session new cursor --label s1 gives BAD_LABEL"
 
 "$mai" uninstall --instance "$instance" --yes >"$work/uninstall.log" 2>&1 ||
   { cat "$work/uninstall.log" >&2; fail "mai uninstall"; }
