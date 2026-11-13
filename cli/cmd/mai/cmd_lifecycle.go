@@ -653,6 +653,9 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 			"or because the server accepts only the key of the key file: %s\n",
 			len(r.Cleaned), strings.Join(r.Cleaned, ", "))
 	}
+	if lcAgentItemGone(append(append([]string(nil), r.Moved...), r.Cleaned...)) {
+		fmt.Fprint(lcOut, lcRestartStep)
+	}
 	for _, c := range r.Conflicts {
 		fmt.Fprintf(lcErr, "mai: the keychain item %s stays: %s\n", c.Account, lcConflictText(instance, kf.Path(), c))
 	}
@@ -706,6 +709,25 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		}
 	}
 	return done
+}
+
+// lcRestartStep tells the user to start the apps again after the delete of the keychain item
+// of an agent. A bridge of mai 3.0 or 3.1 reads the agent key from the keychain item at each
+// lease request. When the item is gone, it stops with BAD_KEY and the step of mai agent add,
+// which gives AGENT_EXISTS for an agent that exists.
+const lcRestartStep = "mai: start each app that runs mai mcp again, or start its MCP server again. " +
+	"A bridge of mai 3.0 or 3.1 that runs reads the agent key from the keychain item, and the item is gone. " +
+	"At its next lease request, that bridge stops with BAD_KEY and the step \"Run mai agent add NAME\". " +
+	"Do not do that step, because mai agent add gives AGENT_EXISTS. Start the app again.\n"
+
+// lcAgentItemGone tells if one of the accounts is the account of an agent.
+func lcAgentItemGone(accounts []string) bool {
+	for _, a := range accounts {
+		if strings.HasPrefix(a, "agent:") {
+			return true
+		}
+	}
+	return false
 }
 
 // lcStayStep gives the step for a keychain item that stays, although the key file has the key

@@ -572,6 +572,12 @@ binary that wrote it.
   key, `mai upgrade` does a test of the two keys on the server. When the
   server accepts only the key of the key file, the CLI deletes the keychain
   item. Thus no command deletes or replaces a key that the server accepts.
+- A bridge of 3.0 or 3.1 that runs reads the agent key from the keychain item
+  at each lease request. When the item is gone, the bridge stops with
+  `BAD_KEY` and the step `Run mai agent add NAME`, which gives
+  `AGENT_EXISTS`. Thus after `mai upgrade`, the user starts each app that
+  runs `mai mcp` again. `mai upgrade` gives this step when it deletes the
+  keychain item of an agent.
 - `mai doctor` tells about each keychain item of the instance. It reads no
   key, thus macOS shows no prompt.
 - `mai uninstall` removes the keys of the instance from the key file and each

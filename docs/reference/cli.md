@@ -210,6 +210,13 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   `mai upgrade` does a test of the two keys on the server. When the server
   accepts only the key of the key file, `mai upgrade` deletes the keychain
   item. Thus no command deletes or replaces a key that the server accepts.
+- After `mai upgrade`, start each app that runs `mai mcp` again, or start its
+  MCP server again. `mai upgrade` also gives this step when it deletes the
+  keychain item of an agent. A bridge of mai 3.0 or 3.1 that runs reads the
+  agent key from the keychain item at each lease request. When the item is
+  gone, the bridge stops with `BAD_KEY` and the step `Run mai agent add NAME`.
+  Do not do that step, because `mai agent add` gives `AGENT_EXISTS` for an
+  agent that exists. Start the app again.
 - `mai agent rotate NAME` deletes the keychain item of the agent, because the
   server then accepts only the new key.
 - `mai doctor` tells about each keychain item of the instance. When no
