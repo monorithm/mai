@@ -31,8 +31,9 @@ func TestAgentAddDoesNotTellARemoveThatFailed(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/agents":
-			// The key file becomes one that other users can read, thus the write fails.
-			_ = os.Chmod(k.file.Path(), 0o644)
+			// The key file becomes a file that is not valid JSON, thus the write fails. A
+			// file mode does not make the write fail on Windows.
+			_ = os.WriteFile(k.file.Path(), []byte("{"), 0o600)
 			w.WriteHeader(201)
 			_ = json.NewEncoder(w).Encode(map[string]string{"name": "cursor", "agent_key": "mai1:cursor:newsecret"})
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/agents/cursor":

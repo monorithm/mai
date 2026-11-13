@@ -18,7 +18,7 @@ func TestAnAppEntryOf31StaysWhileAnInstanceStaysAndGoesWithTheLastInstance(t *te
 	writeManifest(t, e, `{"instance": "mai-dev", "items": [
   {"type": "container", "name": "mai", "id": "c1"},
   {"type": "container", "name": "mai-dev", "id": "c-mai-dev"},
-  {"type": "app-entry", "name": "cursor", "path": "`+e.app+`", "pointer": "/mcpServers/mai"}]}`)
+  {"type": "app-entry", "name": "cursor", "path": `+jsonText(e.app)+`, "pointer": "/mcpServers/mai"}]}`)
 	var removed []manifest.Item
 	RemoveAppEntry = func(it manifest.Item) error { removed = append(removed, it); return nil }
 	t.Cleanup(func() { RemoveAppEntry = nil })

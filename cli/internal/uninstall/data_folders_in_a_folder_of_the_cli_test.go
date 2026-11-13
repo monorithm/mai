@@ -26,7 +26,7 @@ func TestADataFolderOf31WithNoKnownInstanceStaysInAFolderOfTheCLI(t *testing.T) 
 	}
 	writeManifest(t, e, `{"instance": "mai", "items": [
   {"type": "container", "name": "mai", "id": "c1"},
-  {"type": "folder", "name": "data", "path": "`+data+`"}]}`)
+  {"type": "folder", "name": "data", "path": `+jsonText(data)+`}]}`)
 	var out bytes.Buffer
 	_ = e.uninstaller(&out).Run(context.Background())
 	if !strings.Contains(out.String(), "kept     folder "+data) {
@@ -56,7 +56,7 @@ func TestTheUninstallOfMaiKeepsTheRecordedDataFolderOfADifferentInstanceInAFolde
 	writeManifest(t, e, `{"instance": "mai", "items": [
   {"type": "container", "name": "mai", "id": "c1", "instance": "mai"},
   {"type": "volume", "name": "mai-dev3-spool", "instance": "mai-dev"},
-  {"type": "folder", "name": "data", "path": "`+data+`", "instance": "mai-dev"}]}`)
+  {"type": "folder", "name": "data", "path": `+jsonText(data)+`, "instance": "mai-dev"}]}`)
 	var out bytes.Buffer
 	u := e.uninstaller(&out)
 	u.Instance = "mai"

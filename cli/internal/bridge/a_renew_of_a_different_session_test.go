@@ -41,6 +41,10 @@ func TestARenewOfANamedLeaseNeverActsAsADifferentSession(t *testing.T) {
 			_, _ = w.Write(rec.Body.Bytes())
 		})
 	})
+	// With no heartbeat during the test, the call with the handle does the renew. A heartbeat
+	// that comes first does the same renew and drops the handle, and then the call gets
+	// SESSION_UNKNOWN.
+	h.srv.hbSeconds = 60
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`)
 	h.recv(t)

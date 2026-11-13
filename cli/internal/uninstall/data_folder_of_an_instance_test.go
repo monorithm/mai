@@ -3,6 +3,7 @@ package uninstall
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,16 @@ func dataFolder(t *testing.T) string {
 	return data
 }
 
+// jsonText gives s as a JSON string, with its quotes. A path of Windows has backslashes,
+// which a JSON string must escape.
+func jsonText(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 // writeManifest writes the manifest of the state folder as it is.
 func writeManifest(t *testing.T, e *env, text string) {
 	t.Helper()
@@ -42,7 +53,7 @@ func TestTheContainerThatMountsADataFolderOf31TellsItsInstance(t *testing.T) {
 	writeManifest(t, e, `{"instance": "mai", "items": [
   {"type": "container", "name": "mai", "id": "c1"},
   {"type": "volume", "name": "mai-dev3-spool"},
-  {"type": "folder", "name": "data", "path": "`+data+`"},
+  {"type": "folder", "name": "data", "path": `+jsonText(data)+`},
   {"type": "container", "name": "mai-dev", "id": "c-mai-dev"}]}`)
 
 	var out bytes.Buffer
@@ -77,7 +88,7 @@ func TestADataFolderOf31WithNoKnownInstanceStays(t *testing.T) {
 	data := dataFolder(t)
 	writeManifest(t, e, `{"instance": "mai", "items": [
   {"type": "container", "name": "mai", "id": "c1"},
-  {"type": "folder", "name": "data", "path": "`+data+`"}]}`)
+  {"type": "folder", "name": "data", "path": `+jsonText(data)+`}]}`)
 	var out bytes.Buffer
 	_ = e.uninstaller(&out).Run(context.Background())
 	if _, err := os.Stat(filepath.Join(data, "pg", "PG_VERSION")); err != nil {

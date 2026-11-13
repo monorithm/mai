@@ -130,7 +130,7 @@ func TestTheSizeOfTheMailDataCountsNoDataFolderOfADifferentInstance(t *testing.T
 	if err := os.WriteFile(filepath.Join(data, "mail"), make([]byte, 1<<20), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai","port":8765,"data_dir":"`+data+`"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai","port":8765,"data_dir":`+jsonText(data)+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -168,13 +168,13 @@ func manifestOf31WithTwoInstances(t *testing.T, e *env) string {
 	man := `{
   "instance": "mai",
   "items": [
-    {"type": "folder", "name": "config", "path": "` + e.dirs.Config + `"},
-    {"type": "folder", "name": "state", "path": "` + e.dirs.State + `"},
+    {"type": "folder", "name": "config", "path": ` + jsonText(e.dirs.Config) + `},
+    {"type": "folder", "name": "state", "path": ` + jsonText(e.dirs.State) + `},
     {"type": "volume", "name": "mai3-data"},
     {"type": "volume", "name": "mai3-spool"},
     {"type": "container", "name": "mai", "id": "c1"},
     {"type": "volume", "name": "mai-dev3-spool"},
-    {"type": "folder", "name": "data", "path": "` + data + `"},
+    {"type": "folder", "name": "data", "path": ` + jsonText(data) + `},
     {"type": "container", "name": "mai-dev", "id": "c-dev"}
   ]
 }`
@@ -182,7 +182,7 @@ func manifestOf31WithTwoInstances(t *testing.T, e *env) string {
 		t.Fatal(err)
 	}
 	// "mai start --instance mai-dev" of 3.1 also wrote config.json.
-	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai-dev","port":18766,"data_dir":"`+data+`"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai-dev","port":18766,"data_dir":`+jsonText(data)+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return data
