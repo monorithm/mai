@@ -17,7 +17,7 @@ mai has two command lines with the name `mai`:
 | `mai logs [--follow]` | Shows the log of the container. |
 | `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It shows no key. On macOS, it reads no key and shows no prompt. |
 | `mai upgrade` | Moves the keys of the instance from the keychain of mai 3.0 and 3.1 to the key file. Then pulls the image of the new CLI version and makes the container again. |
-| `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes all items of the manifest, the keys of the instance in the key file, and each keychain item of the instance. `--legacy` removes a 2.x install. |
+| `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes the items of the instance in the manifest, its keys in the key file, and each keychain item of the instance. The items of a different instance stay. `--legacy` removes a 2.x install. |
 | `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
 | `mai agent add NAME`, `mai agent list`, `mai agent rotate NAME`, `mai agent remove NAME` | Manages the agent accounts through the owner API. The CLI keeps each agent key in the key file. `rotate` gives the agent a new key. |
@@ -228,12 +228,20 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   keychain is available and the manifest records keychain items of the
   instance, `mai doctor` gives a warning with a step.
 - `mai uninstall` removes the keys of the instance from the key file and each
-  keychain item of the instance. When the key file holds the keys of a
-  different instance, the key file stays. When a keychain item of the
-  instance stays, for example because no keychain is available,
-  `mai uninstall` gives a step and the exit code 1. Then the manifest stays
-  with the record of each such item, and the binary also stays. Thus a
-  subsequent `mai uninstall` can remove the items.
+  keychain item of the instance. When a keychain item of the instance stays,
+  for example because no keychain is available, `mai uninstall` gives a step
+  and the exit code 1. Then the manifest stays with the record of each such
+  item, and the binary also stays. Thus a subsequent `mai uninstall` can
+  remove the items.
+- Instances in the same state folder use one key file and one manifest. Each
+  record of the manifest has its instance. `mai uninstall --instance NAME`
+  removes only the items of that instance. A container or a volume goes only
+  when its label `dev.mai.instance` is that instance. While a different
+  instance has keys in the key file or records in the manifest, some files
+  stay. The key file stays, and the manifest stays with the records of the
+  other instances. The configuration file of such an instance and the binary
+  also stay. Then run `mai uninstall --instance NAME` for each of these
+  instances.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 

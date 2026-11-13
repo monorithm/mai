@@ -76,12 +76,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the same steps. The tool error, the stop of the bridge, and the log of the
   bridge give these steps.
 - `mai uninstall` removes the keys of the instance from the key file and each
-  keychain item of the instance. When the key file holds the keys of a
-  different instance, only the key file and its lock file stay. When a
-  keychain item of the instance stays, for example because no keychain is
-  available, `mai uninstall` gives a step and the exit code 1. Then the
-  manifest stays with the record of each such item, and the binary also
-  stays. Thus a subsequent `mai uninstall` can remove the items.
+  keychain item of the instance. While a different instance has keys in the
+  key file or records in the manifest, some files of the CLI stay. The key
+  file stays, and the manifest stays with the records of the other
+  instances. The configuration file of such an instance and the binary also
+  stay. When a keychain item of the instance stays, for example because no
+  keychain is available, `mai uninstall` gives a step and the exit code 1.
+  Then the manifest stays with the record of each such item, and the binary
+  also stays. Thus a subsequent `mai uninstall` can remove the items.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 - On macOS, cgo is necessary only for the Security framework, which reads and
@@ -116,6 +118,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `mai uninstall --instance NAME` removes only the items of that instance.
+  Each record of the manifest has its instance. The CLI gives each record of
+  3.0 and 3.1 the instance of its name, or the instance of the file. A
+  container or a volume goes only when its label `dev.mai.instance` is the
+  instance. Before, the uninstall of one instance also removed some items of
+  the other instances in the same state folder. These items were the
+  container, the volumes, the images, and the app entries. It also removed
+  the records of the keychain items of these instances. Thus `mai upgrade`,
+  `mai doctor`, and `mai uninstall` of such an instance did not find its
+  keychain items.
 - The server refuses a value with a line break at the end for an argument
   with a pattern. Examples are a `ref`, a `thread_ref`, and an address. Before,
   the validator of the server used the Python rule for `$`, which also matches

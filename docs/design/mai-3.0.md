@@ -693,16 +693,21 @@ The UI shows no secret. A reply from the UI is decision 6.
 ### The manifest
 
 The CLI records each item that it makes, in `manifest.json` in its state
-folder. Each record has the type, the name or path, and the ID. A record of
-a change in a file of an app also has a hash of the content. The manifest
-holds no secret.
+folder. Each record has the type, the name or path, the ID, and the instance.
+A record of a change in a file of an app also has a hash of the content. The
+manifest holds no secret.
+
+The instances of one state folder use one manifest. A record of 3.0 or 3.1
+has no instance. The CLI gives it the instance of its name, for example the
+container `mai-dev`, or the instance of the file.
 
 ### What `mai uninstall` removes
 
 1. All leases. The bridges stop at their next call.
 2. The container `mai`, with its anonymous volumes.
 3. The volumes `mai3-data` and `mai3-spool`, or the content of the host data
-   folder that mai made.
+   folder that mai made. A container or a volume goes only when its label
+   `dev.mai.instance` is the instance.
 4. Each image that the CLI pulled, by its image ID. The CLI does not remove an
    image that a different container uses.
 5. The entries that `mai connect` wrote in the files of the apps. If you
@@ -710,9 +715,11 @@ holds no secret.
 6. The keys of the instance in the key file, and each keychain item of the
    instance from 3.0 and 3.1 (service `dev.mai`).
 7. The configuration folder, the state folder (manifest, notice files, and
-   the key file), and the cache and log folder of the CLI. When the key file
-   holds the keys of a different instance, only the key file and its lock
-   file stay.
+   the key file), and the cache and log folder of the CLI. While a different
+   instance has keys in the key file or records in the manifest, some files
+   stay. The key file and its lock file stay, and the manifest stays with the
+   records of the other instances. The configuration file of such an instance
+   and the binary also stay.
 8. The shell completion files, if the package installed them.
 9. The binary. If a package manager installed it, the CLI runs the
    uninstall of that package manager as the last step. On Windows, a

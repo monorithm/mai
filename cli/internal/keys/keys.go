@@ -352,16 +352,28 @@ func (f *File) DeleteInstance(instance string) ([]string, error) {
 }
 
 // Candidates gives each account of the instance that can have a legacy keychain item, sorted:
-// the owner account, each account in recorded, and each account of the instance in the key
-// file. It ignores an account of recorded with a different instance.
+// the owner account, each account in recorded, each account that the manifest in the folder of
+// the key file records for the instance, and each account of the instance in the key file. It
+// ignores an account of recorded with a different instance. Thus a command finds the legacy
+// item of an agent through its record, also when the caller gives no record.
 func (f *File) Candidates(instance string, recorded []string) ([]string, error) {
 	set := map[string]bool{OwnerAccount(instance): true}
-	for _, a := range recorded {
+	names := append([]string(nil), recorded...)
+	m, merr := manifest.Load(filepath.Join(filepath.Dir(f.path), manifest.FileName), instance)
+	if merr == nil {
+		for _, it := range m.Of(manifest.KeychainKey) {
+			names = append(names, it.Name)
+		}
+	} else {
+		merr = fmt.Errorf("keys: read the manifest: %w", merr)
+	}
+	for _, a := range names {
 		if InstanceOf(a) == instance {
 			set[a] = true
 		}
 	}
 	inFile, err := f.OfInstance(instance)
+	err = errors.Join(err, merr)
 	for _, a := range inFile {
 		set[a] = true
 	}

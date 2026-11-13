@@ -1,5 +1,9 @@
 // Package manifest records each item that the CLI makes, so that mai uninstall can remove all
 // of them and then do a check that each one is gone. The manifest holds no secret.
+//
+// One manifest in the state folder holds the items of each instance of that folder. Each item
+// records its instance. Thus mai uninstall of one instance removes only the items of that
+// instance.
 package manifest
 
 import (
@@ -7,6 +11,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -33,12 +39,19 @@ type Item struct {
 	// link named), and each folder that mai made for it, the deepest first.
 	Target string   `json:"target,omitempty"`
 	Dirs   []string `json:"dirs,omitempty"`
+	// Instance is the instance of the item. An item of mai 3.0 or 3.1 has no instance. Load
+	// then gives it the instance of its name, or the instance of the file (instanceOf).
+	Instance string `json:"instance,omitempty"`
 }
 
-// Manifest is the list of items of one instance.
+// Manifest is the list of the items of each instance of one state folder.
 type Manifest struct {
 	mu       sync.Mutex
 	path     string
+	instance string // the instance of the command; Add records each item with no instance for it
+	// Instance is the instance of the command that made the file. mai 3.0 and 3.1 wrote no
+	// instance in an item, thus an item with no instance and with no instance in its name is
+	// of this instance.
 	Instance string `json:"instance"`
 	Items    []Item `json:"items"`
 }
@@ -46,9 +59,10 @@ type Manifest struct {
 // FileName is the name of the manifest in the state folder.
 const FileName = "manifest.json"
 
-// Load reads the manifest at path. A missing file gives an empty manifest.
+// Load reads the manifest at path for a command of the instance. A missing file gives an
+// empty manifest.
 func Load(path, instance string) (*Manifest, error) {
-	m := &Manifest{path: path, Instance: instance}
+	m := &Manifest{path: path, instance: instance, Instance: instance}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return m, nil
@@ -60,17 +74,62 @@ func Load(path, instance string) (*Manifest, error) {
 		return nil, err
 	}
 	m.path = path
+	if m.Instance == "" {
+		m.Instance = instance
+	}
+	for i := range m.Items {
+		if m.Items[i].Instance == "" {
+			m.Items[i].Instance = instanceOf(m.Items[i], m.Instance)
+		}
+	}
 	return m, nil
 }
 
+// The ends of the names of the volumes of an instance, after the name of the instance. They
+// agree with engine.DataVolume and engine.SpoolVolume.
+const (
+	dataVolumeEnd  = "3-data"
+	spoolVolumeEnd = "3-spool"
+)
+
+// instanceOf gives the instance of an item from its name, or other when the name does not
+// tell the instance. The name of a container is the name of its instance. The name of a volume
+// is the instance and "3-data" or "3-spool". The account of a keychain item ends with "@" and
+// the instance.
+func instanceOf(it Item, other string) string {
+	switch it.Type {
+	case Container:
+		if it.Name != "" {
+			return it.Name
+		}
+	case Volume:
+		for _, end := range []string{dataVolumeEnd, spoolVolumeEnd} {
+			if inst, ok := strings.CutSuffix(it.Name, end); ok && inst != "" {
+				return inst
+			}
+		}
+	case KeychainKey:
+		if i := strings.LastIndexByte(it.Name, '@'); i >= 0 && i < len(it.Name)-1 {
+			return it.Name[i+1:]
+		}
+	}
+	return other
+}
+
+// same tells if a and b are records of the same item. The instance is not part of the
+// comparison: one item has one record, and the last command that records it sets its instance.
 func same(a, b Item) bool {
 	return a.Type == b.Type && a.Name == b.Name && a.Path == b.Path && a.Pointer == b.Pointer
 }
 
-// Add records an item, or replaces the record of the same item, and saves the file.
+// Add records an item, or replaces the record of the same item, and saves the file. An item
+// with no instance gets the instance of its name, or the instance of the command.
 func (m *Manifest) Add(it Item) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if it.Instance == "" {
+		it.Instance = instanceOf(it, m.instance)
+	}
 	for i := range m.Items {
 		if same(m.Items[i], it) {
 			m.Items[i] = it
@@ -95,7 +154,7 @@ func (m *Manifest) Remove(it Item) error {
 	return m.save()
 }
 
-// Of returns the items of one type.
+// Of returns the items of one type, of all instances.
 func (m *Manifest) Of(typ string) []Item {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -105,6 +164,35 @@ func (m *Manifest) Of(typ string) []Item {
 			out = append(out, x)
 		}
 	}
+	return out
+}
+
+// OfInstance returns the items of one type of the instance.
+func (m *Manifest) OfInstance(instance, typ string) []Item {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Item
+	for _, x := range m.Items {
+		if x.Type == typ && x.Instance == instance {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// Instances returns each instance that has an item, sorted.
+func (m *Manifest) Instances() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range m.Items {
+		if x.Instance != "" && !seen[x.Instance] {
+			seen[x.Instance] = true
+			out = append(out, x.Instance)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

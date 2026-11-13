@@ -60,7 +60,9 @@ func Failed(rs []Result) bool {
 	return false
 }
 
-// Uninstaller removes one instance and the files of the CLI.
+// Uninstaller removes one instance and the files of the CLI. The files of the CLI that the
+// other instances of the same folders use stay: the key file, the manifest, the configuration
+// file of a different instance, and the binary.
 type Uninstaller struct {
 	Engine   Engine
 	Keys     *keys.File // the key file, with the legacy keychain; nil = no key is removed
@@ -89,6 +91,10 @@ type Plan struct {
 	Paths      []string
 	Manifest   *manifest.Manifest
 	Config     Config
+	// Others holds each different instance with a key in the key file or a record in the
+	// manifest, sorted. MakePlan sets it, and Remove sets it again after the remove. While
+	// it is not empty, the files of the CLI that the other instances use stay.
+	Others []string
 }
 
 func (u *Uninstaller) out() io.Writer {
@@ -110,7 +116,8 @@ func appendNew(list []string, v string) []string {
 	return append(list, v)
 }
 
-// MakePlan reads config.json and the manifest and gives the items to remove.
+// MakePlan reads config.json and the manifest and gives the items to remove. The plan holds
+// only the items of the instance. The records of a different instance stay out of the plan.
 func (u *Uninstaller) MakePlan() (*Plan, error) {
 	cfg, err := LoadConfig(u.Dirs.Config)
 	if err != nil {
@@ -126,16 +133,16 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	p := &Plan{Instance: inst, Manifest: man, Config: cfg}
 	p.Containers = appendNew(p.Containers, inst)
-	for _, it := range man.Of(manifest.Container) {
+	for _, it := range man.OfInstance(inst, manifest.Container) {
 		p.Containers = appendNew(p.Containers, it.Name)
 	}
 	p.Volumes = appendNew(p.Volumes, DataVolume(inst))
 	p.Volumes = appendNew(p.Volumes, SpoolVolume(inst))
-	for _, it := range man.Of(manifest.Volume) {
+	for _, it := range man.OfInstance(inst, manifest.Volume) {
 		p.Volumes = appendNew(p.Volumes, it.Name)
 	}
-	p.Images = man.Of(manifest.Image)
-	p.AppEntries = man.Of(manifest.AppEntry)
+	p.Images = man.OfInstance(inst, manifest.Image)
+	p.AppEntries = man.OfInstance(inst, manifest.AppEntry)
 	// A "version" entry goes after the other entries of its file, because a hook that stays
 	// needs it.
 	sort.SliceStable(p.AppEntries, func(i, j int) bool {
@@ -178,14 +185,63 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	// A file of an app can hold content of the user after mai connect made it, thus it does
 	// not go with the folders of mai.
-	p.AppFiles = man.Of(manifest.File)
-	for _, it := range man.Of(manifest.Folder) {
+	p.AppFiles = man.OfInstance(inst, manifest.File)
+	for _, it := range man.OfInstance(inst, manifest.Folder) {
 		p.Paths = appendNew(p.Paths, it.Path)
 	}
 	p.Paths = appendNew(p.Paths, u.Dirs.Cache)
 	p.Paths = appendNew(p.Paths, u.Dirs.State)
 	p.Paths = appendNew(p.Paths, u.Dirs.Config)
+	var keyOthers []string
+	if u.Keys != nil {
+		all, err := u.Keys.Accounts()
+		if err != nil {
+			return nil, fmt.Errorf("read the key file: %w", err)
+		}
+		keyOthers = instancesExcept(accountInstances(all), inst)
+	}
+	p.Others = union(keyOthers, instancesExcept(man.Instances(), inst))
 	return p, nil
+}
+
+// accountInstances gives the instance of each account.
+func accountInstances(accounts []string) []string {
+	var out []string
+	for _, a := range accounts {
+		out = appendNew(out, keys.InstanceOf(a))
+	}
+	return out
+}
+
+// instancesExcept gives each instance of list that is not instance.
+func instancesExcept(list []string, instance string) []string {
+	var out []string
+	for _, i := range list {
+		if i != instance {
+			out = appendNew(out, i)
+		}
+	}
+	return out
+}
+
+// union gives each value of a and b one time, sorted.
+func union(a, b []string) []string {
+	var out []string
+	for _, v := range append(append([]string(nil), a...), b...) {
+		out = appendNew(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// holds tells if list holds v.
+func holds(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func imageRef(it manifest.Item) string {
@@ -233,8 +289,15 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 	for _, f := range p.Paths {
 		fmt.Fprintf(w, "  folder     %s\n", f)
 	}
-	if u.Binary != nil {
+	if u.Binary != nil && len(p.Others) == 0 {
 		fmt.Fprintf(w, "  binary     %s\n", u.Binary.Path)
+	}
+	if len(p.Others) > 0 {
+		what := "the files of the CLI that they use stay"
+		if u.Binary != nil {
+			what += ", and the binary " + u.Binary.Path + " stays"
+		}
+		fmt.Fprintf(w, "The instances %s have keys or records. Thus %s.\n", strings.Join(p.Others, ", "), what)
 	}
 	fmt.Fprintf(w, "Size of the mail data: %s\n", u.dataSize(ctx, p))
 	fmt.Fprintln(w, "CAUTION: this deletes all mail and all copies. Use --backup PATH to keep a copy.")
@@ -340,6 +403,11 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 		// A subsequent uninstall removes the keychain items that stay, thus the CLI stays.
 		rs = append(rs, Result{Item: "binary " + u.Binary.Path, State: Kept,
 			Detail: "it stays, because keychain items stay. Do the step of each keychain item, and then run mai uninstall again"})
+	case u.Binary != nil && len(p.Others) > 0:
+		// The other instances need the CLI, for example for the bridges of their apps.
+		rs = append(rs, Result{Item: "binary " + u.Binary.Path, State: Kept,
+			Detail: "it stays, because the instances " + strings.Join(p.Others, ", ") + " have keys or records. " +
+				"To remove the binary, run mai uninstall --instance NAME for each of these instances"})
 	case u.Binary != nil:
 		rs = append(rs, u.Binary.Remove())
 	}
@@ -422,6 +490,11 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			rs = append(rs, Result{Item: "container " + c, State: Kept, Detail: "it has no label of the CLI; for a 2.x install, use mai uninstall --legacy"})
 			continue
 		}
+		// A container goes only when its label tells that it is of this instance.
+		if labels[LabelInstance] != p.Instance {
+			rs = append(rs, Result{Item: "container " + c, State: Kept, Detail: "it has no label of the instance " + p.Instance})
+			continue
+		}
 		id := r.Container.ID
 		_, err = u.Engine.ContainerRemove(ctx, id, client.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
 		rs = append(rs, check("container "+c, ignoreNotFound(err), func() (bool, error) {
@@ -431,7 +504,21 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		removed[id] = true
 	}
 	for _, v := range p.Volumes {
-		_, err := u.Engine.VolumeRemove(ctx, v, client.VolumeRemoveOptions{Force: true})
+		// A volume goes only when its labels tell that it is of this instance.
+		r, err := u.Engine.VolumeInspect(ctx, v, client.VolumeInspectOptions{})
+		if IsNotFound(err) {
+			rs = append(rs, Result{Item: "volume " + v, State: Gone})
+			continue
+		}
+		if err != nil {
+			rs = append(rs, Result{Item: "volume " + v, State: Failure, Detail: err.Error()})
+			continue
+		}
+		if !managedBy(r.Volume.Labels, p.Instance) {
+			rs = append(rs, Result{Item: "volume " + v, State: Kept, Detail: "it has no label of the instance " + p.Instance})
+			continue
+		}
+		_, err = u.Engine.VolumeRemove(ctx, v, client.VolumeRemoveOptions{Force: true})
 		rs = append(rs, check("volume "+v, ignoreNotFound(err), func() (bool, error) {
 			_, e := u.Engine.VolumeInspect(ctx, v, client.VolumeInspectOptions{})
 			return engineExists(e)
@@ -473,37 +560,32 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			rs = append(rs, Result{Item: item, State: Gone})
 		}
 	}
-	var keep, kept []string
+	var keep []keptPath
+	var keyOthers []string
 	if u.Keys != nil {
-		var others []string
-		rs, others = u.removeKeys(rs, p)
-		if len(others) > 0 {
-			keep = []string{u.Keys.Path(), u.Keys.Path() + ".lock"}
-			kept = append(kept, "the key file with the keys of a different instance")
+		rs, keyOthers = u.removeKeys(rs, p)
+		if len(keyOthers) > 0 {
+			keep = append(keep, keptPath{u.Keys.Path(), "the key file with the keys of a different instance"},
+				keptPath{u.Keys.Path() + ".lock", ""})
 			fmt.Fprintf(u.out(), "The key file %s stays, because it holds the keys of the instances: %s\n",
-				u.Keys.Path(), strings.Join(others, ", "))
+				u.Keys.Path(), strings.Join(keyOthers, ", "))
 		}
-		if stay := legacyStay(rs); len(stay) > 0 {
-			if err := keepRecords(p.Manifest, stay); err != nil {
-				rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
-			} else {
-				keep = append(keep, p.Manifest.Path())
-				kept = append(kept, "the manifest with the records of the keychain items")
-				fmt.Fprintf(u.out(), "The manifest %s stays with the record of the keychain items %s. "+
-					"Thus a subsequent mai uninstall can remove them.\n", p.Manifest.Path(), strings.Join(stay, ", "))
-			}
-		}
+	}
+	rs, keep = u.keepManifest(rs, keep, p, keyOthers)
+	paths := make([]string, 0, len(keep))
+	for _, k := range keep {
+		paths = append(paths, k.path)
 	}
 	for _, f := range p.Paths {
 		if f == "" {
 			continue
 		}
-		if holdsAny(f, keep) {
-			if _, err := removeExcept(f, keep); err != nil {
+		if holdsAny(f, paths) {
+			if _, err := removeExcept(f, paths); err != nil {
 				rs = append(rs, Result{Item: "folder " + f, State: Failure, Detail: err.Error()})
 				continue
 			}
-			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: "only " + strings.Join(kept, " and ") + " stays"})
+			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: keptText(f, keep)})
 			continue
 		}
 		err := os.RemoveAll(f)
@@ -516,6 +598,75 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}))
 	}
 	return rs
+}
+
+// keptPath is a file or a folder that stays in a folder of the CLI, with its text for the
+// report. A path with no text stays with the path before it, for example a lock file.
+type keptPath struct {
+	path, text string
+}
+
+// keptText tells which paths of keep stay in the folder root.
+func keptText(root string, keep []keptPath) string {
+	var texts []string
+	for _, k := range keep {
+		if k.text != "" && within(root, k.path) {
+			texts = append(texts, k.text)
+		}
+	}
+	switch len(texts) {
+	case 0:
+		return "only the files of a different instance stay"
+	case 1:
+		return "only " + texts[0] + " stays"
+	}
+	return "only " + strings.Join(texts[:len(texts)-1], ", ") + " and " + texts[len(texts)-1] + " stay"
+}
+
+// entriesFolder is the folder in the state folder where mai connect keeps a record of each
+// entry that it wrote in a file of an app. mai disconnect and mai uninstall read these records.
+const entriesFolder = "entries"
+
+// keepManifest removes the records of the instance from the manifest, and gives the paths that
+// stay for the other instances. The record of each legacy keychain item of the instance that
+// stays also stays. The manifest stays while it holds a record. The configuration file stays
+// when it is of a different instance that has keys or records. It also sets p.Others.
+func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOthers []string) ([]Result, []keptPath) {
+	stay := legacyStay(rs)
+	recOthers := instancesExcept(p.Manifest.Instances(), p.Instance)
+	p.Others = union(keyOthers, recOthers)
+	if len(stay) > 0 || len(recOthers) > 0 {
+		text := "the manifest with the records of the keychain items"
+		if len(recOthers) > 0 {
+			text = "the manifest with the records of a different instance"
+		}
+		// The manifest stays also when the write fails, because it can hold the records of a
+		// different instance.
+		keep = append(keep, keptPath{p.Manifest.Path(), text})
+		if err := keepRecords(p.Manifest, p.Instance, stay); err != nil {
+			rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
+		} else {
+			if len(stay) > 0 {
+				fmt.Fprintf(u.out(), "The manifest %s stays with the record of the keychain items %s. "+
+					"Thus a subsequent mai uninstall can remove them.\n", p.Manifest.Path(), strings.Join(stay, ", "))
+			}
+			if len(recOthers) > 0 {
+				fmt.Fprintf(u.out(), "The manifest %s stays, because it holds the records of the instances: %s\n",
+					p.Manifest.Path(), strings.Join(recOthers, ", "))
+			}
+		}
+		if len(recOthers) > 0 && len(p.Manifest.Of(manifest.AppEntry)) > 0 {
+			keep = append(keep, keptPath{filepath.Join(u.Dirs.State, entriesFolder), "the records of the app entries of a different instance"})
+		}
+	}
+	if holds(p.Others, p.Config.Instance) {
+		cfg := filepath.Join(u.Dirs.Config, ConfigFile)
+		if _, err := os.Lstat(cfg); err == nil {
+			keep = append(keep, keptPath{cfg, "the configuration file of the instance " + p.Config.Instance})
+			fmt.Fprintf(u.out(), "The configuration file %s stays, because it is of the instance %s.\n", cfg, p.Config.Instance)
+		}
+	}
+	return rs, keep
 }
 
 // removeKeys removes the keys of the instance from the key file and the legacy keychain
@@ -605,15 +756,16 @@ func legacyStay(rs []Result) []string {
 // legacyStays tells if a legacy keychain item stays after the remove.
 func legacyStays(rs []Result) bool { return len(legacyStay(rs)) > 0 }
 
-// keepRecords changes the manifest to hold only the record of each legacy keychain item of
-// stay. A subsequent uninstall reads the records, and removes the items.
-func keepRecords(m *manifest.Manifest, stay []string) error {
+// keepRecords removes each record of the instance from the manifest, except the record of
+// each legacy keychain item of stay. A subsequent uninstall reads the records, and removes the
+// items. The records of the other instances stay.
+func keepRecords(m *manifest.Manifest, instance string, stay []string) error {
 	want := map[string]bool{}
 	for _, a := range stay {
 		want[a] = true
 	}
 	for _, it := range append([]manifest.Item(nil), m.Items...) {
-		if it.Type == manifest.KeychainKey && want[it.Name] {
+		if it.Instance != instance || (it.Type == manifest.KeychainKey && want[it.Name]) {
 			continue
 		}
 		if err := m.Remove(it); err != nil {
