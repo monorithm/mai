@@ -162,6 +162,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instance of `config.json`. Thus `mai status` showed the port and the
   version of a different server, and it sent the owner key of the instance
   to that server.
+- `mai doctor` reports a problem when the port of `config.json` is not the
+  host port of the container of its instance, with the step `mai start`.
+  It tells that mai uses the port only when the container of the instance
+  runs with that port. Before, it reported no problem when the
+  server of a different instance used the port. Then the commands and the
+  bridges of the instance sent its keys to that server.
 - `mai upgrade --instance NAME` does the check of the owner keys on the port
   of the container of that instance. When that port is not known, it does no
   check. The port is known only while the container runs and is not paused.

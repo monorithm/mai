@@ -71,7 +71,10 @@ the CLI does not use these values of `config.json`:
   with its port and its data folder. A start that is not successful does not
   change `config.json`.
 - `mai status` and `mai doctor` show and examine the port of the container
-  of the instance. `mai status` sends the owner key only to that port. It
+  of the instance. `mai status` sends the owner key only to that port.
+  `mai doctor` reports a problem when the port of `config.json` is not the
+  host port of the container of its instance. The step is `mai start`,
+  which writes the port of the container to `config.json`. It
   shows the line `server` only while the container runs, because a
   different program can use the port of a stopped container.
 - `mai upgrade` does the check of the owner keys only on the port of the

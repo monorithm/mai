@@ -1014,14 +1014,20 @@ func runDoctor(args []string) int {
 	}
 	ctx := context.Background()
 	g := runtime.GOOS
+	// The port of config.json, or of the flag --port. The commands of the agents and the
+	// bridges use the port of config.json.
+	filePort := s.cfg.Port
+	var ctr container.InspectResponse
+	found := false
 	eng, err := lcFindEngine(ctx)
 	switch {
 	case err == nil:
 		s.eng = eng
 		defer s.close()
 		ok("engine", eng.Describe(ctx))
-		// For an instance that config.json does not name, the container gives the port.
-		_, _, _ = s.owned(ctx)
+		// The container gives the port of the instance.
+		c, has, oerr := s.owned(ctx)
+		ctr, found = c, has && oerr == nil
 	case len(engine.Launchers(g)) == 0:
 		bad("engine", "no container engine is installed", engine.InstallHint(g))
 	default:
@@ -1029,6 +1035,13 @@ func runDoctor(args []string) int {
 	}
 	port := "127.0.0.1:" + strconv.Itoa(s.cfg.Port)
 	switch {
+	case found && !s.other() && s.flags.Port == 0 && engine.HostPort(ctr) != 0 && engine.HostPort(ctr) != filePort:
+		// The commands and the bridges send the keys of the instance to the port of
+		// config.json, and a different server can use it.
+		bad("port", fmt.Sprintf("config.json gives the instance %s the port %d, but its container has the host port %d. "+
+			"The commands of the agents and the bridges of %s use the port of config.json",
+			s.cfg.Instance, filePort, engine.HostPort(ctr), s.cfg.Instance),
+			"run: "+lcCommand(s.cfg.Instance, "start")+". It writes the port of the container to config.json")
 	case lcPortFree(s.cfg.Port):
 		ok("port", port+" is free")
 	case s.eng != nil && s.portIsMai(ctx):
@@ -1060,9 +1073,11 @@ func runDoctor(args []string) int {
 	return 0
 }
 
+// portIsMai tells if the container of the instance runs with the port of the session as its
+// host port.
 func (s *lcSession) portIsMai(ctx context.Context) bool {
 	c, ok, err := s.owned(ctx)
-	return err == nil && ok && c.State != nil && c.State.Running
+	return err == nil && ok && c.State != nil && c.State.Running && engine.HostPort(c) == s.cfg.Port
 }
 
 // lcDoctorKeys examines the key file and the legacy keychain items of the instance. It reads
