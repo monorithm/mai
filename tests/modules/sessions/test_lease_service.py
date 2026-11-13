@@ -1,6 +1,7 @@
 """The leases of the sessions on the memory stores with a fake mail server."""
 
 import datetime as dt
+from dataclasses import dataclass
 from typing import cast
 
 import anyio
@@ -8,6 +9,9 @@ import pytest
 
 from mai.modules.credentials.application.add_agent_command import AddAgentHandler
 from mai.modules.credentials.application.agent_keys import AgentKeys
+from mai.modules.credentials.application.credential_service import (
+    CredentialService,
+)
 from mai.modules.credentials.infra.bcrypt_secret_hasher import BcryptSecretHasher
 from mai.modules.credentials.infra.in_memory_agent_key_store import (
     InMemoryAgentKeyStore,
@@ -36,7 +40,17 @@ class FixedCounter(NewMailCounter):
         return self.value
 
 
-def make_leases(tmp_path):
+@dataclass
+class Parts:
+    leases: LeaseService
+    credentials: CredentialService
+    keys: AgentKeys
+    lease_store: InMemoryLeaseStore
+    key: str
+
+
+def make_parts(tmp_path) -> Parts:
+    """A lease service on memory stores, with the agent cursor and its key."""
     credentials, store, acl, _files = make_service(tmp_path)
     keys = AgentKeys(
         store,
@@ -61,7 +75,12 @@ def make_leases(tmp_path):
     )
     anyio.run(credentials.init_accounts, False)
     key = anyio.run(keys.add, "cursor")
-    return service, key, lease_store
+    return Parts(service, credentials, keys, lease_store, key)
+
+
+def make_leases(tmp_path):
+    parts = make_parts(tmp_path)
+    return parts.leases, parts.key, parts.lease_store
 
 
 def test_a_lease_gives_a_free_session_and_a_heartbeat(tmp_path):
@@ -84,11 +103,6 @@ def test_a_lease_gives_a_free_session_and_a_heartbeat(tmp_path):
     assert [(row["session"], row["app"], row["pid"]) for row in leases] == [
         ("cursor.s1", "claude", 100),
         ("cursor.s2", "cursor", 200),
-    ]
-    sessions = anyio.run(service.sessions)
-    assert sessions == [
-        {"login": "cursor.s1", "agent": "cursor", "leased": True},
-        {"login": "cursor.s2", "agent": "cursor", "leased": True},
     ]
     stored = anyio.run(store.all)
     assert all(first["lease"] not in lease.token_hash for lease in stored)
@@ -132,3 +146,91 @@ def test_bad_key_no_free_session_and_owner_end(tmp_path):
     assert again["session"] == "cursor.s4"
     with pytest.raises(LeaseError):
         anyio.run(service.heartbeat, "not-a-lease")
+
+
+def test_a_named_lease_gives_the_session_by_label_or_by_login(tmp_path):
+    parts = make_parts(tmp_path)
+    anyio.run(parts.credentials.session_new, "cursor", "lane-a")
+    anyio.run(parts.credentials.session_new, "cursor", "lane-b")
+
+    first = anyio.run(
+        parts.leases.acquire, parts.key, "cursor", "/work/a", 100, "lane-a"
+    )
+    assert is_token(first["lease"]) and first["session"] == "cursor.lane-a"
+    assert set(first) == {"lease", "session", "heartbeat_seconds", "expires_seconds"}
+    state = anyio.run(parts.leases.state, first["lease"])
+    assert state.login == "cursor.lane-a"
+    second = anyio.run(
+        parts.leases.acquire, parts.key, "cursor", "/work/b", 200, "cursor.lane-b"
+    )
+    assert second["session"] == "cursor.lane-b"
+    anyio.run(parts.leases.end, first["lease"])
+    again = anyio.run(
+        parts.leases.acquire, parts.key, "cursor", "/work/c", 300, "lane-a"
+    )
+    assert again["session"] == "cursor.lane-a"
+
+
+def test_a_named_lease_refuses_a_busy_unknown_revoked_or_bad_session(tmp_path):
+    parts = make_parts(tmp_path)
+    codex = anyio.run(parts.keys.add, "codex")
+    anyio.run(parts.credentials.session_new, "cursor", "lane-a")
+    anyio.run(parts.credentials.session_new, "cursor", "lane-b")
+    anyio.run(parts.credentials.session_revoke, "cursor.lane-b")
+    anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 1, "lane-a")
+
+    def code(key, session):
+        with pytest.raises(LeaseError) as info:
+            anyio.run(parts.leases.acquire, key, "cursor", "/w", 2, session)
+        return info.value.code
+
+    assert code(parts.key, "lane-a") == "SESSION_BUSY"
+    assert code(parts.key, "cursor.lane-a") == "SESSION_BUSY"
+    assert code(parts.key, "lane-b") == "SESSION_REVOKED"
+    assert code(parts.key, "lane-c") == "SESSION_UNKNOWN"
+    # A session of a different agent is unknown, also when it exists.
+    assert code(codex, "cursor.lane-a") == "SESSION_UNKNOWN"
+    assert code(codex, "lane-a") == "SESSION_UNKNOWN"
+    for bad in ("", "Lane-A", "cursor.", "cursor.lane.a", "-x", "a" * 33):
+        assert code(parts.key, bad) == "BAD_LABEL", bad
+    assert code("mai1:cursor:" + "a" * 52, "lane-a") == "BAD_KEY"
+
+
+def test_a_pool_lease_never_gives_a_named_session(tmp_path):
+    parts = make_parts(tmp_path)
+    anyio.run(parts.credentials.session_new, "cursor", "lane-a")
+    pool = [
+        anyio.run(parts.leases.acquire, parts.key, "claude", "/w", pid)["session"]
+        for pid in range(8)
+    ]
+    assert pool == [f"cursor.s{n}" for n in range(1, 9)]
+    with pytest.raises(LeaseError) as info:
+        anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 9)
+    assert info.value.code == "NO_FREE_SESSION"
+    named = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 10, "lane-a")
+    assert named["session"] == "cursor.lane-a"
+
+
+def test_a_named_lease_of_a_pool_label_takes_it_from_the_pool(tmp_path):
+    parts = make_parts(tmp_path)
+    pool = anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 1)
+    assert pool["session"] == "cursor.s1"
+    with pytest.raises(LeaseError) as info:
+        anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, "s1")
+    assert info.value.code == "SESSION_BUSY"
+    anyio.run(parts.leases.end, pool["lease"])
+    named = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 3, "s1")
+    assert named["session"] == "cursor.s1"
+    next_pool = anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 4)
+    assert next_pool["session"] == "cursor.s2"
+
+
+def test_an_expired_lease_frees_its_named_session(tmp_path):
+    parts = make_parts(tmp_path)
+    anyio.run(parts.credentials.session_new, "cursor", "lane-a")
+    start = dt.datetime(2026, 11, 12, 12, 0, tzinfo=dt.UTC)
+    parts.leases.now = lambda: start
+    anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 1, "lane-a")
+    parts.leases.now = lambda: start + dt.timedelta(seconds=91)
+    later = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, "lane-a")
+    assert later["session"] == "cursor.lane-a"

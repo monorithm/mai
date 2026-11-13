@@ -3,7 +3,6 @@ from bustan import ClassProvider, FactoryProvider, Module
 from mai.platform.database import Database, DatabaseModule
 
 from .api.agents_controller import AgentsController
-from .api.sessions_controller import SessionsController
 from .application.add_agent_command import AddAgentHandler
 from .application.agent_keys import AgentKeys
 from .application.authenticate_command import AuthenticateHandler
@@ -55,7 +54,7 @@ def _agent_key_store(database: Database) -> AgentKeyStore:
 # the daemons start, because Dovecot and Postfix read the same tables.
 @Module(
     imports=[DatabaseModule],
-    controllers=[AgentsController, SessionsController],
+    controllers=[AgentsController],
     providers=[
         FactoryProvider(
             provide=CredentialStore, use_factory=_credential_store, inject=(Database,)
