@@ -41,14 +41,18 @@ func TestARenewOfANamedLeaseNeverActsAsADifferentSession(t *testing.T) {
 			_, _ = w.Write(rec.Body.Bytes())
 		})
 	})
-	// With no heartbeat during the test, the call with the handle does the renew. A heartbeat
-	// that comes first does the same renew and drops the handle, and then the call gets
-	// SESSION_UNKNOWN.
+	// With a heartbeat of 60 s, no second heartbeat comes during the test. Thus the call with
+	// the handle does the renew. A heartbeat that does the renew first drops the handle, and
+	// then the call gets SESSION_UNKNOWN.
 	h.srv.hbSeconds = 60
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}`)
 	h.recv(t)
 	handle := h.login(t, 1, "lane-a")["session"].(string)
+	// A new lease sends its first heartbeat immediately, also with a heartbeat of 60 s. When
+	// that heartbeat comes to the server after the expiry, it does the renew. Thus wait for the
+	// first heartbeat of each lease before the expiry.
+	h.firstBeats(t, "cursor.s1", "cursor.lane-a")
 	old.Store(true)
 	h.srv.expire()
 	h.srv.mu.Lock()

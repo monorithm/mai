@@ -138,12 +138,15 @@ func useTestKeys(t *testing.T) *testKeyFile {
 }
 
 // testEnv makes a temp HOME and MAI_HOME, a config.json with the port of a fake server, and a
-// key file with the owner key.
+// key file with the owner key. On Windows, mai connect copilot writes the mcp.json of Visual
+// Studio Code in the folder of AppData, not in HOME. Thus testEnv also sets AppData to a
+// folder in the temp HOME.
 func testEnv(t *testing.T) (*fakeOwner, *testKeyFile, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("AppData", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("MAI_HOME", filepath.Join(home, "maihome"))
 	f := &fakeOwner{}
