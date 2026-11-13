@@ -112,8 +112,8 @@ type Plan struct {
 	// shared holds each record of a file of an app of mai 3.0 or 3.1. It has no instance.
 	shared []manifest.Item
 	// keptImages holds the record of each image of Images that stays, because a container of
-	// a different instance uses it. Remove sets it. Each record has the instance of that
-	// container, thus the uninstall of that instance removes the image.
+	// a different instance of this state folder uses it. Remove sets it. Each record has the
+	// instance of that container, thus the uninstall of that instance removes the image.
 	keptImages []manifest.Item
 	Manifest   *manifest.Manifest
 	Config     Config
@@ -716,10 +716,19 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 	}
 	for _, it := range p.Images {
 		r, owner := u.removeImage(ctx, it, removed)
-		if r.State == Kept && owner != "" && owner != p.Instance {
+		switch {
+		case r.State != Kept || owner == "" || owner == p.Instance:
+			// The record goes with the records of the instance.
+		case u.knows(p, owner):
 			it.Instance = owner
 			p.keptImages = append(p.keptImages, it)
 			r.Detail += ". Its record goes to the instance " + owner + ", thus the uninstall of " + owner + " removes it"
+		default:
+			// The container can be of a different state folder, for example of a CLI with a
+			// different MAI_HOME. A record of its instance keeps the manifest after the
+			// uninstall of the last instance, and its uninstall removes that container.
+			r.Detail += ". This state folder has no keys and no records of the instance " + owner +
+				" of that container. Thus the image stays with no record. Remove it yourself when no container uses it"
 		}
 		rs = append(rs, r)
 	}
@@ -1237,6 +1246,19 @@ func removeExcept(root string, keep []string) (bool, error) {
 		}
 	}
 	return true, errors.Join(errs...)
+}
+
+// knows tells if the instance has keys in the key file or records in the manifest of this
+// state folder. An error of the key file gives false.
+func (u *Uninstaller) knows(p *Plan, instance string) bool {
+	if holds(p.Others, instance) || holds(p.Manifest.Instances(), instance) {
+		return true
+	}
+	if u.Keys == nil {
+		return false
+	}
+	accounts, err := u.Keys.OfInstance(instance)
+	return err == nil && len(accounts) > 0
 }
 
 // removeImage removes one image of the instance. An image that a different container uses

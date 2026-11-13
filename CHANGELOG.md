@@ -219,7 +219,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   container or a volume goes only when its label `dev.mai.instance` is the
   instance. An image that a container of a different instance uses stays,
   and its record goes to that instance. Thus the uninstall of the last
-  instance removes the image. A record of 3.0 or 3.1 of an app entry or of a
+  instance removes the image. The state folder can have no keys and no
+  records of that instance, for example for a container of a CLI with a
+  different `MAI_HOME`. Then the image stays with no record, and the report
+  tells this. A record of 3.0 or 3.1 of an app entry or of a
   file of an app has no instance. The entry also names no instance. Each
   uninstall keeps such an entry while a different instance stays, and tells
   it. The uninstall of the last instance removes it. Before, the uninstall
