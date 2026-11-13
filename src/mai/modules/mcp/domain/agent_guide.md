@@ -58,7 +58,8 @@ before you log in.
 
 Call `send_message` with `to`, `subject`, `body`, and `request_id`. Use a new
 `request_id` for each new mail. If you send again with the same `request_id`
-and the same content, mai does not send a second mail.
+and the same content, mai does not send a second mail. If the first send
+failed, the second send delivers the mail.
 
 ## The work board
 

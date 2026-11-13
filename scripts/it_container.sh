@@ -86,4 +86,5 @@ MAI_IT_WORKER_KEY=$(agent_key cursor) \
     tests/modules/threads/test_router_container_it.py \
     tests/modules/ops/test_ops_container_it.py \
     tests/platform/milter/test_milter_postfix.py \
-    tests/modules/board/test_board_flow_it.py
+    tests/modules/board/test_board_flow_it.py \
+    tests/modules/mail/test_send_container_it.py

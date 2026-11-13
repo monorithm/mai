@@ -1,8 +1,8 @@
 #!/bin/sh
 # Start a mai container, set the owner key, add an agent, and test the lease
 # API, MCP with a lease, the named sessions of the owner API and of the server
-# CLI, the refusal of a pool label, and a pool lease with no session when the
-# pool is full.
+# CLI, the refusal of a pool label, a pool lease with no session when the pool
+# is full, and the removal of an agent.
 # Usage: scripts/it_leases.sh [IMAGE]   (default $MAI_IT_IMAGE, else mai:wf-leases)
 # MAI_IT_NAME, MAI_IT_VOLUME, and MAI_IT_PORT set the names of the container
 # and the volume, and the host port.
@@ -363,4 +363,47 @@ assert "mai1:" not in text and "credential" not in text and "secret" not in text
 assert not re.search(r"[a-z2-7]{40,}", text)
 ' || fail "an owner answer holds a secret"
 echo "ok: no owner answer holds a secret"
+# status_of prints the HTTP status of a request and drops the answer.
+status_of() {
+  curl -sS -o /dev/null -w '%{http_code}' "$@"
+}
+# A full pool and a lease with no session, then the removal of the agent.
+pool_tokens=""
+for pid in 21 22 23 24 25 26 27 28; do
+  lease_call "$agent" "{\"app\":\"it\",\"folder\":\"/it/pool\",\"pid\":$pid}"
+  expect 201 "" "pool lease $pid before the removal"
+  pool_tokens="$pool_tokens $(printf '%s' "$body" | json 'd["lease"]')"
+done
+lease_call "$agent" '{"app":"it","folder":"/it/extra","pid":29}'
+expect 201 "" "the lease with no session before the removal"
+is_true "d['session'] is None" "the 9th lease before the removal"
+extra=$(printf '%s' "$body" | json 'd["lease"]')
+# The app role has no DELETE right, thus the removal must change the key row.
+code=$(status_of -X DELETE "$base/api/agents/cursor" -H "authorization: Bearer $owner")
+[ "$code" = 204 ] || fail "DELETE /api/agents/cursor gave HTTP $code"
+call_mcp -H "authorization: Bearer $extra" \
+  -d '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+[ "$code" = 401 ] || fail "whoami on the lease with no session after the removal gave HTTP $code"
+for token in $pool_tokens $extra; do
+  code=$(status_of -X POST "$base/api/leases/current/heartbeat" -H "authorization: Bearer $token")
+  [ "$code" = 401 ] || fail "a heartbeat after the removal of the agent gave HTTP $code"
+done
+echo "ok: the removal of the agent ends each of its leases, also the lease with no session"
+code=$(status_of -X POST "$base/api/leases" -H "authorization: Bearer $agent" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":1}')
+[ "$code" = 401 ] || fail "a lease with the key of the removed agent gave HTTP $code"
+code=$(status_of -X DELETE "$base/api/agents/cursor" -H "authorization: Bearer $owner")
+[ "$code" = 404 ] || fail "a second DELETE /api/agents/cursor gave HTTP $code"
+echo "ok: DELETE /api/agents/cursor stops the key of the agent"
+again=$(curl -fsS -X POST "$base/api/agents" -H "authorization: Bearer $owner" \
+  -H 'content-type: application/json' -d '{"name":"cursor"}' | json 'd["agent_key"]')
+lease_json=$(curl -fsS -X POST "$base/api/leases" -H "authorization: Bearer $again" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":1}')
+# The revoked pool sessions cursor.s1 to cursor.s8 do not hold a place in the pool.
+[ "$(printf '%s' "$lease_json" | json 'd["session"] is not None and d["session"].startswith("cursor.s")')" = True ] ||
+  fail "the lease with the new key has no pool session"
+code=$(status_of -X POST "$base/api/leases" -H "authorization: Bearer $agent" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":2}')
+[ "$code" = 401 ] || fail "the key from before the removal gave HTTP $code"
+echo "ok: POST /api/agents adds the removed agent again, and its lease gets a pool session"
 echo "PASS"
