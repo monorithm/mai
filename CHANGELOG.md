@@ -30,11 +30,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   agent.
 - After `mai upgrade`, start each app that runs `mai mcp` again, or start
   its MCP server again. `mai upgrade` also gives this step when it deletes
-  the keychain item of an agent. A bridge of 3.0 or 3.1 that runs reads the
-  agent key from the keychain item at each lease request. When the item is
-  gone, the bridge stops with `BAD_KEY` and the step `Run mai agent add NAME`.
-  Do not do that step, because `mai agent add` gives `AGENT_EXISTS` for an
-  agent that exists. Start the app again.
+  the keychain item of an agent. It also gives the step when the manifest
+  records the keychain item of an agent, and the item is gone. For example,
+  a bridge of 3.2 moves its agent key to the key file at its first lease
+  request. A bridge of 3.0 or 3.1 that runs reads the agent key from the
+  keychain item at each lease request. When the item is gone, the bridge
+  stops with `BAD_KEY` and the step `Run mai agent add NAME`. Do not do that
+  step, because `mai agent add` gives `AGENT_EXISTS` for an agent that
+  exists. Start the app again.
 - `mai doctor` examines the key file and tells about each keychain item of the
   instance. It shows no key. On macOS, it reads no key and shows no prompt.
   When no keychain is available and the manifest records keychain items of

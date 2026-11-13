@@ -577,7 +577,9 @@ binary that wrote it.
   `BAD_KEY` and the step `Run mai agent add NAME`, which gives
   `AGENT_EXISTS`. Thus after `mai upgrade`, the user starts each app that
   runs `mai mcp` again. `mai upgrade` gives this step when it deletes the
-  keychain item of an agent.
+  keychain item of an agent. It also gives the step when the manifest
+  records the keychain item of an agent, and the item is gone. For example,
+  a bridge of 3.2 moved the key before the upgrade.
 - `mai doctor` tells about each keychain item of the instance. It reads no
   key, thus macOS shows no prompt.
 - `mai uninstall` removes the keys of the instance from the key file and each

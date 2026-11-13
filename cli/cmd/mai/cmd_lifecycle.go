@@ -653,7 +653,8 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 			"or because the server accepts only the key of the key file: %s\n",
 			len(r.Cleaned), strings.Join(r.Cleaned, ", "))
 	}
-	if lcAgentItemGone(append(append([]string(nil), r.Moved...), r.Cleaned...)) {
+	restart := lcAgentItemGone(append(append([]string(nil), r.Moved...), r.Cleaned...))
+	if restart {
 		fmt.Fprint(lcOut, lcRestartStep)
 	}
 	for _, c := range r.Conflicts {
@@ -676,13 +677,21 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 			"and then run mai upgrade again.\n", strings.Join(mine, ", "))
 		return false
 	}
+	var pruned []string
 	for _, it := range m.Of(manifest.KeychainKey) {
 		if keys.InstanceOf(it.Name) != instance {
 			continue
 		}
 		if has, herr := kf.HasLegacyItem(it.Name); herr == nil && !has {
 			_ = m.Remove(it)
+			pruned = append(pruned, it.Name)
 		}
+	}
+	// A different process can delete a recorded item before the upgrade, for example a bridge
+	// of this version that moves its agent key at its first lease request. A bridge of mai 3.0
+	// or 3.1 of the same agent then also reads an item that is gone.
+	if !restart && lcAgentItemGone(pruned) {
+		fmt.Fprint(lcOut, lcRestartStep)
 	}
 	if err != nil {
 		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run mai upgrade again.\n", err)
@@ -711,8 +720,9 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 	return done
 }
 
-// lcRestartStep tells the user to start the apps again after the delete of the keychain item
-// of an agent. A bridge of mai 3.0 or 3.1 reads the agent key from the keychain item at each
+// lcRestartStep tells the user to start the apps again when the keychain item of an agent is
+// gone: after its delete, or when the manifest records an item that a different process
+// deleted before. A bridge of mai 3.0 or 3.1 reads the agent key from the keychain item at each
 // lease request. When the item is gone, it stops with BAD_KEY and the step of mai agent add,
 // which gives AGENT_EXISTS for an agent that exists.
 const lcRestartStep = "mai: start each app that runs mai mcp again, or start its MCP server again. " +
