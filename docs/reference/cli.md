@@ -203,11 +203,11 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
 - `mai upgrade` moves all the keys of the instance. When the key file has the
   same key for the account of a keychain item, `mai upgrade` deletes the
   keychain item. A keychain item stays when the key file has a different key
-  for its account. Then `mai upgrade` gives a step and the exit code 1. For
-  the owner key, `mai upgrade` does a test of the two keys on the server. When
-  the server accepts only the key of the key file, `mai upgrade` deletes the
-  keychain item. Thus no command deletes or replaces a key that the server
-  accepts.
+  for its account, or when the CLI cannot delete the item. Then
+  `mai upgrade` gives a step and the exit code 1. For the owner key,
+  `mai upgrade` does a test of the two keys on the server. When the server
+  accepts only the key of the key file, `mai upgrade` deletes the keychain
+  item. Thus no command deletes or replaces a key that the server accepts.
 - `mai agent rotate NAME` deletes the keychain item of the agent, because the
   server then accepts only the new key.
 - `mai doctor` tells about each keychain item of the instance. When no

@@ -22,11 +22,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   available and the manifest records a keychain item for the account, the
   command gives an error with a step. Thus `mai start` makes no new owner key
   in place of the key of the keychain item. A keychain item stays when the key
-  file has a different key for its account. Then `mai upgrade` gives a step
-  and the exit code 1. For the owner key, `mai upgrade` does a test of the two
-  keys on the server. When the server accepts only the key of the key file,
-  `mai upgrade` deletes the keychain item. `mai agent rotate` also deletes the
-  keychain item of the agent.
+  file has a different key for its account, or when the CLI cannot delete
+  the item. Then `mai upgrade` gives a step and the exit code 1. For the owner
+  key, `mai upgrade` does a test of the two keys on the server. When the
+  server accepts only the key of the key file, `mai upgrade` deletes the
+  keychain item. `mai agent rotate` also deletes the keychain item of the
+  agent.
 - `mai doctor` examines the key file and tells about each keychain item of the
   instance. It shows no key. On macOS, it reads no key and shows no prompt.
   When no keychain is available and the manifest records keychain items of

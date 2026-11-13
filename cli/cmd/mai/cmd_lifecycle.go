@@ -654,6 +654,10 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 	for _, c := range r.Conflicts {
 		fmt.Fprintf(lcErr, "mai: the keychain item %s stays: %s\n", c.Account, lcConflictText(instance, kf.Path(), c))
 	}
+	for _, st := range r.Stays {
+		fmt.Fprintf(lcErr, "mai: the keychain item %s stays, because its delete failed: %v. "+
+			"The key file %s has the key of this account. %s\n", st.Account, st.Err, kf.Path(), lcStayStep(st.Account))
+	}
 	var mine []string
 	for _, a := range recorded {
 		if keys.InstanceOf(a) == instance {
@@ -679,7 +683,34 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run mai upgrade again.\n", err)
 		return false
 	}
-	return len(r.Conflicts) == 0
+	if len(r.Conflicts) > 0 || len(r.Stays) > 0 {
+		return false
+	}
+	if r.Unavailable {
+		// With no keychain and no record, no item exists.
+		return true
+	}
+	// The move is complete only when no item of the instance stays.
+	done := true
+	for _, a := range candidates {
+		switch has, herr := kf.HasLegacyItem(a); {
+		case herr != nil:
+			fmt.Fprintf(lcErr, "mai: the check of the keychain item %s failed: %v. "+
+				"Step: unlock the keychain, and then run mai upgrade again.\n", a, herr)
+			done = false
+		case has:
+			fmt.Fprintf(lcErr, "mai: the keychain item %s stays after the move. %s\n", a, lcStayStep(a))
+			done = false
+		}
+	}
+	return done
+}
+
+// lcStayStep gives the step for a keychain item that stays, although the key file has the key
+// of its account.
+func lcStayStep(account string) string {
+	return fmt.Sprintf("Step: unlock the keychain, and then run mai upgrade again. When macOS shows a prompt, let mai delete the item. "+
+		"Or delete the keychain item yourself: the service %s, the account %s.", keychain.Service, account)
 }
 
 // errNoAgentCheck means that the CLI has no check of an agent key on the server. A lease

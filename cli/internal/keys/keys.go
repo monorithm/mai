@@ -138,14 +138,20 @@ func (f *File) Get(account string) (string, error) {
 	if f.legacy == nil {
 		return "", ErrNotFound
 	}
-	key, _, err := f.move(account)
+	key, same, err := f.move(account)
+	if err == nil && same {
+		// The key is in the key file. When the delete fails, the legacy item stays, and
+		// "mai doctor" and "mai upgrade" tell about it.
+		_ = f.DeleteLegacy(account)
+	}
 	return key, err
 }
 
-// move reads the legacy item of the account, writes it to the key file, and then deletes the
-// legacy item. When a different process wrote a key for the account in the meantime, that
-// key stays, and move gives it. Then the legacy item stays if it holds a different key, and
-// same is false. When the write fails, the legacy item stays.
+// move reads the legacy item of the account and writes it to the key file. It does not delete
+// the legacy item: when same is true, the key file has the key of the legacy item, and the
+// caller deletes the item. When a different process wrote a key for the account in the
+// meantime, that key stays, and move gives it. Then same is false if the legacy item holds a
+// different key.
 func (f *File) move(account string) (key string, same bool, err error) {
 	secret, err := f.legacy.Get(account)
 	switch {
@@ -175,9 +181,6 @@ func (f *File) move(account string) (key string, same bool, err error) {
 		// "mai upgrade" tells about it.
 		return key, false, nil
 	}
-	// The key is in the key file. When the delete fails, the legacy item stays, and
-	// "mai doctor" tells about it.
-	_ = f.DeleteLegacy(account)
 	return key, true, nil
 }
 
@@ -337,7 +340,8 @@ func (f *File) DeleteLegacy(account string) error {
 
 // MoveReport tells what MoveAll did.
 type MoveReport struct {
-	// Moved holds each account whose key went from the keychain to the key file.
+	// Moved holds each account whose key went from the keychain to the key file, and whose
+	// legacy item MoveAll deleted.
 	Moved []string
 	// Cleaned holds each account whose legacy item MoveAll deleted, because the key file
 	// had the same key, or because the server accepts the key of the key file and refuses
@@ -347,8 +351,19 @@ type MoveReport struct {
 	// for its account, and nothing proves that the server accepts the key of the key file.
 	// A conflict is not in the error of MoveAll.
 	Conflicts []Conflict
+	// Stays holds each legacy item whose delete failed, although the key file has the key of
+	// its account. A stay is not in the error of MoveAll.
+	Stays []Stay
 	// Unavailable is true when no keychain is available. Then MoveAll moved no key.
 	Unavailable bool
+}
+
+// Stay is a legacy item that stays, because its delete failed. The key file has the key of
+// its account.
+type Stay struct {
+	Account string
+	// Err is the error of the delete.
+	Err error
 }
 
 // Conflict is a legacy item whose key is not the key of the key file, with the result of the
@@ -370,7 +385,8 @@ type Accepts func(account, key string) (bool, error)
 // has a key for the account of a legacy item, MoveAll deletes the legacy item only when it
 // holds the same key, or when accepts tells that the server accepts the key of the key file
 // and refuses the key of the legacy item. Else the legacy item stays, and the report has a
-// conflict. accepts can be nil. The error joins the failure of each account.
+// conflict. When the delete of a legacy item fails, the report has a stay. accepts can be nil.
+// The error joins the failure of each account.
 func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 	var r MoveReport
 	if f.legacy == nil {
@@ -405,6 +421,10 @@ func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 				// A different process wrote a different key in the meantime.
 				r.Conflicts = append(r.Conflicts, Conflict{Account: a})
 			default:
+				if err := f.DeleteLegacy(a); err != nil {
+					r.Stays = append(r.Stays, Stay{Account: a, Err: err})
+					continue
+				}
 				r.Moved = append(r.Moved, a)
 			}
 			continue
@@ -431,7 +451,7 @@ func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 			}
 		}
 		if err := f.DeleteLegacy(a); err != nil {
-			errs = append(errs, fmt.Errorf("delete the keychain item %s: %w", a, err))
+			r.Stays = append(r.Stays, Stay{Account: a, Err: err})
 			continue
 		}
 		r.Cleaned = append(r.Cleaned, a)
