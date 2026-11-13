@@ -228,7 +228,8 @@ class MailSession:
         """Submit one message. Returns the refused recipients (empty on success).
 
         Raises RECIPIENT_UNKNOWN if Postfix refuses all recipients or the
-        sender, and MAIL_SERVER_DOWN if Postfix does not reply.
+        sender, BODY_TOO_LARGE if Postfix refuses the data with 552, and
+        MAIL_SERVER_DOWN if Postfix does not reply.
 
         The SMTP connection stays open after the login. Postfix closes a
         connection with no command for smtpd_timeout (300 s): it logs
@@ -267,14 +268,19 @@ class MailSession:
                     self._drop_smtp()
                     if attempt:
                         raise _error("MAIL_SERVER_DOWN") from exc
+                # SMTPDataError is a subclass of OSError, thus its branch is first.
+                except smtplib.SMTPDataError as exc:
+                    if exc.smtp_code == 552:
+                        raise _error("BODY_TOO_LARGE", path="body") from exc
+                    if not _closing(exc):
+                        raise _error("MAIL_SERVER_DOWN") from exc
+                    self._drop_smtp()
+                    if attempt:
+                        raise _error("MAIL_SERVER_DOWN") from exc
                 except (smtplib.SMTPServerDisconnected, OSError) as exc:
                     self._drop_smtp()
                     if attempt:
                         raise _error("MAIL_SERVER_DOWN") from exc
-                except smtplib.SMTPDataError as exc:
-                    if exc.smtp_code == 552:
-                        raise _error("BODY_TOO_LARGE", path="body") from exc
-                    raise _error("MAIL_SERVER_DOWN") from exc
         raise _error("MAIL_SERVER_DOWN")  # not reached
 
     # IMAP

@@ -387,6 +387,7 @@ def test_contains_uid_syncs_before_the_search():
 # A small fake SMTP server like the internal smtpd of Postfix
 
 TIMEOUT_REPLY = "421 4.4.2 fake Error: timeout exceeded"
+SIZE_REPLY = "552 5.3.4 Error: message file too big"
 
 
 class FakeSmtp(socketserver.StreamRequestHandler):
@@ -395,7 +396,9 @@ class FakeSmtp(socketserver.StreamRequestHandler):
     Postfix closes a connection that is idle for smtpd_timeout (300 s): it
     logs "timeout after AUTH", sends 421, and closes. The stage "auth" does
     the same at once after AUTH. The stages "rcpt" and "data" send the 421
-    in place of the reply to RCPT or to the end of the data.
+    in place of the reply to RCPT or to the end of the data. The stage "size"
+    refuses the data with 552, as Postfix does for a message that is too
+    large, and keeps the connection.
     """
 
     stage = "auth"
@@ -441,6 +444,9 @@ class FakeSmtp(socketserver.StreamRequestHandler):
                     data.append(part)
                 if dropping and self.stage == "data":
                     return self.drop()
+                if dropping and self.stage == "size":
+                    self.w(SIZE_REPLY)
+                    continue
                 self.accepted.append(b"".join(data))
                 self.w("250 2.0.0 Ok: queued as FAKE")
             elif verb == b"QUIT":
@@ -496,3 +502,14 @@ def test_a_second_421_gives_mail_server_down(fake_smtp):
     assert exc.value.code == "MAIL_SERVER_DOWN"
     assert len(server.connections) == 2
     assert server.accepted == []
+
+
+def test_a_552_reply_to_the_data_gives_body_too_large_and_no_second_send(fake_smtp):
+    port, server = fake_smtp(stage="size")
+    session = MailSession("cursor.lane-a", "good", imap_port=1, smtp_port=port)
+    with pytest.raises(ToolError) as exc:
+        session.send(RAW, "cursor.lane-a@mai.internal", ["codex@mai.internal"])
+    assert (exc.value.code, exc.value.path) == ("BODY_TOO_LARGE", "body")
+    assert len(server.connections) == 1
+    assert server.accepted == []
+    session.close()
