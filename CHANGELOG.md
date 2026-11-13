@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-13
+
 ### Added
 
 - Named sessions as in 2.x, with no session secret on the host. The owner API
