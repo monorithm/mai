@@ -67,3 +67,20 @@ func TestTestStoreMovesOnlyTheItemsOfService(t *testing.T) {
 		t.Fatalf("the item stays after Delete: %v", err)
 	}
 }
+
+func TestServiceOfGivesTheTestServiceOfTheStore(t *testing.T) {
+	t.Setenv(TestServiceVar, "dev.mai.test.unit")
+	if got := ServiceOf(System(), Service); got != "dev.mai.test.unit" {
+		t.Fatalf("ServiceOf(System(), Service) = %q", got)
+	}
+	if got := ServiceOf(System(), "dev.mai.other"); got != "dev.mai.other" {
+		t.Fatalf("ServiceOf(System(), other) = %q", got)
+	}
+	if got := ServiceOf(NewMemory(), Service); got != Service {
+		t.Fatalf("ServiceOf(memory, Service) = %q", got)
+	}
+	t.Setenv(TestServiceVar, "")
+	if got := ServiceOf(System(), Service); got != Service {
+		t.Fatalf("ServiceOf(System(), Service) with no test service = %q", got)
+	}
+}

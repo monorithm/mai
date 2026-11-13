@@ -56,6 +56,19 @@ func (t testStore) Delete(service, account string) error {
 	return t.Store.Delete(t.name(service), account)
 }
 
+// ServiceFor gives the service in which the store keeps the items of service.
+func (t testStore) ServiceFor(service string) string { return t.name(service) }
+
+// ServiceOf gives the service in which store keeps the items of service. For the store of a
+// test build with a test service, it gives the test service for Service. Use it to show the
+// service of an item.
+func ServiceOf(store Store, service string) string {
+	if m, ok := store.(interface{ ServiceFor(string) string }); ok {
+		return m.ServiceFor(service)
+	}
+	return service
+}
+
 // OwnerAccount is the account of the owner key of an instance.
 func OwnerAccount(instance string) string { return "owner@" + instance }
 

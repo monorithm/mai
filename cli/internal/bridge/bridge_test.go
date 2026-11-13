@@ -25,11 +25,18 @@ import (
 const agentKey = "mai1:cursor:abcdefghijklmnopqrstuvwxyz234567"
 
 // fakeServer speaks the lease and MCP contract of the server, with named sessions.
+//
+// A lease with no session has the session "" in valid. The server gives such a lease to a
+// pool lease request when no pool session is free (poolFull). A tools/call on that lease
+// binds a pool session to the lease when one is free, else it gives the tool error
+// NO_FREE_SESSION.
 type fakeServer struct {
 	mu        sync.Mutex
 	valid     map[string]string // lease -> session
 	n         int
-	refuseNew bool
+	refuseNew bool // after the first lease, a pool lease request gets 409 NO_FREE_SESSION
+	poolFull  bool // no pool session is free
+	refuseKey bool // each lease request gets 401 BAD_KEY
 	ended     []string
 	leaseReqs []map[string]any
 	named     map[string]string // login of a named session -> "active" or "revoked"
@@ -62,7 +69,7 @@ func bearer(r *http.Request) string {
 
 var testLabelRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
-// grant gives a new lease on session.
+// grant gives a new lease on session, or a lease with no session when session is "".
 func (f *fakeServer) grant(w http.ResponseWriter, session string) {
 	f.n++
 	lease := fmt.Sprintf("lease_%043d", f.n)
@@ -72,8 +79,19 @@ func (f *fakeServer) grant(w http.ResponseWriter, session string) {
 		hb = 1
 	}
 	w.WriteHeader(201)
-	_ = json.NewEncoder(w).Encode(map[string]any{"lease": lease, "session": session, "heartbeat_seconds": hb, "expires_seconds": 90})
+	_ = json.NewEncoder(w).Encode(map[string]any{"lease": lease, "session": nullable(session), "heartbeat_seconds": hb, "expires_seconds": 90})
 }
+
+// nullable gives nil for "", thus JSON null.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// freePool gives the next pool session.
+func (f *fakeServer) freePool() string { return fmt.Sprintf("cursor.s%d", f.n+1) }
 
 // leased is true when a live lease holds session.
 func (f *fakeServer) leased(session string) bool {
@@ -90,7 +108,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/leases":
-		if bearer(r) != agentKey {
+		if bearer(r) != agentKey || f.refuseKey {
 			writeErr(w, 401, "BAD_KEY")
 			return
 		}
@@ -122,7 +140,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 409, "NO_FREE_SESSION")
 			return
 		}
-		f.grant(w, fmt.Sprintf("cursor.s%d", f.n+1))
+		if f.poolFull {
+			f.grant(w, "")
+			return
+		}
+		f.grant(w, f.freePool())
 	case r.Method == http.MethodPost && r.URL.Path == "/api/leases/current/heartbeat":
 		s, ok := f.valid[bearer(r)]
 		if !ok {
@@ -134,7 +156,10 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			n = 3
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"session": s, "new_mail": n})
+		if s == "" {
+			n = 0
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"session": nullable(s), "new_mail": n})
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/leases/current":
 		if _, ok := f.valid[bearer(r)]; !ok {
 			writeErr(w, 401, "LEASE_UNKNOWN")
@@ -163,6 +188,19 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if ok && s == "" && msg["method"] == "tools/call" {
+			if f.poolFull {
+				noFree := map[string]any{"error": map[string]any{"code": "NO_FREE_SESSION",
+					"message": "No pool session of the agent is free. Call login with a named session, or try again later.", "retry_safe": true}}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": msg["id"],
+					"result": map[string]any{"isError": true, "structuredContent": noFree}})
+				return
+			}
+			// The bind: the lease gets a free pool session, and the tool runs as that session.
+			s = f.freePool()
+			f.n++
+			f.valid[bearer(r)] = s
+		}
 		result := map[string]any{"session": s}
 		if p, ok := msg["params"].(map[string]any); ok {
 			if name := p["name"]; name == "login" || name == "logout" {
@@ -211,6 +249,52 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.buf.String()
+}
+
+// newWrappedHarness is newHarness with a handler in front of the fake server. The test
+// can then change some answers of the server.
+func newWrappedHarness(t *testing.T, wrap func(next http.Handler) http.Handler) *harness {
+	t.Helper()
+	h := newHarness(t, memoryWithKey())
+	ts := httptest.NewServer(wrap(h.srv))
+	t.Cleanup(ts.Close)
+	h.b.Endpoint, h.b.Client = ts.URL, ts.Client()
+	return h
+}
+
+// leaseBody reads the body of a lease request and puts it back for the next handler.
+func leaseBody(r *http.Request) map[string]any {
+	raw, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	var body map[string]any
+	_ = json.Unmarshal(raw, &body)
+	return body
+}
+
+// isPoolRequest is true for a lease request with no session name.
+func isPoolRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.URL.Path != "/api/leases" {
+		return false
+	}
+	_, named := leaseBody(r)["session"]
+	return !named
+}
+
+// isNamedRequest is true for a lease request with a session name.
+func isNamedRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost || r.URL.Path != "/api/leases" {
+		return false
+	}
+	_, named := leaseBody(r)["session"]
+	return named
+}
+
+// writeProblem writes an HTTP 500 answer with no error code, as a web framework gives for
+// an exception.
+func writeProblem(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500,"detail":"Internal server error"}`))
 }
 
 func newHarness(t *testing.T, store keychain.Store) *harness {
@@ -374,20 +458,22 @@ func TestBridgeGetsANewLeaseWithNoNewPresenceCheck(t *testing.T) {
 	}
 }
 
-func TestBridgeStopsWhenNoNewLeaseIsAvailable(t *testing.T) {
+func TestBridgeStopsWhenThePoolRenewGivesBadKey(t *testing.T) {
 	h := newHarness(t, memoryWithKey())
-	h.srv.refuseNew = true
+	h.srv.hbSeconds = 60
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	h.recv(t)
+	h.firstBeats(t, "cursor.s1")
+	h.srv.mu.Lock()
+	h.srv.refuseKey = true
+	h.srv.mu.Unlock()
 	h.srv.expire()
 	h.send(t, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"whoami"}}`)
-	// The heartbeat can find the end of the lease first. Then an error with no id comes
-	// before the answer of the call.
 	var answered bool
 	for _, a := range h.recvAll(t) {
 		if a["id"] == float64(7) {
-			if a["error"] == nil {
+			if a["error"] == nil || !strings.Contains(fmt.Sprint(a["error"]), "BAD_KEY") {
 				t.Fatalf("answer = %v", a)
 			}
 			answered = true

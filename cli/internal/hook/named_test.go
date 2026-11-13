@@ -96,3 +96,40 @@ func TestReadNoticeAcceptsALargeNoticeAndRefusesATooLargeFile(t *testing.T) {
 		t.Fatal("a file larger than the limit gives a notice")
 	}
 }
+
+// A bridge whose pool lease has no session writes a notice with no pool entry. The hook
+// shows the named sessions of that notice.
+func TestANoticeWithNoPoolEntryGivesOnlyTheNamedSessions(t *testing.T) {
+	state := t.TempDir()
+	writeNotice(t, state, 300, "cursor", `{"named":[{"session":"cursor.lane-a","new_mail":1,"updated_at":"2026-11-12T17:00:01Z"}]}`)
+	n, ok := FindNotice(state, "cursor", []int{300})
+	if !ok || n.Session != "" || len(n.All()) != 1 || n.All()[0].Session != "cursor.lane-a" {
+		t.Fatalf("notice = %+v, %v", n, ok)
+	}
+	var out bytes.Buffer
+	Run(strings.NewReader(`{}`), &out, "plain", "", "cursor", state, []int{300})
+	if out.String() != textLaneA+"\n" {
+		t.Errorf("plain: got %q", out.String())
+	}
+	writeNotice(t, state, 301, "cursor", `{"named":[]}`)
+	if _, ok := FindNotice(state, "cursor", []int{301}); ok {
+		t.Fatal("a notice with no session gives a notice")
+	}
+}
+
+// The JSON of a notice with no pool session has only the list named.
+func TestTheJSONOfANoticeWithNoPoolSessionHasNoPoolEntry(t *testing.T) {
+	n := Notice{Named: []Notice{{Session: "cursor.lane-a", NewMail: 0, UpdatedAt: "2026-11-12T17:00:01Z"}}}
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"named":[{"session":"cursor.lane-a","new_mail":0,"updated_at":"2026-11-12T17:00:01Z"}]}`
+	if string(data) != want {
+		t.Fatalf("got %s\nwant %s", data, want)
+	}
+	data, _ = json.Marshal(two)
+	if !strings.HasPrefix(string(data), `{"session":"cursor.s2","new_mail":3,`) {
+		t.Fatalf("notice with a pool session = %s", data)
+	}
+}

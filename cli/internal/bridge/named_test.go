@@ -293,7 +293,7 @@ func TestEachLeaseHasAHeartbeatAndANotice(t *testing.T) {
 			UpdatedAt string `json:"updated_at"`
 		} `json:"named"`
 	}
-	// The pool session is first, then the named sessions in login order.
+	// The pool session is first, then the named sessions, sorted by login.
 	waitFor(t, "notice of each lease", func() bool {
 		data, _ := os.ReadFile(noticePath(h))
 		n.Named = nil

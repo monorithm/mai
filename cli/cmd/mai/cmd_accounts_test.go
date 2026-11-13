@@ -332,6 +332,30 @@ func TestSessionRefusesBadArgumentsWithNoCall(t *testing.T) {
 	}
 }
 
+// A label s<N> is a label of the pool. Only the pool and --count make such a session, thus
+// mai session new refuses the label before it calls the server.
+func TestSessionNewRefusesAPoolLabelWithNoCall(t *testing.T) {
+	f, _, _ := testEnv(t)
+	for _, label := range []string{"s1", "s9", "s01", "s123"} {
+		var out, errOut bytes.Buffer
+		if code := runSession([]string{"new", "cursor", "--label", label}, nil, &out, &errOut); code != 2 {
+			t.Errorf("new --label %s gives %d, want 2", label, code)
+		}
+		if !strings.Contains(errOut.String(), "BAD_LABEL") || !strings.Contains(errOut.String(), "--count") || out.Len() != 0 {
+			t.Errorf("new --label %s: stderr %q, stdout %q", label, errOut.String(), out.String())
+		}
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("calls: %v", f.calls)
+	}
+	for _, label := range []string{"s", "s1a", "lane-s1", "ss1"} {
+		var out, errOut bytes.Buffer
+		if code := runSession([]string{"new", "cursor", "--label", label}, nil, &out, &errOut); code != 0 {
+			t.Errorf("new --label %s gives %d: %s", label, code, errOut.String())
+		}
+	}
+}
+
 func TestSessionRotateAndEnd(t *testing.T) {
 	f, _, _ := testEnv(t)
 	var out, errOut bytes.Buffer
