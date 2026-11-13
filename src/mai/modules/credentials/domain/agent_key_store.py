@@ -17,4 +17,8 @@ class AgentKeyStore(ABC):
 
     @abstractmethod
     async def remove(self, agent: str) -> bool:
-        """Remove the key of AGENT. Returns False when the agent has no key."""
+        """Remove the key of AGENT. Returns False when the agent has no key.
+
+        After the removal, get_hash gives None. The store can keep a row with
+        no hash, because the app role has no DELETE right.
+        """

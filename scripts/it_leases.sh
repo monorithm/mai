@@ -104,4 +104,27 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$base/api/leases/curre
 code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$base/api/leases/current/heartbeat" -H "authorization: Bearer $lease")
 [ "$code" = 401 ] || fail "a heartbeat after the end gave HTTP $code"
 echo "ok: the lease ended"
+
+# status_of prints the HTTP status of a request and drops the answer.
+status_of() {
+  curl -sS -o /dev/null -w '%{http_code}' "$@"
+}
+# The app role has no DELETE right, thus the removal must change the key row.
+code=$(status_of -X DELETE "$base/api/agents/cursor" -H "authorization: Bearer $owner")
+[ "$code" = 204 ] || fail "DELETE /api/agents/cursor gave HTTP $code"
+code=$(status_of -X POST "$base/api/leases" -H "authorization: Bearer $agent" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":1}')
+[ "$code" = 401 ] || fail "a lease with the key of the removed agent gave HTTP $code"
+code=$(status_of -X DELETE "$base/api/agents/cursor" -H "authorization: Bearer $owner")
+[ "$code" = 404 ] || fail "a second DELETE /api/agents/cursor gave HTTP $code"
+echo "ok: DELETE /api/agents/cursor stops the key of the agent"
+again=$(curl -fsS -X POST "$base/api/agents" -H "authorization: Bearer $owner" \
+  -H 'content-type: application/json' -d '{"name":"cursor"}' | json 'd["agent_key"]')
+lease_json=$(curl -fsS -X POST "$base/api/leases" -H "authorization: Bearer $again" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":1}')
+printf '%s' "$lease_json" | json 'd["lease"]' >/dev/null || fail "no lease with the new key"
+code=$(status_of -X POST "$base/api/leases" -H "authorization: Bearer $agent" \
+  -H 'content-type: application/json' -d '{"app":"it","folder":"/it","pid":2}')
+[ "$code" = 401 ] || fail "the key from before the removal gave HTTP $code"
+echo "ok: POST /api/agents adds the removed agent again with a new key"
 echo "PASS"

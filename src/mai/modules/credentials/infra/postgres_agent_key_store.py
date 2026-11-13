@@ -22,7 +22,16 @@ END
 $$;
 """
 
-MIGRATIONS = [Migration(210, "create the table of the agent key hashes", _V210)]
+# The app role has no DELETE right, thus the removal of a key keeps the row and
+# sets the hash to NULL. The version follows 210, which makes the table.
+_V211 = """
+ALTER TABLE mail_auth.agent_key ALTER COLUMN key_hash DROP NOT NULL;
+"""
+
+MIGRATIONS = [
+    Migration(210, "create the table of the agent key hashes", _V210),
+    Migration(211, "keep the row of a removed agent key with no hash", _V211),
+]
 
 
 class PostgresAgentKeyStore(AgentKeyStore):
@@ -37,7 +46,8 @@ class PostgresAgentKeyStore(AgentKeyStore):
                 "SELECT key_hash FROM mail_auth.agent_key WHERE agent = %s", (agent,)
             )
             row = await cur.fetchone()
-        return None if row is None else str(row[0])
+        # A removed key keeps its row with no hash.
+        return None if row is None or row[0] is None else str(row[0])
 
     async def set_hash(self, agent: str, key_hash: str, now: datetime) -> None:
         async with self._database.transaction() as conn:
@@ -50,8 +60,11 @@ class PostgresAgentKeyStore(AgentKeyStore):
             )
 
     async def remove(self, agent: str) -> bool:
+        # An UPDATE, not a DELETE: the app role has no DELETE right.
         async with self._database.transaction() as conn:
             cur = await conn.execute(
-                "DELETE FROM mail_auth.agent_key WHERE agent = %s", (agent,)
+                "UPDATE mail_auth.agent_key SET key_hash = NULL, updated_at = now()"
+                " WHERE agent = %s AND key_hash IS NOT NULL",
+                (agent,),
             )
             return bool(cur.rowcount)
