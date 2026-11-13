@@ -12,7 +12,7 @@ import sys
 from mai.platform.contract import ToolError
 
 # The version of the MCP contract, not of the package: a release with no contract change keeps it.
-SERVER_INFO = {"name": "mai", "version": "3.1.0"}
+SERVER_INFO = {"name": "mai", "version": "3.1.1"}
 MODERN_VERSION = "2026-07-28"
 INITIALIZE_VERSIONS = ("2025-11-25",)
 SUPPORTED = (MODERN_VERSION,) + INITIALIZE_VERSIONS
@@ -128,6 +128,15 @@ def validate(schema, value, path=""):
     if kind is not None:
         kinds = kind if isinstance(kind, list) else [kind]
         if not any(_type_ok(value, k) for k in kinds):
+            fail(path)
+    if "anyOf" in schema:
+        for branch in schema["anyOf"]:
+            try:
+                validate(branch, value, path)
+                break
+            except ToolError:
+                continue
+        else:
             fail(path)
     if "enum" in schema and value not in schema["enum"]:
         fail(path)

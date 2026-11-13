@@ -57,7 +57,7 @@ fi
 echo "ok: no /data/secrets/owner.cred"
 
 version=$(curl -fsS "$base/api/version")
-[ "$(printf '%s' "$version" | json 'd["contract"]')" = 3.1.0 ] || fail "contract version"
+[ "$(printf '%s' "$version" | json 'd["contract"]')" = 3.1.1 ] || fail "contract version"
 echo "ok: GET /api/version"
 
 agent=$(curl -fsS -X POST "$base/api/agents" -H "authorization: Bearer $owner" \

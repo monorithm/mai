@@ -21,10 +21,9 @@ def test_login_and_logout_take_a_session_and_each_other_tool_an_optional_handle(
     assert login["required"] == ["session"]
     assert login["properties"]["session"]["type"] == "string"
     assert login["additionalProperties"] is False
-    assert schemas.BY_NAME["login"]["outputSchema"]["required"] == [
-        "session",
-        "login",
-        "agent",
+    assert schemas.BY_NAME["login"]["outputSchema"]["anyOf"] == [
+        {"required": ["session", "login", "agent"]},
+        {"required": ["error"]},
     ]
     logout = schemas.BY_NAME["logout"]["inputSchema"]
     assert logout["required"] == ["session"]

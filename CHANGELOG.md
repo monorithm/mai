@@ -6,6 +6,33 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-13
+
+### Fixed
+
+- A tool error matches the output schema of its tool. A strict MCP client,
+  for example the client of Cursor, compares each tool result with the output
+  schema, also an error result. In 3.1.0 and 3.0.x, the client refused each
+  error of the 12 tools whose output schema has the keyword `required`. The
+  chat then got the
+  client error `-32602` in place of the code of the error. The output schema
+  of each tool accepts the form `{"error": {...}}` as an alternative to the
+  fields of a successful result. The MCP contract is 3.1.1.
+- The argument `session` and the guide `mai://guide` tell a chat to give the
+  handle of its login in each call, also in `reply` and `read_message`. A call
+  with no `session` acts as the pool session, which does not have the mail of
+  the named session. Thus such a call gives `UNKNOWN_MESSAGE`.
+- A summary of a mail with no `Date` header, a `Date` header that does not
+  parse, or no `From` address matches the output schema. The fields `date`
+  and `from` can be `null`. In 3.1.0, a strict client refused each
+  `list_inbox`, `read_message`, `read_thread`, and `wait_for_mail` result
+  with such a mail, for example a mail from `mai import-maildir`.
+- `claim_thread` finds a queue mail that arrived after the last command of the
+  session. A second select of the selected mailbox sends `NOOP`.
+  Thus Dovecot syncs the view of the session before the search. In 3.1.0,
+  the first `claim_thread` gave `UNKNOWN_MESSAGE`, and only a second call
+  found the mail.
+
 ## [3.1.0] - 2026-11-13
 
 ### Added

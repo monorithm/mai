@@ -13,7 +13,7 @@ import (
 )
 
 // Dev is the version of a build that has no release version.
-const Dev = "3.1.0-dev"
+const Dev = "3.1.1-dev"
 
 // Version is the version of the CLI and of the image that it runs.
 var Version = Dev
