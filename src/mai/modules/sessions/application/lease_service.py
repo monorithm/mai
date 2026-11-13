@@ -231,8 +231,8 @@ class LeaseService:
                 lease = await self._store.seen(lease.token_hash, self.now())
                 if lease is None:
                     raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
+                await self._check_agent(lease)
                 if lease.session is None:
-                    await self._check_agent(lease)
                     return {"session": None, "new_mail": 0}
                 state = await self._state(lease)
                 return {"session": lease.session, "new_mail": await self._count(state)}
@@ -260,6 +260,8 @@ class LeaseService:
             lease = await self._live(token)
             if lease.session is None:
                 lease = await self._bind(lease)
+            else:
+                await self._check_agent(lease)
             return await self._state(lease)
 
     async def leases(self) -> list[dict]:
@@ -340,13 +342,22 @@ class LeaseService:
     async def _check_agent(self, lease: Lease) -> None:
         """End LEASE and raise LeaseError(LEASE_UNKNOWN) when the owner removed its agent.
 
-        A lease on a session ends when the removal of the agent revokes the
-        session. A lease with no session has no session to revoke, thus it
-        needs this check.
+        The removal of an agent revokes its sessions, but it does not wait for
+        the lease lock. A lease request or a bind at the same time can thus
+        give a lease on a session that the removal did not see. This check
+        ends such a lease, and revokes its session. A lease with no session
+        has no session to revoke, thus it also needs this check.
         """
-        if not await self._credential_call(self._keys.is_active(lease.agent)):
-            await self._finish(lease)
-            raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
+        if await self._credential_call(self._keys.is_active(lease.agent)):
+            return
+        await self._finish(lease)
+        if lease.session is not None:
+            with anyio.move_on_after(LOGOUT_LIMIT_SECONDS, shield=True):
+                try:
+                    await self._credentials.session_revoke(lease.session)
+                except Exception:  # noqa: BLE001, S110 - the lease ended, the revoke only cleans up
+                    pass
+        raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
 
     async def _check_unbound_limit(self, agent: str) -> None:
         """Raise LeaseError(NO_FREE_SESSION) when AGENT has its limit of leases with no session."""

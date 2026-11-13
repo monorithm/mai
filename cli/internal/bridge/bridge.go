@@ -217,11 +217,17 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	if !ok {
 		return nil
 	}
-	if isCall && l.handle == "" && l.session() == "" {
+	if isCall && l.handle == "" {
 		// The call can bind a pool session to the pool lease, also when its answer is an
-		// error. The heartbeat gives that session, thus the notice file gets the pool entry
-		// at once.
-		defer l.beatSoon()
+		// error. A renew during the call can also give the pool lease no session. The
+		// heartbeat gives the session of a bind, thus the notice file gets the pool entry at
+		// once.
+		unbound := l.session() == ""
+		defer func() {
+			if unbound || l.session() == "" {
+				l.beatSoon()
+			}
+		}()
 	}
 	token := l.current()
 	answer, err := b.post(ctx, token, line)

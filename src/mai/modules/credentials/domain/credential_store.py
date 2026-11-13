@@ -29,8 +29,13 @@ class CredentialStore(ABC):
         """Change the status. A revoke also ends the handles and the claims of the login."""
 
     @abstractmethod
-    async def mark_login(self, login: str, now: datetime) -> None:
-        """Set the status active and the time of the last login."""
+    async def mark_login(self, login: str, now: datetime) -> bool:
+        """Set the status active and the time of the last login of an open principal.
+
+        Returns False when the status is not issued or active, for example
+        after a revoke that came after the read of the principal. The status
+        then does not change.
+        """
 
     @abstractmethod
     async def expire_old(self, now: datetime) -> None:

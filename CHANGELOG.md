@@ -173,7 +173,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A lease request or a bind at the time of an agent removal does not make a
   new pool session for the removed agent. A lease request gives `BAD_KEY`, and
   a bind ends the lease with `LEASE_UNKNOWN`. The credentials refuse a new
-  session of an agent that is not active.
+  session of an agent that is not active. Each heartbeat and each tool call
+  examines the agent of the lease. Thus a lease of a removed agent ends at its
+  next heartbeat or tool call, and the server revokes its session.
+- An owner revoke that comes during the secret check of a login stays. In
+  3.0.1, the login set the status `active` again, and the revoked session got
+  new leases. The login then gives `CREDENTIAL_REVOKED`.
 - A lease request ends the expired leases at the same time. Before, the
   logouts ran one after the other, and many expired leases made the request
   go past its time limit.

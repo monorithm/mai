@@ -40,7 +40,9 @@ class AuthenticateHandler:
             if p.status != "expired":
                 await self._store.set_status(command.login, "expired", now)
             raise CredentialError("CREDENTIAL_EXPIRED")
-        await self._store.mark_login(command.login, now)
+        if not await self._store.mark_login(command.login, now):
+            # A revoke came after the read of the principal.
+            raise CredentialError("CREDENTIAL_REVOKED")
         result = p.with_changes(status="active", last_login_at=now).public()
         result["fingerprint"] = fingerprint(p.password_hash)
         result["expires_at_value"] = p.expires_at

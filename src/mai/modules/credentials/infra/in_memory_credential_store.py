@@ -33,8 +33,12 @@ class InMemoryCredentialStore(CredentialStore):
     async def set_status(self, login: str, status: str, now: datetime) -> None:
         self._update(login, status=status)
 
-    async def mark_login(self, login: str, now: datetime) -> None:
+    async def mark_login(self, login: str, now: datetime) -> bool:
+        current = self._principals.get(login)
+        if current is None or current.status not in ("issued", "active"):
+            return False
         self._update(login, status="active", last_login_at=now)
+        return True
 
     async def expire_old(self, now: datetime) -> None:
         for p in list(self._principals.values()):
