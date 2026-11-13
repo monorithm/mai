@@ -229,6 +229,12 @@ class MailSession:
 
         Raises RECIPIENT_UNKNOWN if Postfix refuses all recipients or the
         sender, and MAIL_SERVER_DOWN if Postfix does not reply.
+
+        The SMTP connection stays open after the login. Postfix closes a
+        connection with no command for smtpd_timeout (300 s): it logs
+        "timeout after AUTH" and sends 421. Postfix did not take the mail,
+        thus a lost connection or a 421 gets one new connection and one more
+        send.
         """
         with self._smtp_lock:
             for attempt in (0, 1):
@@ -246,13 +252,23 @@ class MailSession:
                         for k, v in (refused or {}).items()
                     }
                 except smtplib.SMTPRecipientsRefused as exc:
-                    raise _error(
-                        "RECIPIENT_UNKNOWN", path="to", refused=sorted(exc.recipients)
-                    ) from exc
+                    if not _closing(exc):
+                        raise _error(
+                            "RECIPIENT_UNKNOWN",
+                            path="to",
+                            refused=sorted(exc.recipients),
+                        ) from exc
+                    self._drop_smtp()
+                    if attempt:
+                        raise _error("MAIL_SERVER_DOWN") from exc
                 except smtplib.SMTPSenderRefused as exc:
-                    raise _error("RECIPIENT_UNKNOWN", path="from") from exc
+                    if not _closing(exc):
+                        raise _error("RECIPIENT_UNKNOWN", path="from") from exc
+                    self._drop_smtp()
+                    if attempt:
+                        raise _error("MAIL_SERVER_DOWN") from exc
                 except (smtplib.SMTPServerDisconnected, OSError) as exc:
-                    self._smtp = None
+                    self._drop_smtp()
                     if attempt:
                         raise _error("MAIL_SERVER_DOWN") from exc
                 except smtplib.SMTPDataError as exc:
@@ -495,6 +511,14 @@ class MailSession:
                 t.join(timeout=5)
         return found.is_set()
 
+    def _drop_smtp(self):
+        if self._smtp is not None:
+            try:
+                self._smtp.close()
+            except Exception:
+                pass
+        self._smtp = None
+
     def _drop_imap(self):
         if self._imap is not None:
             try:
@@ -563,6 +587,15 @@ def _raw_idle(imap: imaplib.IMAP4, deadline: float, stop: threading.Event) -> bo
         if line.startswith(tag + b" "):
             break
     return new_mail
+
+
+def _closing(
+    exc: smtplib.SMTPResponseException | smtplib.SMTPRecipientsRefused,
+) -> bool:
+    """True when the reply is 421: the server closes the connection and did not take the mail."""
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return any(reply[0] == 421 for reply in exc.recipients.values())
+    return exc.smtp_code == 421
 
 
 def imap_timeout(imap: imaplib.IMAP4) -> float:

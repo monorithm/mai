@@ -86,7 +86,7 @@ jobs:
       - run: uv sync --locked
       # The script starts the image with the security values of the CLI (read-only, 6
       # capabilities), makes the test credentials, and runs the container tests: router, ops,
-      # milter, and the board flow.
+      # milter, the board flow, and send_message.
       - name: Container tests
         run: scripts/it_container.sh mai:dev
       - name: Container tests of the owner copy, the leases, and the mail UI

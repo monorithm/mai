@@ -6,6 +6,26 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A send that occurs more than 300 s after the login of a session delivers the
+  mail. Postfix closes an SMTP connection that has no command for its
+  `smtpd_timeout` (300 s): it logs `timeout after AUTH` and sends 421. The app
+  read the 421 as a refused sender and did not connect again. A 421 reply gets
+  a new connection and one more send, as a lost connection does.
+- After a failed send, a retry of `send_message` or `reply` with the same
+  `request_id` delivers the mail one time. In 3.0.1, the app role had no right
+  to delete the retry key of the failed send. Thus the call gave `INTERNAL` in
+  place of the error of the send. Also, the retry gave a duplicate of a mail
+  that did not go out. The retry key has a state (`pending`, `sent`, or
+  `failed`). The app changes the state and does not delete the key.
+- A duplicate of `send_message` or `reply` gives the `date` of the sent mail.
+  In 3.0.1, `date` was `null`, and an MCP client refused the result because
+  the output schema has `date` as a string.
+- The migration 420 gives a state to each retry key from 3.0.1. A key whose
+  mail has an envelope record gets the state `sent`. Each other key gets the
+  state `failed`, thus a retry of the key sends the mail.
+
 ## [3.0.1] - 2026-11-12
 
 ### Fixed

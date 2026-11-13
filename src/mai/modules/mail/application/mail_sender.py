@@ -5,15 +5,19 @@ from __future__ import annotations
 import datetime as dt
 import email.policy
 import email.utils
+import logging
 import uuid
 from email.message import EmailMessage
 
+import anyio
 from bustan import Injectable
 
 from ..domain import mail_rules as r
 from ..domain.errors import MailError
 from ..domain.ports import Directory, SentRequests
 from .mail_reader import MailReader
+
+log = logging.getLogger("mai.mail")
 
 
 def build(
@@ -111,19 +115,21 @@ class MailSender:
             in_reply_to,
             references,
         )
-        kept, duplicate = await self._sent.reserve(
-            state.login, request_id, sha, message_id
-        )
-        if duplicate:
-            return {
-                "ref": r.ref_of(kept),
-                "thread_ref": r.thread_ref_of(root or kept),
-                "message_id": kept,
-                "to": addresses,
-                "date": None,
-                "duplicate": True,
-            }
+        # The lock of the login keeps two calls with the same key apart: the
+        # second call reserves after the first call knows its result.
         async with self._reader.lock(state):
+            kept = await self._sent.reserve(state.login, request_id, sha, message_id)
+            if kept.duplicate:
+                result = {
+                    "ref": r.ref_of(kept.message_id),
+                    "thread_ref": r.thread_ref_of(root or kept.message_id),
+                    "message_id": kept.message_id,
+                    "to": addresses,
+                    "duplicate": True,
+                }
+                if kept.sent_at is not None:
+                    result["date"] = r.iso(kept.sent_at)
+                return result
             try:
                 await self._reader.call(
                     state,
@@ -134,8 +140,10 @@ class MailSender:
                 )
             except BaseException:
                 # The send failed, thus a retry with the same key must send again.
-                await self._sent.release(state.login, request_id, message_id)
+                with anyio.CancelScope(shield=True):
+                    await self._keep(self._sent.release, state, request_id, message_id)
                 raise
+            await self._keep(self._sent.mark_sent, state, request_id, message_id, now)
             try:
                 await self._reader.call(state, "append", "Sent", raw, flags=(r.SEEN,))
             except Exception:  # noqa: BLE001, S110
@@ -149,3 +157,21 @@ class MailSender:
             "date": r.iso(now),
             "duplicate": False,
         }
+
+    @staticmethod
+    async def _keep(step, state, request_id, message_id, *args) -> None:
+        """Write the result of a send to the retry key. A failure of the store is not the result of the call.
+
+        If the write fails, the key stays pending, and the next reserve of the
+        key decides. The PostgreSQL store looks for the envelope of the mail:
+        with an envelope the retry gets a duplicate, with no envelope the
+        retry sends.
+        """
+        try:
+            await step(state.login, request_id, message_id, *args)
+        except Exception as exc:  # noqa: BLE001 - the send gives the result of the call
+            log.error(
+                "the retry key of %s did not change: %s",
+                state.login,
+                type(exc).__name__,
+            )
