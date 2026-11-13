@@ -243,6 +243,22 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 			return b.renewFailed(id, hasID, isCall, l, rerr)
 		}
 		answer, err = b.post(ctx, l.current(), line)
+		if isLeaseUnknown(err) && l.isEnded() && name != "" {
+			// The bridge ended the new lease before the call came to the server, for example at
+			// a logout during a renew that the heartbeat did. The server did not do the call.
+			// Get a new lease for the label or the login, as above.
+			next, fail := b.open(ctx, name)
+			if fail != nil {
+				b.writeResult(id, fail)
+				return nil
+			}
+			l = next
+			answer, err = b.post(ctx, l.current(), line)
+		}
+		if isLeaseUnknown(err) && l.isEnded() {
+			// The bridge ended the lease, thus a call with the handle gets SESSION_UNKNOWN.
+			return b.renewFailed(id, hasID, isCall, l, errEnded)
+		}
 		if isLeaseUnknown(err) {
 			// The server ended the new lease immediately. The lease stays in the bridge, thus
 			// the next call or heartbeat gets a new lease.

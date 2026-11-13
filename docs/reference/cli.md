@@ -152,9 +152,14 @@ of the server.
 A logout ends the heartbeat loop and the lease of the session before it
 removes the handle. A login or a first call with the label of the same session
 in the same bridge waits for the logout. Thus it does not get `SESSION_BUSY`
-from the lease that the logout ends. When a logout ends the lease during a
-call with the label, the server does not do the call. The bridge then gets a
-new lease for the session and sends the call again.
+from the lease that the logout ends.
+
+When a logout ends the lease during a call with the label, the server does
+not do the call. The bridge then gets a new lease for the session and sends
+the call again. This is also true when the call waits for the new lease
+after a restart of the server. A call with the handle of the session gets
+`SESSION_UNKNOWN` with `retry_safe` false, because the logout ended the
+handle.
 
 The bridge stops when the app closes the stdin of the bridge. On Unix, the
 bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on
