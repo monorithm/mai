@@ -180,6 +180,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commands sent the keys of the new instance to the other server. The start
   also refuses a data folder that a container of a different instance
   mounts, and `config.json` changes only after a successful start.
+- When the container of the instance of `config.json` exists, `mai start`
+  and `mai upgrade` use its port and its data folder. `mai start` with a
+  different `--port` or `--data-dir` tells that the flag has no effect, and
+  `config.json` gets the values of the container. Before, the start wrote
+  the flag to `config.json`, but the container kept its port and its data.
+  Thus the subsequent commands sent the keys of the instance to the port of
+  a different server. `mai upgrade` also made the new container with the
+  data folder of `config.json` in place of the volume of the container that
+  it replaced.
 - The bridge ends each lease and removes its notice file when the app exits
   during a call, for example during `wait_for_mail`. Before, the write of
   the result to the closed stdout or stderr stopped the bridge with the

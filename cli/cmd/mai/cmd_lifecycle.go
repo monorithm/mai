@@ -186,11 +186,13 @@ func lcLegacyMessage(name string) string {
 	return fmt.Sprintf("a container %q exists that mai 3 did not make. A 2.x install holds the name. Run \"mai uninstall --legacy\" to remove the 2.x install, or use --instance NAME.", name)
 }
 
-// owned finds the container of the instance and refuses a container of a 2.x install. For an
-// instance that config.json does not name, the session then uses the port and the data folder
-// of the container. The port is the port of the server of the instance (known) only while the
-// container runs with that host port. A container that is stopped or paused does not answer,
-// and a different program can use the host port of a stopped container.
+// owned finds the container of the instance and refuses a container of a 2.x install. The
+// session then uses the port and the data folder of the container, because a start and an
+// upgrade keep them. This rule also applies to the instance of config.json: config.json or a
+// flag can give a different port or data folder. The port is the port of the server of the
+// instance (known) only while the container runs with that host port. A container that is
+// stopped or paused does not answer, and a different program can use the host port of a
+// stopped container.
 func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool, error) {
 	s.known = false
 	c, ok, err := s.eng.Container(ctx, s.cfg.Instance)
@@ -201,14 +203,31 @@ func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool,
 		return c, true, errors.New(lcLegacyMessage(s.cfg.Instance))
 	}
 	port := engine.HostPort(c)
-	if s.other() {
-		if port != 0 {
-			s.cfg.Port = port
-		}
-		s.cfg.DataDir = engine.DataDir(c)
+	if port != 0 {
+		s.cfg.Port = port
 	}
-	s.known = port != 0 && port == s.cfg.Port && lcServes(c)
+	s.cfg.DataDir = engine.DataDir(c)
+	s.known = port != 0 && lcServes(c)
 	return c, true, nil
+}
+
+// noEffect tells about each flag of mai start that has no effect, because the container of
+// the instance exists. A start does not change the host port or the data folder of a
+// container. Call it after owned.
+func (s *lcSession) noEffect() {
+	name := s.cfg.Instance
+	if s.flags.Port != 0 && s.flags.Port != s.cfg.Port {
+		fmt.Fprintf(lcErr, "mai: the container %s exists with the host port %d. A start does not change the port of a container, "+
+			"thus --port %d has no effect.\n", name, s.cfg.Port, s.flags.Port)
+	}
+	if d := s.flags.DataDir; d != "" && (s.cfg.DataDir == "" || !engine.Within(d, s.cfg.DataDir) || !engine.Within(s.cfg.DataDir, d)) {
+		data := "the volume " + engine.DataVolume(name)
+		if s.cfg.DataDir != "" {
+			data = "the folder " + s.cfg.DataDir
+		}
+		fmt.Fprintf(lcErr, "mai: the container %s keeps its data in %s. A start does not change the data folder of a container, "+
+			"thus --data-dir %s has no effect.\n", name, data, d)
+	}
 }
 
 // lcServes tells if the container runs and is not paused. Only then its server answers.
@@ -216,12 +235,14 @@ func lcServes(c container.InspectResponse) bool {
 	return c.State != nil && c.State.Running && !c.State.Paused
 }
 
-// saveConfig writes config.json after a successful start. For the instance of config.json, it
-// writes the flags of the command. For a different instance, the file then names that instance
-// with its port and its data folder, and no value of the instance before it stays.
-func (s *lcSession) saveConfig() error {
+// saveConfig writes config.json after a successful start. For a new container of the instance
+// of config.json, it writes the flags of the command. For a container that existed, it writes
+// the port and the data folder of that container (owned), because the start does not change
+// them. For a different instance, the file then names that instance with its port and its data
+// folder, and no value of the instance before it stays.
+func (s *lcSession) saveConfig(existed bool) error {
 	o := s.flags
-	if s.other() {
+	if s.other() || existed {
 		o.Instance, o.Port, o.DataDir = s.cfg.Instance, s.cfg.Port, s.cfg.DataDir
 	}
 	if o == (config.Overrides{}) {
@@ -410,7 +431,9 @@ func runStart(args []string) int {
 		return lcFail("%v", err)
 	}
 	id := c.ID
-	if !ok {
+	if ok {
+		s.noEffect()
+	} else {
 		if id, err = s.create(ctx, *noPull, m); err != nil {
 			return lcFail("%v", err)
 		}
@@ -424,7 +447,7 @@ func runStart(args []string) int {
 			return lcFail("%v", err)
 		}
 	}
-	if err := s.saveConfig(); err != nil {
+	if err := s.saveConfig(ok); err != nil {
 		return lcFail("write the configuration: %v", err)
 	}
 	fmt.Fprintf(lcOut, "mai: the server is healthy at http://127.0.0.1:%d\n", s.cfg.Port)

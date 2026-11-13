@@ -58,7 +58,11 @@ the CLI does not use these values of `config.json`:
 
 - For an instance that has a container, the CLI reads the port and the data
   folder from that container. The port is the host port of `8080/tcp`, and
-  the data folder is the mount at `/data`.
+  the data folder is the mount at `/data`. This rule also applies to the
+  instance of `config.json`. A start and an upgrade do not change the port
+  or the data folder of a container. Thus `mai start` with a different
+  `--port` or `--data-dir` tells that the flag has no effect. After the
+  start, `config.json` gets the port and the data folder of the container.
 - For a new instance, `mai start` uses `--port`, `--data-dir`, and
   `--image`, or the defaults. It refuses a port that a different program
   uses. It also refuses a data folder that a container of a different
