@@ -382,3 +382,117 @@ def test_contains_uid_syncs_before_the_search():
     session._imap = cast(imaplib.IMAP4, imap)
     assert session.contains_uid("shared/cursor/INBOX", 7) is False
     assert imap.calls == ["NOOP", "SEARCH"]
+
+
+# A small fake SMTP server like the internal smtpd of Postfix
+
+TIMEOUT_REPLY = "421 4.4.2 fake Error: timeout exceeded"
+
+
+class FakeSmtp(socketserver.StreamRequestHandler):
+    """Accepts mail like Postfix, but the first `drops` connections end with 421.
+
+    Postfix closes a connection that is idle for smtpd_timeout (300 s): it
+    logs "timeout after AUTH", sends 421, and closes. The stage "auth" does
+    the same at once after AUTH. The stages "rcpt" and "data" send the 421
+    in place of the reply to RCPT or to the end of the data.
+    """
+
+    stage = "auth"
+    drops = 1
+    connections: list
+    accepted: list
+    dropped: threading.Event
+
+    def w(self, line: str):
+        self.wfile.write(line.encode() + b"\r\n")
+        self.wfile.flush()
+
+    def drop(self):
+        self.w(TIMEOUT_REPLY)
+        self.dropped.set()
+
+    def handle(self):
+        self.connections.append(len(self.connections))
+        dropping = len(self.connections) <= self.drops
+        self.w("220 fake ESMTP")
+        while True:
+            line = self.rfile.readline()
+            if not line:
+                return
+            verb = line.split(b" ", 1)[0].strip().upper()
+            if verb == b"EHLO":
+                self.w("250-fake")
+                self.w("250 AUTH PLAIN")
+            elif verb == b"AUTH":
+                self.w("235 2.7.0 Authentication successful")
+                if dropping and self.stage == "auth":
+                    return self.drop()
+            elif verb == b"MAIL":
+                self.w("250 2.1.0 Ok")
+            elif verb == b"RCPT":
+                if dropping and self.stage == "rcpt":
+                    return self.drop()
+                self.w("250 2.1.5 Ok")
+            elif verb == b"DATA":
+                self.w("354 End data with <CR><LF>.<CR><LF>")
+                data = []
+                while (part := self.rfile.readline()) not in (b".\r\n", b""):
+                    data.append(part)
+                if dropping and self.stage == "data":
+                    return self.drop()
+                self.accepted.append(b"".join(data))
+                self.w("250 2.0.0 Ok: queued as FAKE")
+            elif verb == b"QUIT":
+                self.w("221 2.0.0 Bye")
+                return
+            else:
+                self.w("502 5.5.2 Error: command not recognized")
+
+
+@pytest.fixture
+def fake_smtp():
+    servers = []
+
+    def start(**attrs):
+        attrs.update(connections=[], accepted=[], dropped=threading.Event())
+        handler = type("H", (FakeSmtp,), attrs)
+        srv = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        servers.append(srv)
+        return srv.server_address[1], handler
+
+    yield start
+    for srv in servers:
+        srv.shutdown()
+        srv.server_close()
+
+
+RAW = b"Subject: x\r\n\r\nbody\r\n"
+
+
+@pytest.mark.parametrize("stage", ["auth", "rcpt", "data"])
+def test_a_421_from_postfix_gives_a_new_connection_and_one_mail(fake_smtp, stage):
+    port, server = fake_smtp(stage=stage)
+    session = MailSession("cursor.lane-a", "good", imap_port=1, smtp_port=port)
+    # The session logs in to SMTP when it connects, as a login does.
+    session._smtp = session._open_smtp()
+    if stage == "auth":
+        # The connection is idle until Postfix ends it.
+        assert server.dropped.wait(5)
+    refused = session.send(RAW, "cursor.lane-a@mai.internal", ["codex@mai.internal"])
+    assert refused == {}
+    assert len(server.connections) == 2
+    assert len(server.accepted) == 1
+    session.close()
+
+
+def test_a_second_421_gives_mail_server_down(fake_smtp):
+    port, server = fake_smtp(stage="rcpt", drops=99)
+    session = MailSession("cursor.lane-a", "good", imap_port=1, smtp_port=port)
+    with pytest.raises(ToolError) as exc:
+        session.send(RAW, "cursor.lane-a@mai.internal", ["codex@mai.internal"])
+    assert exc.value.code == "MAIL_SERVER_DOWN"
+    assert len(server.connections) == 2
+    assert server.accepted == []

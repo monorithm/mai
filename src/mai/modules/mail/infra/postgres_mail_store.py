@@ -7,7 +7,7 @@ from bustan import Injectable
 from mai.platform.database import Database, Migration
 
 from ..domain.errors import MailError
-from ..domain.ports import Directory, SentRequests, SessionEntry
+from ..domain.ports import Directory, Reservation, SentRequests, SessionEntry
 
 # The table can already exist from the first schema of mai, thus each
 # statement is safe to run again.
@@ -50,9 +50,28 @@ END
 $$;
 """
 
+# The state of a retry key: pending while its send runs, sent after Postfix
+# took the mail, and failed after the send failed. The app role has no DELETE
+# right, thus the key of a failed send stays and changes its state. A row from
+# before this migration is sent if the milter kept the envelope of its mail,
+# else failed: the milter refuses each mail whose envelope it cannot keep.
+_V420 = """
+ALTER TABLE mail_auth.sent_request
+  ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'pending'
+    CONSTRAINT sent_request_state_check CHECK (state IN ('pending', 'sent', 'failed')),
+  ADD COLUMN IF NOT EXISTS sent_at timestamptz;
+UPDATE mail_auth.sent_request s
+   SET state = 'sent', sent_at = e.accepted_at
+  FROM (SELECT message_id, min(created_at) AS accepted_at
+          FROM mail_auth.envelope GROUP BY message_id) e
+ WHERE s.message_id = e.message_id;
+UPDATE mail_auth.sent_request SET state = 'failed' WHERE state = 'pending';
+"""
+
 MIGRATIONS = [
     Migration(400, "create the table mail_auth.sent_request", _V400),
     Migration(410, "create the table mail_auth.envelope", _V410),
+    Migration(420, "add the state and the date of the mail of a retry key", _V420),
 ]
 
 _LIVE = "(kind <> 'session' OR (status IN ('issued','active') AND (expires_at IS NULL OR expires_at > now())))"
@@ -66,29 +85,67 @@ class PostgresSentRequests(SentRequests):
     async def reserve(self, login, request_id, content_sha, message_id):
         async with self._database.transaction() as conn:
             cur = await conn.execute(
-                "SELECT content_sha, message_id FROM mail_auth.sent_request "
+                "SELECT content_sha, message_id, state, sent_at FROM mail_auth.sent_request "
                 "WHERE login = %s AND request_id = %s FOR UPDATE",
                 (login, request_id),
             )
             row = await cur.fetchone()
-            if row is not None:
-                if row[0] != content_sha:
+            if row is None:
+                cur = await conn.execute(
+                    "INSERT INTO mail_auth.sent_request "
+                    "(login, request_id, content_sha, message_id, state) "
+                    "VALUES (%s, %s, %s, %s, 'pending') ON CONFLICT DO NOTHING RETURNING message_id",
+                    (login, request_id, content_sha, message_id),
+                )
+                if await cur.fetchone() is None:
+                    # A parallel call with the same key won the insert.
                     raise MailError("RETRY_KEY_REUSED", path="request_id")
-                return row[1], True
-            cur = await conn.execute(
-                "INSERT INTO mail_auth.sent_request (login, request_id, content_sha, message_id) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING message_id",
-                (login, request_id, content_sha, message_id),
-            )
-            if await cur.fetchone() is None:
-                # A parallel call with the same key won the insert.
+                return Reservation(message_id, False)
+            sha, kept, state, sent_at = row
+            if sha != content_sha:
                 raise MailError("RETRY_KEY_REUSED", path="request_id")
-            return message_id, False
+            if state == "sent":
+                return Reservation(kept, True, sent_at)
+            # The send of the key failed or did not end. The milter keeps the
+            # envelope of a mail before Postfix takes it, thus an envelope
+            # proves that the mail went out.
+            cur = await conn.execute(
+                "SELECT min(created_at) FROM mail_auth.envelope WHERE message_id = %s",
+                (kept,),
+            )
+            found = await cur.fetchone()
+            accepted = found[0] if found else None
+            if accepted is not None:
+                await conn.execute(
+                    "UPDATE mail_auth.sent_request SET state = 'sent', sent_at = %s "
+                    "WHERE login = %s AND request_id = %s",
+                    (accepted, login, request_id),
+                )
+                return Reservation(kept, True, accepted)
+            # The mail did not go out: the new mail takes the key. The lock of
+            # each login in MailSender keeps two sends of one key apart.
+            await conn.execute(
+                "UPDATE mail_auth.sent_request SET message_id = %s, state = 'pending', "
+                "sent_at = NULL WHERE login = %s AND request_id = %s",
+                (message_id, login, request_id),
+            )
+            return Reservation(message_id, False)
 
-    async def release(self, login, request_id, message_id):
+    async def mark_sent(self, login, request_id, message_id, sent_at):
         async with self._database.transaction() as conn:
             await conn.execute(
-                "DELETE FROM mail_auth.sent_request WHERE login = %s AND request_id = %s AND message_id = %s",
+                "UPDATE mail_auth.sent_request SET state = 'sent', sent_at = %s "
+                "WHERE login = %s AND request_id = %s AND message_id = %s",
+                (sent_at, login, request_id, message_id),
+            )
+
+    async def release(self, login, request_id, message_id):
+        # An UPDATE, not a DELETE: the app role has no DELETE right.
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "UPDATE mail_auth.sent_request SET state = 'failed' "
+                "WHERE login = %s AND request_id = %s AND message_id = %s "
+                "AND state = 'pending'",
                 (login, request_id, message_id),
             )
 

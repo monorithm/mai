@@ -1,5 +1,6 @@
 """The PostgreSQL adapters of the mail module against a real database. Set MAI_IT and DATABASE_DSN to run."""
 
+import datetime as dt
 import os
 import uuid
 
@@ -25,6 +26,7 @@ class _Config(ConfigService):
 
 def test_retry_keys_and_directory():
     from mai.modules.mail.domain.errors import MailError
+    from mai.modules.mail.domain.ports import Reservation
     from mai.modules.mail.infra.postgres_mail_store import (
         MIGRATIONS,
         PostgresDirectory,
@@ -43,12 +45,21 @@ def test_retry_keys_and_directory():
                 (login,),
             )
         sent = PostgresSentRequests(database)
-        assert await sent.reserve(login, "r1", "a", "<m1@x>") == ("<m1@x>", False)
-        assert await sent.reserve(login, "r1", "a", "<m2@x>") == ("<m1@x>", True)
+        assert await sent.reserve(login, "r1", "a", "<m1@x>") == Reservation(
+            "<m1@x>", False
+        )
         with pytest.raises(MailError):
             await sent.reserve(login, "r1", "b", "<m3@x>")
+        # The send failed: the key stays and goes to the mail of the retry.
         await sent.release(login, "r1", "<m1@x>")
-        assert await sent.reserve(login, "r1", "b", "<m4@x>") == ("<m4@x>", False)
+        assert await sent.reserve(login, "r1", "a", "<m2@x>") == Reservation(
+            "<m2@x>", False
+        )
+        when = dt.datetime(2026, 11, 13, 0, 48, 20, tzinfo=dt.UTC)
+        await sent.mark_sent(login, "r1", "<m2@x>", when)
+        assert await sent.reserve(login, "r1", "a", "<m4@x>") == Reservation(
+            "<m2@x>", True, when
+        )
         directory = PostgresDirectory(database)
         assert await directory.known_logins([login, "nobody-here"]) == {login}
         assert login in await directory.agents()

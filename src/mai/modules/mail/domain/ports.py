@@ -14,18 +14,44 @@ class SessionEntry:
     last_login_at: dt.datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class Reservation:
+    """The result of a reserve: the mail of the key, and if that mail is sent already."""
+
+    message_id: str
+    duplicate: bool
+    sent_at: dt.datetime | None = None
+
+
 class SentRequests(ABC):
-    """The retry keys of send_message and reply: one row for each login and request_id."""
+    """The retry keys of send_message and reply: one row for each login and request_id.
+
+    A row is pending while its send runs, sent after Postfix took the mail,
+    and failed after the send failed. The app role has no DELETE right, thus
+    a row never goes away.
+    """
 
     @abstractmethod
     async def reserve(
         self, login: str, request_id: str, content_sha: str, message_id: str
-    ) -> tuple[str, bool]:
-        """Keep the key. Return (message_id, duplicate). A key with a different content raises MailError RETRY_KEY_REUSED."""
+    ) -> Reservation:
+        """Keep the key for the mail message_id.
+
+        A key of a sent mail gives a duplicate with the message_id and the
+        date of that mail. A key whose mail did not go out gets the new
+        message_id, thus a retry sends. A key with a different content raises
+        MailError RETRY_KEY_REUSED.
+        """
+
+    @abstractmethod
+    async def mark_sent(
+        self, login: str, request_id: str, message_id: str, sent_at: dt.datetime
+    ) -> None:
+        """Keep the date of the mail of the key after Postfix took it."""
 
     @abstractmethod
     async def release(self, login: str, request_id: str, message_id: str) -> None:
-        """Remove a key whose send failed, so that a retry can send."""
+        """Mark the key of a failed send, so that a retry sends."""
 
 
 class Directory(ABC):
