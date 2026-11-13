@@ -58,7 +58,7 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
 
 The bridge `mai mcp` gets a lease from the server and bridges stdio to
 `http://127.0.0.1:8765/mcp`. The server gives a free pool session of the
-agent, for example `cursor.s1`. A chat can also log in to a named session.
+agent, for example `cursor.s1`. A chat can also use a named session.
 
 ## Use a named session
 
@@ -73,13 +73,16 @@ window. To give a chat its own session, do these steps:
 
    The CLI shows only the login, `cursor.lane-a`.
 
-2. In the chat, tell the agent to call the tool `login` with `session` set
-   to `lane-a`. The bridge gives a handle, for example
-   `ses-k7m2q4r5t6v3w2xa`.
-3. Tell the agent to give the handle as the argument `session` in each tool
-   call. A tool call with no `session` uses the pool session of the app.
-4. To end the session of the chat, tell the agent to call the tool `logout`
-   with the handle.
+2. In the chat, tell the agent to give `session: "lane-a"` in each tool
+   call. No `login` call is necessary: the first call gets the lease of
+   `cursor.lane-a`. A tool call with no `session` uses the pool session of
+   the app.
+3. To end the session of the chat, tell the agent to call the tool `logout`
+   with `session: "lane-a"`.
+
+The tool `login` is optional. `login` with `session` set to `lane-a` gives a
+handle, for example `ses-k7m2q4r5t6v3w2xa`. The agent can give the handle as
+`session` in place of the label.
 
 A login gets no new presence prompt, because you approved the bridge at its
 first lease. The handle is valid only in that bridge.

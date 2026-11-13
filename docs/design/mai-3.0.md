@@ -363,37 +363,54 @@ of `cursor.s2`.
 ### Named sessions in a chat
 
 One bridge can serve many chats, for example all the chats of one Cursor
-window. Thus a chat selects its session, as in 2.x:
+window. Thus a chat selects its session, as in 2.x. From contract 3.2.0, the
+chat gives only the label of its session, for example a lane ID:
 
-1. The chat calls the tool `login` with the label or the login of a session
-   of the agent of the bridge. An example is `login` with `session` `lane-a`.
-2. The bridge sends a lease request for that named session. The server
-   refuses a session of a different agent, a revoked session, and a session
-   that a different bridge holds (`SESSION_BUSY`). It also refuses a label of
-   the pool (`BAD_LABEL`). Thus a `login` never takes a pool session.
-3. The bridge gives the chat a handle `ses-…`. The handle is valid only in
-   that bridge, and it is not a secret of the server: a different program
-   cannot use it.
-4. The chat gives the handle as the argument `session` in each subsequent
-   tool call. The bridge removes the argument and sends the call with the
-   lease of that session.
-5. A tool call with no `session` uses the pool lease of the bridge. When the
+1. The chat gives the label or the login of a session of the agent of the
+   bridge as the argument `session` in each tool call. An example is
+   `whoami` with `session` `lane-a`. No `login` call is necessary.
+2. When the bridge has no lease for that session, it sends a lease request
+   for that named session before it sends the call. The server refuses a
+   session of a different agent, a revoked session, and a session that a
+   different bridge holds (`SESSION_BUSY`). It also refuses a label of the
+   pool (`BAD_LABEL`). Thus a call with a label never takes a pool session.
+   The call gets the tool error with the path `session`.
+3. The bridge keeps the lease with a handle `ses-…`. Each subsequent call
+   with the same label, the same login, or the handle uses that lease. Calls
+   at the same time for the same session make one lease request. The handle
+   is valid only in that bridge, and it is not a secret of the server: a
+   different program cannot use it.
+4. The bridge removes the argument and sends the call with the lease of that
+   session. A call that comes to the server with the argument `session` gives
+   `BRIDGE_ONLY`, because it did not go through a bridge. Before contract
+   3.2.0, the server removed the argument, and the call acted as the session
+   of its lease.
+5. The tool `login` is optional. It does the same lease steps and gives the
+   handle. A `login` to a session that the bridge holds gives the handle of
+   that lease.
+6. A tool call with no `session` uses the pool lease of the bridge. When the
    pool lease has no session, the first such call gets a free pool session,
    or the tool error `NO_FREE_SESSION`.
-6. The tool `logout` with a handle ends that lease. The stop of the bridge
-   ends each lease of the bridge.
+7. The tool `logout` with a label, a login, or a handle ends that lease. The
+   stop of the bridge ends each lease of the bridge.
+
+A value with the form of a handle is always a handle. The pattern of the
+argument agrees with the label rule and the agent name rule of the server.
+It accepts a label of the pool, and the bridge refuses that label with
+`BAD_LABEL`, as `login` does.
 
 The presence check occurs one time for each bridge process, at its first
-lease. A subsequent login of a chat of the same bridge gets no new prompt,
+lease. A subsequent lease of a chat of the same bridge gets no new prompt,
 because the user approved that bridge.
 
 Thus `cursor.lane-a` cannot read the mail of `cursor.lane-b`: each tool call
-acts as the session of its handle, and only the owner makes sessions.
+acts as the session of its argument `session`, and only the owner makes
+sessions.
 
 ### A lease with no session
 
-A full pool must not stop a bridge: the chats of the bridge can use `login`
-with named sessions. Thus, when no pool session of the agent is free, the
+A full pool must not stop a bridge: the chats of the bridge can use named
+sessions. Thus, when no pool session of the agent is free, the
 server gives a lease with no session:
 
 - The result of the lease request has `"session": null`. Each agent can have
@@ -464,7 +481,8 @@ error, for example `MAIL_SERVER_DOWN`.
 
 The MCP tools act as the session of the lease that the bridge selects for the
 call. Contract 3.1.0 has the tools `login` and `logout` of the bridge, and
-the optional argument `session` of each tool.
+the optional argument `session` of each tool. In contract 3.2.0, the
+argument `session` is a label, a login, or a handle.
 
 ### The memory of a bridge
 
@@ -481,8 +499,8 @@ different protection of that memory from other programs of the same user:
 
 A pool session belongs to one bridge process. Each app has its own rule for
 the start of a bridge. An MCP server gets no ID of a chat, thus two chats
-that share one bridge share the pool session. A chat that logs in to a named
-session has its own session in each app.
+that share one bridge share the pool session. A chat that gives the label of a
+named session has its own session in each app.
 
 | App | One bridge for each |
 |---|---|

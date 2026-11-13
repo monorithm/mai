@@ -27,7 +27,7 @@ mai has two command lines with the name `mai`:
 | `mai session rotate LOGIN` | Gives the session a new internal secret and ends its lease. |
 | `mai session revoke LOGIN [--yes]` | Closes the session and ends its lease. This change is permanent. Type `revoke` to agree, or use `--yes`. |
 | `mai session end LOGIN` | Ends the lease of a session. |
-| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. The bridge, not the server, does the tools `login` and `logout`. Refer to [Bridge](#bridge). |
+| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. The bridge, not the server, does the tools `login` and `logout`, and reads the argument `session` of each tool call. Refer to [Bridge](#bridge). |
 | `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge and shows one line for each session with new mail. |
 | `mai ui on`, `mai ui off` | Starts or stops the mail UI. |
 | `mai ui open` | Does a presence check, then opens the UI in the browser and signs you in. |
@@ -52,9 +52,36 @@ sessions, use `--count N`.
 ## Bridge
 
 `mai mcp --agent A` gets the pool lease of the agent when it starts. Then it
-gets one lease for each named session that a chat logs in to with the tool
-`login`. The presence check occurs one time for each bridge process, before
-the first lease. If the user refuses the presence check, the bridge stops.
+gets one lease for each named session that a chat uses. The presence check
+occurs one time for each bridge process, before the first lease. If the user
+refuses the presence check, the bridge stops.
+
+### Named sessions
+
+A chat gives the label of its named session as the argument `session` in each
+tool call, for example `session: "lane-1"`. The login of the session, for
+example `cursor.lane-1`, is also correct. No `login` call is necessary:
+
+1. When the bridge has no lease for that session, the first call does the
+   steps of `login`. The bridge sends one lease request for the session,
+   keeps the lease with a handle and a heartbeat, and then sends the call.
+2. Each subsequent call with the same label, login, or handle uses the same
+   lease. Calls at the same time for the same session wait for the first
+   lease request, thus they make one lease request.
+3. When the lease request is not successful, the call gets the tool error of
+   `login` with the path `session`. Examples are `BAD_LABEL` for a label of
+   the pool, `SESSION_BUSY`, and `SERVER_UNAVAILABLE`. A refusal keeps no
+   lease, thus the next call sends a new lease request.
+4. A `login` to a session that the bridge holds gives the handle of that
+   lease, also when a call with the label got the lease.
+5. A `logout` with the label, the login, or the handle ends the lease of the
+   named session. The next call with the label gets a new lease.
+
+The bridge removes the argument `session` before it sends the call. A value
+with the form of a handle is always a handle. A value that is not a label, a
+login, or a handle gives `INVALID_ARGUMENT`. The notice file and `mai hook`
+show each named session of the bridge, also a session that a call with a
+label got.
 
 ### Pool lease with no session
 
@@ -64,8 +91,8 @@ that no pool session is free. With this lease:
 
 - `initialize`, `ping`, `tools/list`, the resources, and the prompts
   operate.
-- `login` gives a handle for a named session. Each call with that handle
-  operates.
+- A call with the label of a named session operates, and `login` gives a
+  handle for a named session. Each call with that handle operates.
 - A tool call with no argument `session` gets the tool error
   `NO_FREE_SESSION` with `retry_safe` true. When a pool session is free, the
   server binds it to the lease, and the call operates as that session.
@@ -86,7 +113,7 @@ check. This table gives the result of an error of that lease request.
 
 | Error | Named session | Pool lease |
 |---|---|---|
-| HTTP 4xx with an error code, for example `SESSION_REVOKED`, `SESSION_BUSY`, or `BAD_LABEL` | The handle ends. The call gets the code. A subsequent call with the handle gets `SESSION_UNKNOWN`. | The bridge continues. The call gets the code, for example `NO_FREE_SESSION`. |
+| HTTP 4xx with an error code, for example `SESSION_REVOKED`, `SESSION_BUSY`, or `BAD_LABEL` | The handle ends. The call gets the code. A subsequent call with the handle gets `SESSION_UNKNOWN`. A subsequent call with the label sends a new lease request. | The bridge continues. The call gets the code, for example `NO_FREE_SESSION`. |
 | `BAD_KEY`: the agent key is not valid | The handle ends. | The bridge stops with exit code 1. |
 | HTTP 5xx, an error with no code, or a network error | The handle stays. | The bridge continues. |
 
@@ -104,9 +131,11 @@ of the server.
 ### Logout and stop
 
 A logout ends the heartbeat loop and the lease of the session before it
-removes the handle. A login to the same session in the same bridge waits for
-the logout. Thus the login does not get `SESSION_BUSY` from the lease that
-the logout ends.
+removes the handle. A login or a first call with the label of the same session
+in the same bridge waits for the logout. Thus it does not get `SESSION_BUSY`
+from the lease that the logout ends. When a logout ends the lease during a
+call with the label, the server does not do the call. The bridge then gets a
+new lease for the session and sends the call again.
 
 The bridge stops when the app closes the stdin of the bridge. On Unix, the
 bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on

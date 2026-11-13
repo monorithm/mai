@@ -1,6 +1,6 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `3.1.1`.
+The server name is `mai`. The contract version is `3.2.0`.
 
 On HTTP, `tools/list` gives all 22 tools. For each tool call, the lease token
 of the bridge `mai mcp` is necessary as the bearer token.
@@ -9,16 +9,52 @@ of the bridge `mai mcp` is necessary as the bearer token.
 
 1. A tool call with no `session` argument uses the pool session of the bridge,
    for example `cursor.s1`.
-2. The tool `login` takes the label or the login of a named session of the
-   agent of the bridge, for example `lane-a`. The bridge gets a lease on that
-   session and gives a handle, for example `ses-abcdefghijklmnop`.
-3. Each other tool has the optional argument `session`. With a handle, the
-   bridge sends the call with the lease of that handle. The server removes the
-   argument before the tool runs.
-4. The tool `logout` takes a handle and ends its lease.
+2. Each tool other than `login` and `logout` has the optional argument
+   `session`. Its value is one of these:
+   - The label of a named session of the agent of the bridge, for example
+     `lane-1`.
+   - The login of that session, for example `cursor.lane-1`.
+   - A handle that `login` gave, for example `ses-abcdefghijklmnop`.
+3. With a label or a login, no `login` call is necessary. When the bridge has
+   no lease for that session, the first call gets the lease, as a `login`
+   does. Each subsequent call with the same label, login, or handle uses the
+   same lease. Calls at the same time for the same session make one lease
+   request.
+4. The tool `login` is optional. It takes the label or the login of a named
+   session, gets the lease as a call with the label does, and gives a handle.
+   A `login` to a session that the bridge holds gives the handle of that
+   lease, also when a call with the label got the lease.
+5. The tool `logout` takes a label, a login, or a handle, and ends the lease
+   of that named session in the bridge.
+6. The bridge removes the argument `session` and sends the call with the
+   lease of that session.
+
+A value with the form of a handle is always a handle. For a session whose
+label has the form of a handle, give its login.
 
 The bridge answers `login` and `logout` itself. A call of these tools that
-comes to the server gives the error `BRIDGE_ONLY`.
+comes to the server gives the error `BRIDGE_ONLY`. A call of a different tool
+that comes to the server with the argument `session` gives `BRIDGE_ONLY` with
+the path `session`. Before contract 3.2.0, the server removed the argument,
+and the call acted as the session of its lease.
+
+### Errors of a call with a label
+
+When a call with a label or a login gets no lease, the result is a tool error
+with the path `session`. The code is the same as the code of `login`:
+
+| Cause | Code | `retry_safe` |
+|---|---|---|
+| A label of the pool, for example `s2` or `cursor.s2` | `BAD_LABEL` | false |
+| The agent has no session with that name, or the login is of a different agent | `SESSION_UNKNOWN` | false |
+| A different lease holds the session | `SESSION_BUSY` | false |
+| The owner revoked the session | `SESSION_REVOKED` | false |
+| The mail server or the store does not reply | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE` | true |
+| A network error, or an error with no code | `SERVER_UNAVAILABLE` | true |
+
+A refusal keeps no lease. Thus the next call with the label sends a new lease
+request. A value that is not a label, a login, or a handle gives
+`INVALID_ARGUMENT` with the path `session`, and no lease request.
 
 ### Pool labels
 
@@ -28,14 +64,15 @@ the sessions with these labels.
 
 - The owner request for a named session with a label of the pool gives
   `BAD_LABEL`. The message tells the owner to use `--count`.
-- A `login` or a lease request with a label of the pool, for example `s2` or
-  `cursor.s2`, gives `BAD_LABEL`. A chat that calls no `login` uses the pool.
+- A `login`, a tool call, or a lease request with a label of the pool as the
+  session, for example `s2` or `cursor.s2`, gives `BAD_LABEL`. A chat that
+  gives no `session` uses the pool.
 - A label, an agent name, or a login with a line break at the end is not
   valid. For example, the owner request for the label `s1` with a line break
   gives `BAD_LABEL`.
 
-Thus a `login` never takes a pool session, and the pool never gives a named
-session.
+Thus a `login` or a call with a label never takes a pool session, and the
+pool never gives a named session.
 
 ### A lease with no session
 
@@ -129,7 +166,7 @@ command `mai agent add` adds an agent. The code of the server has no list of age
 | `ref` | `ref-` and 16 hex digits | `ref-3f9a0c1d2b4e5f60` |
 | `thread_ref` | `thr-` and 16 hex digits | `thr-a1b2c3d4e5f60718` |
 | `item_ref` | `itm-` and 12 base32 characters | `itm-k3q9x2m7p4ta` |
-| `session` | A handle of the bridge: `ses-` and 16 base32 characters (`a` to `z`, `2` to `7`) | `ses-abcdefghijklmnop` |
+| `session` | The label of a named session, its login (agent name, a dot, and the label), or a handle of the bridge: `ses-` and 16 base32 characters (`a` to `z`, `2` to `7`). The pattern is `^(ses-[a-z2-7]{16}\|([a-z0-9][a-z0-9-]{0,47}\.)?[a-z0-9][a-z0-9-]{0,31})$`. | `lane-1`, `cursor.lane-1`, `ses-abcdefghijklmnop` |
 | `kind` | `request`, `reply`, `status`, `notice`, `signal` | `request` |
 | `priority` | `low`, `normal`, `high` | `normal` |
 | `status` | `unread`, `notified`, `seen`, `done` | `seen` |
@@ -152,16 +189,16 @@ result with the output schema gets the code of the error.
 | `LOGIN_FAILED` | The credential is not correct. |
 | `CREDENTIAL_EXPIRED` | The credential is expired. |
 | `CREDENTIAL_REVOKED` | The credential is revoked. |
-| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. |
+| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. For `logout`, the bridge has no lease for that session. |
 | `SESSION_BUSY` | A different lease holds the named session. |
 | `SESSION_REVOKED` | The owner revoked the named session. |
 | `BAD_LABEL` | The label is not correct, or it is a label of the pool. |
-| `NO_FREE_SESSION` | No pool session of the agent is free. Call `login` with a named session, or try the call again after some time. |
-| `BRIDGE_ONLY` | A call of `login` or `logout` came to the server, not to the bridge. |
+| `NO_FREE_SESSION` | No pool session of the agent is free. Give the label of a named session as `session`, or try the call again after some time. |
+| `BRIDGE_ONLY` | A call of `login` or `logout`, or a call with the argument `session`, came to the server, not to the bridge. |
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
 | `FORBIDDEN_ROLE` | The roles of the session do not let the session use the tool. |
 | `RECIPIENT_UNKNOWN` | The address is not known. |
-| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. A call with no `session` uses the pool session, which does not have the mail of a named session. |
+| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. A call with no `session` uses the pool session, which does not have the mail of a named session. Give the label of the session as `session` in each call. |
 | `BODY_TOO_LARGE` | The body is too large. |
 | `REFUSED_HEADER` | A header is not permitted. |
 | `RETRY_KEY_REUSED` | The retry key was used with different arguments. |
