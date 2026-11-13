@@ -738,3 +738,34 @@ func TestAddKeepsTheKeyOfTheKeyFile(t *testing.T) {
 		t.Fatal("an add with no account gave no error")
 	}
 }
+
+func TestMoveAllChecksTheServerForAKeyThatADifferentProcessWrote(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		accepted string
+		clean    bool
+	}{
+		{"the server accepts only the key of the key file", "mai1:owner:other", true},
+		{"the server accepts only the key of the item", ownerKey, false},
+	} {
+		dir := t.TempDir()
+		legacy := keychain.NewMemory()
+		legacy.Put(OwnerAccount("mai"), ownerKey)
+		f := Open(dir, writeOnGet{Memory: legacy, dir: dir})
+		var asked int
+		r, err := f.MoveAll([]string{OwnerAccount("mai")}, func(a, key string) (bool, error) {
+			asked++
+			return key == tc.accepted, nil
+		})
+		if err != nil || asked != 2 || len(r.Moved) != 0 {
+			t.Fatalf("%s: MoveAll = %+v, %v, %d checks", tc.name, r, err, asked)
+		}
+		gone := len(legacy.Accounts()) == 0
+		if tc.clean != gone || tc.clean != (len(r.Cleaned) == 1) {
+			t.Fatalf("%s: MoveAll = %+v; the item is gone: %v", tc.name, r, gone)
+		}
+		if !tc.clean && (len(r.Conflicts) != 1 || !r.Conflicts[0].Checked || !r.Conflicts[0].LegacyAccepted) {
+			t.Fatalf("%s: the conflict is %+v", tc.name, r.Conflicts)
+		}
+	}
+}

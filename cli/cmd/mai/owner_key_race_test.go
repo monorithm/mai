@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/client"
@@ -13,6 +15,59 @@ import (
 	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
+
+// otherWriter is a legacy keychain. During the read of the item of one account, a different
+// process writes a key for that account to the key file.
+type otherWriter struct {
+	*keychain.Memory
+	dir, account, key string
+}
+
+func (o otherWriter) Get(account string) (string, error) {
+	if account == o.account {
+		if err := keys.Open(o.dir, nil).Set(account, o.key); err != nil {
+			return "", err
+		}
+	}
+	return o.Memory.Get(account)
+}
+
+func TestUpgradeDoesAServerCheckWhenADifferentProcessWritesTheOwnerKey(t *testing.T) {
+	// The server accepts only testOwnerKey, the key of the keychain item.
+	_, _, k, home := legacyInstall(t, map[string]string{keys.OwnerAccount("mai"): testOwnerKey})
+	dir := filepath.Dir(k.file.Path())
+	other := otherWriter{Memory: k.legacy, dir: dir, account: keys.OwnerAccount("mai"), key: "mai1:owner:otherprocess"}
+	old := openKeys
+	openKeys = func() (*keys.File, error) { return keys.Open(dir, other), nil }
+	t.Cleanup(func() { openKeys = old })
+	var out, errs bytes.Buffer
+	oldOut, oldErr := lcOut, lcErr
+	lcOut, lcErr = &out, &errs
+	t.Cleanup(func() { lcOut, lcErr = oldOut, oldErr })
+
+	if lcMoveKeys("mai", loadTestManifest(t, home)) {
+		t.Fatal("the move gave true, but the keychain item stays")
+	}
+	text := errs.String()
+	if strings.Contains(text, "the server refuses the two keys") || strings.Contains(text, "set-key --replace") {
+		t.Fatalf("the server accepts the key of the keychain item, but mai upgrade tells that it refuses the two keys "+
+			"and gives the step to replace the owner key of the server:\n%s", text)
+	}
+	if !strings.Contains(text, "the server accepts the key of the keychain item") {
+		t.Fatalf("mai upgrade does not tell the result of the check of the server:\n%s", text)
+	}
+	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); !ok {
+		t.Fatal("the keychain item with the key that the server accepts is gone")
+	}
+}
+
+func TestAConflictWithNoCheckOfTheServerTellsNothingAboutTheServer(t *testing.T) {
+	text := lcConflictText("mai", "keys.json", keys.Conflict{Account: keys.OwnerAccount("mai")})
+	if strings.Contains(text, "server refuses") || strings.Contains(text, "server accepts") || strings.Contains(text, "--replace") ||
+		!strings.Contains(text, "mai upgrade again") {
+		t.Fatalf("the text for a conflict with no check is %q", text)
+	}
+}
 
 // movedByOther is a legacy keychain with the item of the owner key. During the read, a
 // different process moves the item: it writes the key to the key file, and then it deletes

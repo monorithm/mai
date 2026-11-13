@@ -140,13 +140,13 @@ func (f *File) Get(account string) (string, error) {
 	if f.legacy == nil {
 		return "", ErrNotFound
 	}
-	key, same, err := f.move(account)
+	key, secret, err := f.move(account)
 	if errors.Is(err, ErrNotFound) {
 		// A different process can have moved the legacy item in the meantime. Then the key
 		// file has its key.
 		return f.inFile(account)
 	}
-	if err == nil && same {
+	if err == nil && key == secret {
 		// The key is in the key file. When the delete fails, the legacy item stays, and
 		// "mai doctor" and "mai upgrade" tell about it.
 		_ = f.DeleteLegacy(account)
@@ -168,22 +168,22 @@ func (f *File) inFile(account string) (string, error) {
 	return key, nil
 }
 
-// move reads the legacy item of the account and writes it to the key file. It does not delete
-// the legacy item: when same is true, the key file has the key of the legacy item, and the
-// caller deletes the item. When a different process wrote a key for the account in the
-// meantime, that key stays, and move gives it. Then same is false if the legacy item holds a
-// different key.
-func (f *File) move(account string) (key string, same bool, err error) {
-	secret, err := f.legacyGet(account)
+// move reads the legacy item of the account and writes it to the key file. It gives the key
+// of the key file and the secret of the legacy item. It does not delete the legacy item: when
+// key is secret, the caller deletes the item. When a different process wrote a key for the
+// account in the meantime, that key stays, and move gives it. Then key is not secret if the
+// legacy item holds a different key.
+func (f *File) move(account string) (key, secret string, err error) {
+	secret, err = f.legacyGet(account)
 	switch {
 	case errors.Is(err, keychain.ErrNotFound):
-		return "", false, ErrNotFound
+		return "", "", ErrNotFound
 	case errors.Is(err, keychain.ErrUnavailable) && !f.recorded(account):
-		return "", false, ErrNotFound
+		return "", "", ErrNotFound
 	case err != nil:
-		return "", false, &LegacyError{Account: account, Err: err}
+		return "", "", &LegacyError{Account: account, Err: err}
 	case secret == "":
-		return "", false, ErrNotFound
+		return "", "", ErrNotFound
 	}
 	key = secret
 	err = f.update(func(d *doc) bool {
@@ -195,14 +195,11 @@ func (f *File) move(account string) (key string, same bool, err error) {
 		return true
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("keys: move %s from the keychain to the key file: %w", account, err)
+		return "", "", fmt.Errorf("keys: move %s from the keychain to the key file: %w", account, err)
 	}
-	if key != secret {
-		// Nothing tells which of the two keys the server accepts, thus the legacy item stays.
-		// "mai upgrade" tells about it.
-		return key, false, nil
-	}
-	return key, true, nil
+	// When key is not secret, nothing tells which of the two keys the server accepts. Thus the
+	// legacy item stays, unless "mai upgrade" does a check of the server.
+	return key, secret, nil
 }
 
 // Prefixes of the data of a keychain item that go-keyring wrote. mai 3.0 and 3.1 built on macOS
@@ -447,6 +444,9 @@ type Stay struct {
 // check of the server. The legacy item and the key of the key file stay.
 type Conflict struct {
 	Account string
+	// Checked tells if the check of the server occurred. When it is false, the other fields
+	// tell nothing about the server.
+	Checked bool
 	// FileAccepted and LegacyAccepted tell if the server accepts the key of the key file and
 	// the key of the legacy item.
 	FileAccepted, LegacyAccepted bool
@@ -458,12 +458,28 @@ type Conflict struct {
 // cannot tell, for example when the server does not run.
 type Accepts func(account, key string) (bool, error)
 
+// check does the check of the server for a legacy item whose secret is not the key of the key
+// file. clean is true when the server accepts the key of the key file and refuses the secret of
+// the legacy item. Then the legacy item can go. With no accepts, no check occurs.
+func check(account, key, secret string, accepts Accepts) (c Conflict, clean bool) {
+	c = Conflict{Account: account}
+	if accepts == nil {
+		return c, false
+	}
+	c.Checked = true
+	c.FileAccepted, c.Err = accepts(account, key)
+	if c.Err == nil {
+		c.LegacyAccepted, c.Err = accepts(account, secret)
+	}
+	return c, c.Err == nil && c.FileAccepted && !c.LegacyAccepted
+}
+
 // MoveAll moves the legacy keychain item of each account to the key file. When the key file
-// has a key for the account of a legacy item, MoveAll deletes the legacy item only when it
-// holds the same key, or when accepts tells that the server accepts the key of the key file
-// and refuses the key of the legacy item. Else the legacy item stays, and the report has a
-// conflict. When the delete of a legacy item fails, the report has a stay. accepts can be nil.
-// The error joins the failure of each account.
+// has a key for the account of a legacy item, also a key that a different process wrote during
+// the move, MoveAll deletes the legacy item only when it holds the same key, or when accepts
+// tells that the server accepts the key of the key file and refuses the key of the legacy item.
+// Else the legacy item stays, and the report has a conflict. When the delete of a legacy item
+// fails, the report has a stay. accepts can be nil. The error joins the failure of each account.
 func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 	var r MoveReport
 	if f.legacy == nil {
@@ -488,41 +504,37 @@ func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 		if err := f.view(func(d *doc) { key, inFile = d.Keys[a] }); err != nil {
 			return r, err
 		}
-		if !inFile {
-			_, same, err := f.move(a)
+		var secret string
+		if inFile {
+			secret, err = f.legacyGet(a)
+			switch {
+			case errors.Is(err, keychain.ErrNotFound):
+				continue
+			case err != nil:
+				errs = append(errs, &LegacyError{Account: a, Err: err})
+				continue
+			}
+		} else {
+			key, secret, err = f.move(a)
 			switch {
 			case errors.Is(err, ErrNotFound):
+				continue
 			case err != nil:
 				errs = append(errs, err)
-			case !same:
-				// A different process wrote a different key in the meantime.
-				r.Conflicts = append(r.Conflicts, Conflict{Account: a})
-			default:
+				continue
+			case key == secret:
 				if err := f.DeleteLegacy(a); err != nil {
 					r.Stays = append(r.Stays, Stay{Account: a, Err: err})
 					continue
 				}
 				r.Moved = append(r.Moved, a)
+				continue
 			}
-			continue
-		}
-		secret, err := f.legacyGet(a)
-		switch {
-		case errors.Is(err, keychain.ErrNotFound):
-			continue
-		case err != nil:
-			errs = append(errs, &LegacyError{Account: a, Err: err})
-			continue
+			// Else a different process wrote a different key in the meantime.
 		}
 		if secret != key {
-			c := Conflict{Account: a}
-			if accepts != nil {
-				c.FileAccepted, c.Err = accepts(a, key)
-				if c.Err == nil {
-					c.LegacyAccepted, c.Err = accepts(a, secret)
-				}
-			}
-			if c.Err != nil || !c.FileAccepted || c.LegacyAccepted {
+			c, clean := check(a, key, secret, accepts)
+			if !clean {
 				r.Conflicts = append(r.Conflicts, c)
 				continue
 			}

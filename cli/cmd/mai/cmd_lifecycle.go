@@ -772,6 +772,9 @@ func lcConflictText(instance, path string, c keys.Conflict) string {
 			path, name)
 	}
 	switch {
+	case !c.Checked:
+		return fmt.Sprintf("the key file %s has a different owner key, and mai did no check of the two keys on the server. "+
+			"Step: run mai upgrade again. It does the check.", path)
 	case c.Err != nil:
 		return fmt.Sprintf("the key file %s has a different owner key, and the check of the server failed: %v. "+
 			"Step: start the server with mai start, and then run mai upgrade again.", path, c.Err)
