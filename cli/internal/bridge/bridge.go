@@ -230,7 +230,7 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 			// the next call or heartbeat gets a new lease.
 			if hasID {
 				b.answerFailure(id, isCall, "SERVER_UNAVAILABLE",
-					"The server ended the new lease of "+l.describe()+" at once. Try again later.", true)
+					"The server ended the new lease of "+l.describe()+" immediately. Try again later.", true)
 			}
 			return nil
 		}
