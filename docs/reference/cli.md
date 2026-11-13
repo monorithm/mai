@@ -55,7 +55,9 @@ sessions, use `--count N`.
 gets one lease for each named session that a chat uses. The bridge reads the
 agent key from the key file at each lease request. Thus a new key from
 `mai agent rotate` applies at the next lease request. When the key file has
-no key for the agent, the result is `BAD_KEY`.
+no key for the agent, or the server refuses the agent key, the result is
+`BAD_KEY`. The message gives the step: `mai agent rotate NAME` for an agent
+that exists on the server, or `mai agent add NAME` for a new agent.
 
 ### Named sessions
 
@@ -73,9 +75,10 @@ example `cursor.lane-1`, is also correct. No `login` call is necessary:
 3. When the lease request is not successful, the call gets the tool error of
    `login` with the path `session`. Examples are `BAD_LABEL` for a label of
    the pool, `SESSION_BUSY`, and `SERVER_UNAVAILABLE`. When the key file has
-   no key for the agent, the code is `BAD_KEY`. When the bridge cannot read
-   the key file, the code is `KEY_FILE_ERROR`. A refusal keeps no lease, thus
-   the next call sends a new lease request.
+   no key for the agent, or the server refuses the agent key, the code is
+   `BAD_KEY`. When the bridge cannot read the key file, the code is
+   `KEY_FILE_ERROR`. A refusal keeps no lease, thus the next call sends a new
+   lease request.
 4. A `login` to a session that the bridge holds gives the handle of that
    lease, also when a call with the label got the lease.
 5. A `logout` with the label, the login, or the handle ends the lease of the

@@ -171,7 +171,7 @@ func failure(code, message string, path any, retrySafe bool) map[string]any {
 // when the answer has no retry_safe.
 //
 // A failed read of the agent key is an error of the host (keyFailure): KEY_FILE_ERROR, or BUSY
-// for a key file that is busy.
+// for a key file that is busy. The message of BAD_KEY gives the step for the user.
 func loginError(agent string, err error) map[string]any {
 	var ae *apiError
 	if code, msg, safe, ok := keyFailure(agent, err); ok {
@@ -185,7 +185,11 @@ func loginError(agent string, err error) map[string]any {
 		if !safe && ae.RetrySafe != nil {
 			safe = *ae.RetrySafe
 		}
-		return sessionError(ae.Code, ae.Message, safe)
+		msg := ae.Message
+		if ae.Code == "BAD_KEY" {
+			msg = refusedKeyMessage(agent)
+		}
+		return sessionError(ae.Code, msg, safe)
 	}
 	return sessionError("SERVER_UNAVAILABLE", "The login got no lease: "+err.Error()+". Try again later.", true)
 }

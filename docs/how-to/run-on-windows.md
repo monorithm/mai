@@ -62,4 +62,4 @@ socket.
 |---|---|
 | `mai start` cannot find the engine | Start Docker Desktop. Then run `mai doctor`. |
 | A different program uses the port `8765` | Stop the program that uses the port. Then run `mai start` again. |
-| The bridge gives `BAD_KEY` | Run `mai doctor`. It examines the key file. For an agent that exists with no key in the key file, run `mai agent rotate NAME`. For a new agent, run `mai agent add NAME`. |
+| The bridge gives `BAD_KEY` | Run `mai doctor`. It examines the key file. For an agent that exists on the server, run `mai agent rotate NAME`. For a new agent, run `mai agent add NAME`. |

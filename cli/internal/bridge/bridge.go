@@ -323,10 +323,14 @@ func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, code, message st
 	b.writeError(id, -32603, "mai: "+code+": "+message)
 }
 
-// refusal gives the code and the message of a refused lease request.
+// refusal gives the code and the message of a refused lease request. The message of BAD_KEY
+// gives the step for the user.
 func refusal(agent string, err error) (string, string) {
 	var ae *apiError
-	if errors.As(err, &ae) {
+	switch {
+	case isRefusedKey(err):
+		return "BAD_KEY", refusedKeyMessage(agent)
+	case errors.As(err, &ae):
 		return ae.Code, ae.Message
 	}
 	return "BAD_KEY", noKeyMessage(agent)
@@ -335,6 +339,9 @@ func refusal(agent string, err error) (string, string) {
 // stopText is the text of the error that stops the bridge, when the agent key is not valid.
 func stopText(agent string, err error) string {
 	code, msg := refusal(agent, err)
+	if !strings.HasSuffix(msg, ".") {
+		msg += "."
+	}
 	return "mai: the lease ended, and the agent key is not valid: " + code + ": " + msg + " The bridge stops."
 }
 
@@ -443,7 +450,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 			fmt.Fprintf(b.Stderr, "mai mcp: the key file has no key for the agent %s. For an agent that exists on the server, "+
 				"run \"mai agent rotate %s\". For a new agent, run \"mai agent add %s\".\n", b.Agent, b.Agent, b.Agent)
 		} else {
-			b.logf("no lease for the agent %s: %v", b.Agent, err)
+			b.logf("no lease for the agent %s: %s", b.Agent, leaseErrorText(b.Agent, err))
 		}
 		return ExitError
 	}
@@ -497,7 +504,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 			return ExitOK
 		case err := <-b.fatal:
 			b.writeError(nil, -32001, stopText(b.Agent, err))
-			b.logf("stop: %v", err)
+			b.logf("stop: %s", leaseErrorText(b.Agent, err))
 			return ExitError
 		case <-stop:
 			return ExitError

@@ -162,6 +162,29 @@ func noKeyMessage(agent string) string {
 		agent + ". For a new agent, run mai agent add " + agent + "."
 }
 
+// refusedKeyMessage is the message of BAD_KEY when the server refuses the agent key of the key
+// file, for example after a rotate of the key with a different key file. The message of the
+// server has no step, thus the bridge gives the step for each of the two cases.
+func refusedKeyMessage(agent string) string {
+	return "The server refuses the key of the agent " + agent + " in the key file. For an agent that exists on the server, run mai agent rotate " +
+		agent + ". For a new agent, run mai agent add " + agent + "."
+}
+
+// isRefusedKey is true when the server refused the agent key with BAD_KEY.
+func isRefusedKey(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.Code == "BAD_KEY"
+}
+
+// leaseErrorText gives the text of a failed lease request for a log line. For BAD_KEY of the
+// server, the text gives the step.
+func leaseErrorText(agent string, err error) string {
+	if isRefusedKey(err) {
+		return "BAD_KEY: " + refusedKeyMessage(agent)
+	}
+	return err.Error()
+}
+
 // keyError is a failed read of the agent key: an error of the key file, of its lock, or of
 // the legacy keychain item. It is an error of the host, not of the server.
 type keyError struct{ err error }
@@ -479,7 +502,7 @@ func (b *Bridge) drop(l *lease, why error) {
 	}
 	l.finish()
 	l.cancel()
-	b.logf("the session %s ended: %v", l.session(), why)
+	b.logf("the session %s ended: %s", l.session(), leaseErrorText(b.Agent, why))
 	b.writeNotice()
 }
 

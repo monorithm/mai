@@ -69,7 +69,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the key file has no key for the agent, the result is `BAD_KEY`, as before.
   The message gives the step `mai agent rotate NAME` for an agent that exists
   on the server, and `mai agent add NAME` for a new agent. For an agent that
-  exists, `mai agent add` gives `AGENT_EXISTS`.
+  exists, `mai agent add` gives `AGENT_EXISTS`. When the server refuses the
+  agent key of the key file, the code is also `BAD_KEY`, and the message gives
+  the same steps. The tool error, the stop of the bridge, and the log of the
+  bridge give these steps.
 - `mai uninstall` removes the keys of the instance from the key file and each
   keychain item of the instance. When the key file holds the keys of a
   different instance, only the key file and its lock file stay. When a
