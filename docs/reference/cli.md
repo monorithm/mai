@@ -164,10 +164,14 @@ after a restart of the server. A call with the handle of the session gets
 `SESSION_UNKNOWN` with `retry_safe` false, because the logout ended the
 handle.
 
-The bridge stops when the app closes the stdin of the bridge. On Unix, the
-bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on
-Ctrl+C or when the console closes. Before it stops, it ends each lease and
-removes its notice file. The bridge ends the leases at the same time, and it
+The bridge stops when the app closes the stdin of the bridge. It also stops
+when a write to its stdout is not successful, for example after the app
+exits during a call. On Unix, the bridge also stops on SIGINT, SIGTERM, or
+SIGHUP. On Windows, it stops on Ctrl+C or when the console closes.
+
+Before the bridge stops, it ends each lease and removes its notice file. The
+bridge ignores SIGPIPE. Thus a closed stdout or stderr does not stop the
+bridge before this step. The bridge ends the leases at the same time, and it
 waits a maximum of 10 seconds for the end of each lease.
 
 The server makes a lease before it sends the result of the lease request.

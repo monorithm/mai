@@ -80,6 +80,10 @@ type Bridge struct {
 	noticeMu    sync.Mutex
 	noticesGone bool
 	outMu       sync.Mutex
+	// outGone closes when a write to Stdout fails. Then the app has no read end of the
+	// standard output, for example because it exited, and the bridge stops.
+	outGone chan struct{}
+	outOnce sync.Once
 
 	beatCtx context.Context
 	beats   sync.WaitGroup
@@ -164,7 +168,9 @@ func (b *Bridge) callJSON(ctx context.Context, method, path, bearer string, body
 func (b *Bridge) writeLine(line []byte) {
 	b.outMu.Lock()
 	defer b.outMu.Unlock()
-	_, _ = b.Stdout.Write(append(line, '\n'))
+	if _, err := b.Stdout.Write(append(line, '\n')); err != nil && b.outGone != nil {
+		b.outOnce.Do(func() { close(b.outGone) })
+	}
 }
 
 func (b *Bridge) writeError(id json.RawMessage, code int, message string) {
@@ -439,8 +445,9 @@ func sseData(data []byte) [][]byte {
 	return out
 }
 
-// Run gets the pool lease, bridges stdin to /mcp until stdin ends or ctx ends, and then
-// ends each lease of the bridge. Cancel ctx on SIGINT, SIGTERM, or SIGHUP.
+// Run gets the pool lease, bridges stdin to /mcp until stdin ends, a write to stdout fails,
+// or ctx ends, and then ends each lease of the bridge. Cancel ctx on SIGINT, SIGTERM, or
+// SIGHUP. A failed write to stdout or stderr must not stop the process, thus ignore SIGPIPE.
 //
 // The pool lease can have no session, when no pool session of the agent is free. The bridge
 // then serves the requests that use no session and the named sessions. When the start
@@ -457,6 +464,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 	b.named, b.byLogin = map[string]*lease{}, map[string]string{}
 	b.mu.Unlock()
 	b.fatal = make(chan error, 1)
+	b.outGone = make(chan struct{})
 	a, err := b.request(ctx, "")
 	if err != nil {
 		if errors.Is(err, errNoKey) {
@@ -521,6 +529,9 @@ func (b *Bridge) Run(ctx context.Context) int {
 			return ExitError
 		case <-stop:
 			return ExitError
+		case <-b.outGone:
+			b.logf("a write to the app failed, thus the app closed the standard output of the bridge. The bridge stops.")
+			return ExitOK
 		case line, ok := <-lines:
 			if !ok {
 				// The app closed stdin. Each request that started gets its answer first.

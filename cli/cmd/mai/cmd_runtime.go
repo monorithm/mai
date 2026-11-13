@@ -67,6 +67,10 @@ func runMCP(args []string) int {
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
 	}
+	// When the app exits, its ends of the pipes close. A write to stdout or stderr then gets
+	// EPIPE. The bridge must not stop at the signal SIGPIPE, because it ends each lease and
+	// removes its notice file before it stops.
+	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := stopContext()
 	defer stop()
 	return b.Run(ctx)

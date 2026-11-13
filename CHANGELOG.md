@@ -128,6 +128,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The bridge ends each lease and removes its notice file when the app exits
+  during a call, for example during `wait_for_mail`. Before, the write of
+  the result to the closed stdout or stderr stopped the bridge with the
+  signal SIGPIPE. Thus the server kept each lease of the bridge until the
+  lease expired, and a new bridge got `SESSION_BUSY` for the same named
+  session. The bridge also stops when a write to its stdout is not
+  successful.
 - `mai uninstall --instance NAME` removes only the items of that instance.
   Each record of the manifest has its instance. The CLI gives each record of
   3.0 and 3.1 the instance of its name, or the instance of the file. A
