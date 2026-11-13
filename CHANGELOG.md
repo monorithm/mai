@@ -100,10 +100,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the server removed the argument, and the call acted as the session of its
   lease, for example a pool session.
 - The instructions of `initialize` and the guide `mai://guide` tell a chat to
-  give the label of its session as `session` in each call. The messages of
-  `BRIDGE_ONLY`, `NO_FREE_SESSION`, and `BAD_LABEL` also tell this rule. The
-  error table of the guide also lists the codes `BAD_KEY` and
-  `KEY_FILE_ERROR` of the bridge.
+  give the label of its session as `session` in each call. The message of
+  `NO_FREE_SESSION` also tells this rule. The error table of the guide also
+  lists the codes `BAD_KEY` and `KEY_FILE_ERROR` of the bridge.
 - `login` uses the value of `session` as it is, with the rule of a tool
   call. A value that is not a label or a login gives `BAD_LABEL` with the
   path `session`, and no lease request. An example is a label with a space
