@@ -223,6 +223,21 @@ def test_an_unknown_resource_gives_resource_not_found():
     assert run(go, {})[1]["error"]["code"] == -32602
 
 
+def test_a_pattern_does_not_accept_a_line_break_at_the_end():
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
+    for name, args, path in (
+        ("mark_done", {"ref": "ref-0123456789abcdef\n"}, "ref"),
+        ("read_thread", {"thread_ref": "thr-0123456789abcdef\n"}, "thread_ref"),
+        (
+            "send_message",
+            {"to": ["cursor\n"], "subject": "s", "body": "b", "request_id": "r"},
+            "to[0]",
+        ),
+    ):
+        e = call(d, name, args, lease(HANDLE))["structuredContent"]["error"]
+        assert e["code"] == "INVALID_ARGUMENT" and e["path"] == path, name
+
+
 BRIDGE_HANDLE = "ses-" + "abcdefgh" * 2
 
 

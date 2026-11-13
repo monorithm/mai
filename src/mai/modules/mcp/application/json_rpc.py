@@ -4,6 +4,7 @@ The validator covers the subset of JSON Schema that the tool schemas use. A refu
 ToolError(INVALID_ARGUMENT) with the path of the first part of the value that the schema refuses.
 """
 
+import functools
 import json
 import math
 import re
@@ -118,6 +119,20 @@ def _type_ok(value, name):
     return isinstance(value, _TYPES[name])
 
 
+# In Python, "$" also matches before a line break at the end of the text. In a JSON Schema
+# pattern (ECMA-262), "$" matches only at the end. Thus each "$" outside a character class
+# and outside an escape becomes \Z.
+_END = re.compile(r"(\\.|\[(?:\\.|[^\]\\])*\]|\$)")
+
+
+@functools.cache
+def _pattern(source):
+    """The compiled form of a JSON Schema pattern, with the ECMA-262 meaning of "$"."""
+    return re.compile(
+        _END.sub(lambda m: r"\Z" if m.group(0) == "$" else m.group(0), source)
+    )
+
+
 def validate(schema, value, path=""):
     """Raise ToolError(INVALID_ARGUMENT, path) at the first part of value that the schema refuses."""
 
@@ -145,7 +160,7 @@ def validate(schema, value, path=""):
             "maxLength", sys.maxsize
         ):
             fail(path)
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not _pattern(schema["pattern"]).search(value):
             fail(path)
     if (
         isinstance(value, (int, float))
