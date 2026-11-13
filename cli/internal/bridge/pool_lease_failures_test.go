@@ -138,6 +138,16 @@ func TestTheBridgeKeepsRunningWhenThePoolRenewGivesNoFreeSession(t *testing.T) {
 	h.stop(t)
 }
 
+// wantPoolRetrySafe makes sure that a is a tool error with the code, no path, and retry_safe
+// true. A call with no argument session has no path.
+func wantPoolRetrySafe(t *testing.T, a map[string]any, code string) {
+	t.Helper()
+	e := toolErr(t, a)
+	if e["code"] != code || e["path"] != nil || e["retry_safe"] != true {
+		t.Fatalf("tool error = %v, want the code %s, no path, and retry_safe true", e, code)
+	}
+}
+
 // A server error of the pool renew (HTTP 503 with a code, or HTTP 500 with no code) does
 // not stop the bridge.
 func TestTheBridgeKeepsRunningWhenThePoolRenewGivesAServerError(t *testing.T) {
@@ -159,9 +169,9 @@ func TestTheBridgeKeepsRunningWhenThePoolRenewGivesAServerError(t *testing.T) {
 	handle := h.login(t, 1, "lane-a")["session"].(string)
 	mode.Store(1)
 	h.srv.expire()
-	wantRetrySafe(t, h.call(t, 2, "whoami", nil), "MAIL_SERVER_DOWN")
+	wantPoolRetrySafe(t, h.call(t, 2, "whoami", nil), "MAIL_SERVER_DOWN")
 	mode.Store(2)
-	wantRetrySafe(t, h.call(t, 3, "whoami", nil), "SERVER_UNAVAILABLE")
+	wantPoolRetrySafe(t, h.call(t, 3, "whoami", nil), "SERVER_UNAVAILABLE")
 	h.send(t, `{"jsonrpc":"2.0","id":4,"method":"tools/list"}`)
 	if a := h.recv(t); a["id"] != float64(4) {
 		t.Fatalf("tools/list = %v", a)

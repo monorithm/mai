@@ -263,7 +263,7 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 			// The server ended the new lease immediately. The lease stays in the bridge, thus
 			// the next call or heartbeat gets a new lease.
 			if hasID {
-				b.answerFailure(id, isCall, "SERVER_UNAVAILABLE",
+				b.answerFailure(id, isCall, l, "SERVER_UNAVAILABLE",
 					"The server ended the new lease of "+l.describe()+" immediately. Try again later.", true)
 			}
 			return nil
@@ -294,7 +294,7 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 	switch {
 	case errors.Is(err, errEnded):
 		if hasID {
-			b.answerFailure(id, isCall, "SESSION_UNKNOWN", msgEnded, false)
+			b.answerFailure(id, isCall, l, "SESSION_UNKNOWN", msgEnded, false)
 		}
 		return nil
 	case l.handle == "" && isBadKey(err):
@@ -313,30 +313,27 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 		return nil
 	}
 	if code, msg, safe, ok := keyFailure(b.Agent, err); ok {
-		switch {
-		case !isCall:
-			b.writeError(id, -32603, "mai: "+code+": "+msg)
-		case l.handle == "":
-			// A call with no argument session: the error has no path.
-			b.writeResult(id, failure(code, msg, nil, safe))
-		default:
-			b.writeResult(id, sessionError(code, msg, safe))
-		}
+		b.answerFailure(id, isCall, l, code, msg, safe)
 		return nil
 	}
 	code, msg := unavailable(l, err)
-	b.answerFailure(id, isCall, code, msg, true)
+	b.answerFailure(id, isCall, l, code, msg, true)
 	return nil
 }
 
-// answerFailure answers a request with an error: a tool call gets a tool error, and a
-// different request gets a JSON-RPC error.
-func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, code, message string, retrySafe bool) {
-	if isCall {
+// answerFailure answers a request on the lease l with an error: a tool call gets a tool
+// error, and a different request gets a JSON-RPC error. A tool call on a named lease has the
+// argument session, thus its tool error has the path session. A tool call on the pool lease
+// has no argument session, thus its tool error has no path.
+func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, l *lease, code, message string, retrySafe bool) {
+	switch {
+	case !isCall:
+		b.writeError(id, -32603, "mai: "+code+": "+message)
+	case l.handle == "":
+		b.writeResult(id, failure(code, message, nil, retrySafe))
+	default:
 		b.writeResult(id, sessionError(code, message, retrySafe))
-		return
 	}
-	b.writeError(id, -32603, "mai: "+code+": "+message)
 }
 
 // refusal gives the code and the message of a refused lease request. The message of BAD_KEY

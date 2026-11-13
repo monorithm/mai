@@ -128,6 +128,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the records of the keychain items of these instances. Thus `mai upgrade`,
   `mai doctor`, and `mai uninstall` of such an instance did not find its
   keychain items.
+- When the bridge gets no new pool lease, a tool call with no argument
+  `session` gets a tool error with no path. Examples are `MAIL_SERVER_DOWN`
+  and `NO_FREE_SESSION`. Before, the tool error had the path `session`,
+  although the call had no such argument. The server gives `NO_FREE_SESSION`
+  with no path for the same call.
 - The server refuses a value with a line break at the end for an argument
   with a pattern. Examples are a `ref`, a `thread_ref`, and an address. Before,
   the validator of the server used the Python rule for `$`, which also matches

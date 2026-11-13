@@ -129,9 +129,12 @@ result of an error of that lease request.
 
 For an error of the server, these rules apply. When the bridge continues or
 the handle stays, the call gets a tool error with the code of the server.
-When the server gives no code, the code is `SERVER_UNAVAILABLE`. The tool error has the path
-`session` and `retry_safe` true. The next call or heartbeat sends the lease
+When the server gives no code, the code is `SERVER_UNAVAILABLE`. The tool
+error has `retry_safe` true. The next call or heartbeat sends the lease
 request again.
+
+A call with the argument `session` gets the path `session`. A call with no
+`session` uses the pool lease, and its tool error has no path.
 
 When the bridge cannot read the agent key, the error is of the host, not of
 the server. The call gets the code `KEY_FILE_ERROR` with `retry_safe` false.
