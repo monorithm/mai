@@ -34,6 +34,10 @@ const FileName = "keys.json"
 // ErrNotFound means that the key file and the legacy keychain have no key for the account.
 var ErrNotFound = errors.New("keys: no key for the account")
 
+// ErrBusy means that a different process held the lock of the key file for more than the
+// wait. A subsequent try can succeed.
+var ErrBusy = errors.New("keys: the key file is busy")
+
 // OwnerAccount is the account of the owner key of an instance.
 func OwnerAccount(instance string) string { return "owner@" + instance }
 

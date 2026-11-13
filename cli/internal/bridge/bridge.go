@@ -293,10 +293,23 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 		return nil
 	}
 	b.logf("the new lease for %s failed: %v. The next call or heartbeat tries again.", l.describe(), err)
-	if hasID {
-		code, msg := unavailable(l, err)
-		b.answerFailure(id, isCall, code, msg, true)
+	if !hasID {
+		return nil
 	}
+	if code, msg, safe, ok := keyFailure(b.Agent, err); ok {
+		switch {
+		case !isCall:
+			b.writeError(id, -32603, "mai: "+code+": "+msg)
+		case l.handle == "":
+			// A call with no argument session: the error has no path.
+			b.writeResult(id, failure(code, msg, nil, safe))
+		default:
+			b.writeResult(id, sessionError(code, msg, safe))
+		}
+		return nil
+	}
+	code, msg := unavailable(l, err)
+	b.answerFailure(id, isCall, code, msg, true)
 	return nil
 }
 

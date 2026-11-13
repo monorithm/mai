@@ -118,11 +118,21 @@ result of an error of that lease request.
 | HTTP 4xx with an error code, for example `SESSION_REVOKED`, `SESSION_BUSY`, or `BAD_LABEL` | The handle ends. The call gets the code. A subsequent call with the handle gets `SESSION_UNKNOWN`. A subsequent call with the label sends a new lease request. | The bridge continues. The call gets the code, for example `NO_FREE_SESSION`. |
 | `BAD_KEY`: the agent key is not valid | The handle ends. | The bridge stops with exit code 1. |
 | HTTP 5xx, an error with no code, or a network error | The handle stays. | The bridge continues. |
+| The bridge cannot read the agent key from the key file or from its keychain item | The handle stays. | The bridge continues. |
 
-When the bridge continues or the handle stays, the call gets a tool error
-with the code of the server. When the server gives no code, the code is
-`SERVER_UNAVAILABLE`. The tool error has the path `session` and `retry_safe`
-true. The next call or heartbeat sends the lease request again.
+For an error of the server, these rules apply. When the bridge continues or
+the handle stays, the call gets a tool error with the code of the server.
+When the server gives no code, the code is `SERVER_UNAVAILABLE`. The tool error has the path
+`session` and `retry_safe` true. The next call or heartbeat sends the lease
+request again.
+
+When the bridge cannot read the agent key, the error is of the host, not of
+the server. The call gets the code `KEY_FILE_ERROR` with `retry_safe` false.
+The message gives the step, for example `chmod 600 PATH` for a key file that
+other users can read. When a different process holds the lock of the key file
+for more than 10 seconds, the code is `BUSY` with `retry_safe` true. A call
+with the argument `session` and a `login` get the path `session`. A call with
+no `session` gets no path.
 
 A login that gets an HTTP 5xx error, an error with no code, or a network
 error also gives a tool error with `retry_safe` true. This is also true when

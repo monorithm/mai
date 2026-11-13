@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -163,6 +162,30 @@ func noKeyMessage(agent string) string {
 		agent + ". For a new agent, run mai agent add " + agent + "."
 }
 
+// keyError is a failed read of the agent key: an error of the key file, of its lock, or of
+// the legacy keychain item. It is an error of the host, not of the server.
+type keyError struct{ err error }
+
+func (e *keyError) Error() string { return "the read of the agent key failed: " + e.err.Error() }
+
+func (e *keyError) Unwrap() error { return e.err }
+
+// keyFailure gives the code, the message, and retry_safe of a keyError. ok is false for a
+// different error. A key file that is busy gives BUSY with retry_safe true. Each other error
+// gives KEY_FILE_ERROR with retry_safe false, because the next try fails in the same way
+// until the user does the step in the message, for example the chmod command.
+func keyFailure(agent string, err error) (code, message string, retrySafe, ok bool) {
+	var ke *keyError
+	if !errors.As(err, &ke) {
+		return "", "", false, false
+	}
+	message = "The bridge cannot read the key of the agent " + agent + ": " + strings.TrimPrefix(ke.err.Error(), "keys: ")
+	if errors.Is(err, keys.ErrBusy) {
+		return "BUSY", message, true, true
+	}
+	return "KEY_FILE_ERROR", message, false, true
+}
+
 // isBadKey is true when the agent key is not valid or not in the key file. Then no lease
 // request can succeed.
 func isBadKey(err error) bool {
@@ -242,7 +265,7 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 		return leaseAnswer{}, errNoKey
 	}
 	if err != nil {
-		return leaseAnswer{}, fmt.Errorf("the read of the agent key failed: %w", err)
+		return leaseAnswer{}, &keyError{err: err}
 	}
 	in := map[string]any{"app": b.App, "folder": b.Folder, "pid": b.PID}
 	if name != "" {

@@ -146,8 +146,14 @@ func toolError(code, message string) map[string]any { return sessionError(code, 
 // sessionError is a tool result with isError true, the code of the error, and the path
 // session. With retrySafe true, the chat can try the same call again after some time.
 func sessionError(code, message string, retrySafe bool) map[string]any {
+	return failure(code, message, argSession, retrySafe)
+}
+
+// failure is a tool result with isError true, the code of the error, and the path: argSession,
+// or nil for a call with no argument session.
+func failure(code, message string, path any, retrySafe bool) map[string]any {
 	return toolResult(map[string]any{"error": map[string]any{
-		"code": code, "message": message, "path": argSession, "retry_safe": retrySafe,
+		"code": code, "message": message, "path": path, "retry_safe": retrySafe,
 	}}, true)
 }
 
@@ -163,8 +169,14 @@ func sessionError(code, message string, retrySafe bool) map[string]any {
 //
 // An HTTP 4xx answer, for example SESSION_BUSY, gives the retry_safe of the server, or false
 // when the answer has no retry_safe.
+//
+// A failed read of the agent key is an error of the host (keyFailure): KEY_FILE_ERROR, or BUSY
+// for a key file that is busy.
 func loginError(agent string, err error) map[string]any {
 	var ae *apiError
+	if code, msg, safe, ok := keyFailure(agent, err); ok {
+		return sessionError(code, msg, safe)
+	}
 	switch {
 	case errors.Is(err, errNoKey):
 		return toolError("BAD_KEY", noKeyMessage(agent))

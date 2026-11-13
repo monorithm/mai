@@ -19,8 +19,8 @@ const fileVersion = 1
 const maxFileSize = 1 << 20
 
 // lockTimeout is the longest wait for the lock of the key file. A process holds the lock
-// only for a read or a write of the file, never during a prompt.
-const lockTimeout = 10 * time.Second
+// only for a read or a write of the file, never during a prompt. The tests change it.
+var lockTimeout = 10 * time.Second
 
 // lockPoll is the time between two tries of the lock.
 const lockPoll = 10 * time.Millisecond
@@ -99,7 +99,7 @@ func (f *File) lock() (func(), error) {
 		if time.Now().After(deadline) {
 			_ = lf.Close()
 			procMu.Unlock()
-			return nil, fmt.Errorf("keys: a different process holds the lock %s for more than %s", f.lockPath(), lockTimeout)
+			return nil, fmt.Errorf("%w: a different process holds the lock %s for more than %s. Try again later", ErrBusy, f.lockPath(), lockTimeout)
 		}
 		time.Sleep(lockPoll)
 	}

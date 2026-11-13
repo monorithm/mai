@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -661,5 +662,31 @@ func TestAMoveKeepsTheLegacyItemWhenADifferentProcessWritesADifferentKey(t *test
 	}
 	if ok, _ := legacy.Has(OwnerAccount("mai")); !ok {
 		t.Fatal("the legacy item is gone")
+	}
+}
+
+func TestAHeldLockGivesErrBusy(t *testing.T) {
+	old := lockTimeout
+	lockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { lockTimeout = old })
+	f := Open(t.TempDir(), nil)
+	if err := f.Set(AgentAccount("mai", "cursor"), agentKey); err != nil {
+		t.Fatal(err)
+	}
+	lf, err := os.OpenFile(f.lockPath(), os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	if ok, err := tryLock(lf); !ok || err != nil {
+		t.Fatalf("lock = %v, %v", ok, err)
+	}
+	_, err = f.Get(AgentAccount("mai", "cursor"))
+	_ = unlock(lf)
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "Try again later") {
+		t.Fatalf("get with a held lock: %v, want ErrBusy", err)
+	}
+	if got, err := f.Get(AgentAccount("mai", "cursor")); err != nil || got != agentKey {
+		t.Fatalf("get after the unlock: %v", err)
 	}
 }

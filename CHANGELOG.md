@@ -45,6 +45,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `login` with the path `session`. Examples are `BAD_LABEL` for a label of
   the pool, and `SESSION_BUSY`. A value that is not a label, a login, or a
   handle gives `INVALID_ARGUMENT`.
+- The code `KEY_FILE_ERROR` of the bridge. The bridge gives it when it cannot
+  read the agent key from the key file or from its keychain item. A tool call
+  or a `login` then gets this code with `retry_safe` false. The message gives
+  the step, for example the `chmod` command. A call with the argument
+  `session` gets the path `session`, and a call with no `session` gets no
+  path. When a different process holds the lock of the key file for more than
+  10 seconds, the code is `BUSY` with `retry_safe` true. Before, these errors
+  gave `SERVER_UNAVAILABLE` with `retry_safe` true.
 
 ### Changed
 
