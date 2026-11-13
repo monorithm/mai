@@ -8,8 +8,9 @@ import (
 )
 
 // mai 3.0 and 3.1 wrote one manifest for all instances of a state folder, with no instance in
-// an item. The name of a container, a volume, or a keychain account tells its instance. Each
-// other item is of the instance of the file.
+// an item. The name of a container, a volume, or a keychain account tells its instance. An app
+// entry stays with no instance, because it names no instance. Each other item is of the
+// instance of the file.
 func TestLoadGivesEachItemOfMai31AnInstance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	old := `{"instance": "mai", "items": [
@@ -32,7 +33,7 @@ func TestLoadGivesEachItemOfMai31AnInstance(t *testing.T) {
 	want := map[string]string{
 		"container mai": "mai", "volume mai3-data": "mai", "container mai-dev": "mai-dev",
 		"volume mai-dev3-spool": "mai-dev", "keychain agent:cursor@mai-dev": "mai-dev", "keychain owner@mai": "mai",
-		"image ghcr.io/monorithm/mai:3.1.1": "mai", "app-entry cursor": "mai",
+		"image ghcr.io/monorithm/mai:3.1.1": "mai", "app-entry cursor": "",
 	}
 	for _, it := range m.Items {
 		if got := it.Instance; got != want[it.Type+" "+it.Name] {

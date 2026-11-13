@@ -306,7 +306,11 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   removes only the items of that instance. A container or a volume goes only
   when its label `dev.mai.instance` is that instance. An image that a
   container of a different instance uses stays, and its record goes to that
-  instance. Thus the uninstall of the last instance removes the image. The record of a data
+  instance. Thus the uninstall of the last instance removes the image. A
+  record of mai 3.0 or 3.1 of an app entry or of a file of an app has no
+  instance. The entry also names no instance. Each uninstall keeps such
+  an entry while a different instance stays, and tells it. The uninstall of
+  the last instance removes it. The record of a data
   folder of mai 3.0 or 3.1 has no instance. The container with the folder as
   its mount at `/data`, or `config.json` with that `data_dir`, tells its
   instance. When no instance is known, the folder stays. The uninstall never

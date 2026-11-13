@@ -43,8 +43,9 @@ type Item struct {
 	Target string   `json:"target,omitempty"`
 	Dirs   []string `json:"dirs,omitempty"`
 	// Instance is the instance of the item. An item of mai 3.0 or 3.1 has no instance. Load
-	// then gives it the instance of its name, or the instance of the file (instanceOf). The
-	// data folder of such a record stays with no instance (Unassigned).
+	// then gives it the instance of its name, or the instance of the file (instanceOf). A data
+	// folder, an app entry, and a file of an app of such a record stay with no instance
+	// (Unassigned).
 	Instance string `json:"instance,omitempty"`
 }
 
@@ -82,7 +83,7 @@ func Load(path, instance string) (*Manifest, error) {
 		m.Instance = instance
 	}
 	for i := range m.Items {
-		if m.Items[i].Instance == "" && !legacyData(m.Items[i]) {
+		if m.Items[i].Instance == "" && !legacyData(m.Items[i]) && !legacyApp(m.Items[i]) {
 			m.Items[i].Instance = instanceOf(m.Items[i], m.Instance)
 		}
 	}
@@ -96,7 +97,14 @@ func Load(path, instance string) (*Manifest, error) {
 // the mounts of the containers.
 func legacyData(it Item) bool { return it.Type == Folder && it.Name == DataFolder }
 
-// Unassigned gives each record with no instance: a data folder of mai 3.0 or 3.1.
+// legacyApp tells if a record with no instance is of an app entry or of a file of an app. The
+// entry names no instance, thus its bridge uses the instance of config.json at each start, and
+// not the instance of the file. Thus the record stays with no instance. The uninstall keeps
+// the entry while an instance stays.
+func legacyApp(it Item) bool { return it.Type == AppEntry || it.Type == File }
+
+// Unassigned gives each record with no instance: a data folder, an app entry, or a file of an
+// app of mai 3.0 or 3.1.
 func (m *Manifest) Unassigned() []Item {
 	m.mu.Lock()
 	defer m.mu.Unlock()

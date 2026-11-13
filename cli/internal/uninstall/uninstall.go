@@ -109,6 +109,8 @@ type Plan struct {
 	// mounted holds each folder of the instance that a container of a different instance
 	// mounts. It stays, and it is not in Paths.
 	mounted []keptFolder
+	// shared holds each record of a file of an app of mai 3.0 or 3.1. It has no instance.
+	shared []manifest.Item
 	// keptImages holds the record of each image of Images that stays, because a container of
 	// a different instance uses it. Remove sets it. Each record has the instance of that
 	// container, thus the uninstall of that instance removes the image.
@@ -167,6 +169,17 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	p.Images = man.OfInstance(inst, manifest.Image)
 	p.AppEntries = man.OfInstance(inst, manifest.AppEntry)
+	// A record of mai 3.0 or 3.1 of an app entry or a file of an app has no instance, because the
+	// entry names no instance. Each uninstall keeps it while a different instance stays, and the
+	// uninstall of the last instance removes it.
+	for _, it := range man.Unassigned() {
+		switch it.Type {
+		case manifest.AppEntry:
+			p.AppEntries = append(p.AppEntries, it)
+		case manifest.File:
+			p.shared = append(p.shared, it)
+		}
+	}
 	// A "version" entry goes after the other entries of its file, because a hook that stays
 	// needs it.
 	sort.SliceStable(p.AppEntries, func(i, j int) bool {
@@ -209,11 +222,14 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	// A file of an app can hold content of the user after mai connect made it, thus it does
 	// not go with the folders of mai.
-	p.AppFiles = man.OfInstance(inst, manifest.File)
+	p.AppFiles = append(man.OfInstance(inst, manifest.File), p.shared...)
 	// The record of a data folder of mai 3.0 or 3.1 has no instance. The mounts of the
 	// containers and config.json tell its instance.
 	mounts := u.mounts(context.Background())
 	for _, it := range man.Unassigned() {
+		if it.Type != manifest.Folder || it.Name != manifest.DataFolder {
+			continue
+		}
 		switch owner := dataOwner(it.Path, cfg, mounts); owner {
 		case inst:
 			man.Assign(it, inst)
@@ -969,14 +985,18 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 	p.Others = union(keyOthers, recOthers)
 	// The record of each app entry and file that stays gets the instance EntryOwner. The
 	// record of each image that stays gets the instance of the container that uses it.
+	// A record of mai 3.0 or 3.1 with no instance stays as it is.
 	var moved []manifest.Item
 	for _, it := range append(append([]manifest.Item(nil), p.KeptEntries...), p.KeptFiles...) {
+		if it.Instance == "" {
+			continue
+		}
 		it.Instance = p.EntryOwner
 		moved = append(moved, it)
 	}
-	entries := len(moved) > 0
+	entries := len(p.KeptEntries)+len(p.KeptFiles) > 0
 	moved = append(moved, p.keptImages...)
-	if len(stay) > 0 || len(recOthers) > 0 || len(moved) > 0 {
+	if len(stay) > 0 || len(recOthers) > 0 || entries || len(moved) > 0 {
 		text := "the manifest with the records of the keychain items"
 		switch {
 		case len(recOthers) > 0 || len(p.keptImages) > 0:
@@ -987,7 +1007,7 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 		// The manifest stays also when the write fails, because it can hold the records of a
 		// different instance.
 		keep = append(keep, keptPath{p.Manifest.Path(), text})
-		if err := keepRecords(p.Manifest, p.Instance, stay, moved); err != nil {
+		if err := keepRecords(p.Manifest, p.Instance, stay, moved, append(append([]manifest.Item(nil), p.AppEntries...), p.AppFiles...)); err != nil {
 			rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
 		} else {
 			if len(stay) > 0 {
@@ -1120,8 +1140,9 @@ func legacyStays(rs []Result) bool { return len(legacyStay(rs)) > 0 }
 // keepRecords removes each record of the instance from the manifest, except the record of
 // each legacy keychain item of stay. A subsequent uninstall reads the records, and removes the
 // items. The records of the other instances stay. The record of each item of moved also
-// stays, with the instance of the item.
-func keepRecords(m *manifest.Manifest, instance string, stay []string, moved []manifest.Item) error {
+// stays, with the instance of the item. A record with no instance goes only when it is of an
+// item of gone, which the uninstall removed.
+func keepRecords(m *manifest.Manifest, instance string, stay []string, moved, gone []manifest.Item) error {
 	want := map[string]bool{}
 	for _, a := range stay {
 		want[a] = true
@@ -1134,8 +1155,17 @@ func keepRecords(m *manifest.Manifest, instance string, stay []string, moved []m
 		}
 		return false
 	}
+	removed := func(it manifest.Item) bool {
+		for _, g := range gone {
+			if g.Type == it.Type && g.Name == it.Name && g.Path == it.Path && g.Pointer == it.Pointer {
+				return true
+			}
+		}
+		return false
+	}
 	for _, it := range append([]manifest.Item(nil), m.Items...) {
-		if it.Instance != instance || (it.Type == manifest.KeychainKey && want[it.Name]) || kept(it) {
+		mine := it.Instance == instance || it.Instance == "" && removed(it)
+		if !mine || (it.Type == manifest.KeychainKey && want[it.Name]) || kept(it) {
 			continue
 		}
 		if err := m.Remove(it); err != nil {
