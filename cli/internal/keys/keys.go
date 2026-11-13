@@ -433,6 +433,10 @@ type MoveReport struct {
 	// had the same key, or because the server accepts the key of the key file and refuses
 	// the key of the legacy item.
 	Cleaned []string
+	// Replaced holds each account whose key MoveAll replaced in the key file with the key of
+	// the legacy item, because the server accepts the key of the legacy item and refuses the
+	// key of the key file. MoveAll then deleted the legacy item.
+	Replaced []string
 	// Conflicts holds each legacy item that stays, because the key file has a different key
 	// for its account, and nothing proves that the server accepts the key of the key file.
 	// A conflict is not in the error of MoveAll.
@@ -486,11 +490,41 @@ func check(account, key, secret string, accepts Accepts) (c Conflict, clean bool
 	return c, c.Err == nil && c.FileAccepted && !c.LegacyAccepted
 }
 
+// replaceWithLegacy writes secret, the key of the legacy item, to the key file in place of key,
+// and then deletes the legacy item. When a different process changed the key of the key file
+// after the check, nothing proves which key the server accepts. Then nothing changes, and the
+// report has a conflict with no check.
+func (f *File) replaceWithLegacy(r MoveReport, account, key, secret string) (MoveReport, error) {
+	replaced := false
+	err := f.update(func(d *doc) bool {
+		if d.Keys[account] != key {
+			return false
+		}
+		d.Keys[account], replaced = secret, true
+		return true
+	})
+	switch {
+	case err != nil:
+		return r, fmt.Errorf("keys: write the key of the keychain item of %s to the key file: %w", account, err)
+	case !replaced:
+		r.Conflicts = append(r.Conflicts, Conflict{Account: account})
+		return r, nil
+	}
+	if err := f.DeleteLegacy(account); err != nil {
+		r.Stays = append(r.Stays, Stay{Account: account, Err: err})
+		return r, nil
+	}
+	r.Replaced = append(r.Replaced, account)
+	return r, nil
+}
+
 // MoveAll moves the legacy keychain item of each account to the key file. When the key file
 // has a key for the account of a legacy item, also a key that a different process wrote during
 // the move, MoveAll deletes the legacy item only when it holds the same key, or when accepts
 // tells that the server accepts the key of the key file and refuses the key of the legacy item.
-// Else the legacy item stays, and the report has a conflict. When the delete of a legacy item
+// When accepts tells that the server accepts only the key of the legacy item, MoveAll writes
+// that key to the key file and deletes the legacy item. Else the legacy item stays, and the
+// report has a conflict. When the delete of a legacy item
 // fails, the report has a stay. accepts can be nil. The error joins the failure of each account.
 func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 	var r MoveReport
@@ -546,6 +580,14 @@ func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 		}
 		if secret != key {
 			c, clean := check(a, key, secret, accepts)
+			if c.Checked && c.Err == nil && c.LegacyAccepted && !c.FileAccepted {
+				// The server proves the key of the legacy item, and the key of the key file is of
+				// no use.
+				if r, err = f.replaceWithLegacy(r, a, key, secret); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
 			if !clean {
 				r.Conflicts = append(r.Conflicts, c)
 				continue

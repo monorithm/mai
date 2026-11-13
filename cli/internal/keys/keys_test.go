@@ -600,7 +600,6 @@ func TestMoveAllKeepsALegacyItemWithADifferentKey(t *testing.T) {
 		accepts Accepts
 	}{
 		{"no check", nil},
-		{"the server accepts the key of the item", server("mai1:owner:item", nil)},
 		{"the server refuses the two keys", server("", nil)},
 		{"the check fails", server("", errors.New("connection refused"))},
 	} {
@@ -746,7 +745,7 @@ func TestMoveAllChecksTheServerForAKeyThatADifferentProcessWrote(t *testing.T) {
 		clean    bool
 	}{
 		{"the server accepts only the key of the key file", "mai1:owner:other", true},
-		{"the server accepts only the key of the item", ownerKey, false},
+		{"the server accepts only the key of the item", ownerKey, true},
 	} {
 		dir := t.TempDir()
 		legacy := keychain.NewMemory()
@@ -761,11 +760,12 @@ func TestMoveAllChecksTheServerForAKeyThatADifferentProcessWrote(t *testing.T) {
 			t.Fatalf("%s: MoveAll = %+v, %v, %d checks", tc.name, r, err, asked)
 		}
 		gone := len(legacy.Accounts()) == 0
-		if tc.clean != gone || tc.clean != (len(r.Cleaned) == 1) {
+		if tc.clean != gone || len(r.Cleaned)+len(r.Replaced) != 1 || len(r.Conflicts) != 0 {
 			t.Fatalf("%s: MoveAll = %+v; the item is gone: %v", tc.name, r, gone)
 		}
-		if !tc.clean && (len(r.Conflicts) != 1 || !r.Conflicts[0].Checked || !r.Conflicts[0].LegacyAccepted) {
-			t.Fatalf("%s: the conflict is %+v", tc.name, r.Conflicts)
+		// The key file keeps the key that the server accepts.
+		if got := readDoc(t, dir).Keys[OwnerAccount("mai")]; got != tc.accepted {
+			t.Fatalf("%s: the key file does not have the key that the server accepts", tc.name)
 		}
 	}
 }

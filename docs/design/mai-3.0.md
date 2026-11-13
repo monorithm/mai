@@ -571,7 +571,9 @@ binary that wrote it.
   account. Then `mai upgrade` gives a step and the exit code 1. For the owner
   key, `mai upgrade` does a test of the two keys on the server. When the
   server accepts only the key of the key file, the CLI deletes the keychain
-  item. Thus no command deletes or replaces a key that the server accepts.
+  item. When the server accepts only the key of the keychain item, the CLI
+  writes that key to the key file and deletes the keychain item. Thus no
+  command deletes or replaces a key that the server accepts.
 - A bridge of 3.0 or 3.1 that runs reads the agent key from the keychain item
   at each lease request. When the item is gone, the bridge stops with
   `BAD_KEY` and the step `Run mai agent add NAME`, which gives

@@ -745,7 +745,8 @@ func lcRecordedKeys(m *manifest.Manifest) []string {
 
 // lcMoveKeys moves each key of the instance from the legacy keychain to the key file. It
 // removes a legacy item whose account the key file has only when the item holds the same key,
-// or when the server accepts only the key of the key file. It removes the record of each
+// or when the server accepts only one of the two keys. Then the key file keeps the key that the
+// server accepts. It removes the record of each
 // legacy item that is gone from the manifest. It gives false when a key did not move, or when
 // a legacy item stays. port is the port of the server of the instance. When it is 0, the port
 // is not known, and the check of the owner keys on the server does not occur.
@@ -774,7 +775,11 @@ func lcMoveKeys(instance string, port int, m *manifest.Manifest) bool {
 			"or because the server accepts only the key of the key file: %s\n",
 			len(r.Cleaned), strings.Join(r.Cleaned, ", "))
 	}
-	restart := lcAgentItemGone(append(append([]string(nil), r.Moved...), r.Cleaned...))
+	if len(r.Replaced) > 0 {
+		fmt.Fprintf(lcOut, "mai: the server accepts only the key of the keychain item, thus the key file %s now holds that key, "+
+			"and the keychain item is gone: %s\n", kf.Path(), strings.Join(r.Replaced, ", "))
+	}
+	restart := lcAgentItemGone(append(append(append([]string(nil), r.Moved...), r.Cleaned...), r.Replaced...))
 	if restart {
 		fmt.Fprint(lcOut, lcRestartStep)
 	}
@@ -937,9 +942,10 @@ func lcConflictText(instance, path string, c keys.Conflict) string {
 		return fmt.Sprintf("the key file %s has a different owner key, and the check of the server failed: %v. "+
 			"Step: start the server with %s, and then run %s again.", path, c.Err, lcCommand(instance, "start"), upgrade)
 	case c.LegacyAccepted && !c.FileAccepted:
+		// The move writes the key of the item to the key file. A conflict remains only when a
+		// different process changed the key file during the move.
 		return fmt.Sprintf("the server accepts the key of the keychain item, and it refuses the owner key of the key file %s. "+
-			"Step: remove the account %s from the key file, and then run "+upgrade+" again. "+
-			"The move then puts the key of the keychain item in the key file.", path, owner)
+			"Step: run %s again. It writes the key of the keychain item to the key file.", path, upgrade)
 	case !c.LegacyAccepted && !c.FileAccepted:
 		return fmt.Sprintf("the key file %s has a different owner key, and the server refuses the two keys. "+
 			"Step: give the owner key of the key file to the server with %s, "+

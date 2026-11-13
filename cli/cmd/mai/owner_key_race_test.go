@@ -45,19 +45,24 @@ func TestUpgradeDoesAServerCheckWhenADifferentProcessWritesTheOwnerKey(t *testin
 	lcOut, lcErr = &out, &errs
 	t.Cleanup(func() { lcOut, lcErr = oldOut, oldErr })
 
-	if lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
-		t.Fatal("the move gave true, but the keychain item stays")
+	if !lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
+		t.Fatalf("the move gave false: %s", errs.String())
 	}
-	text := errs.String()
+	text := out.String() + errs.String()
 	if strings.Contains(text, "the server refuses the two keys") || strings.Contains(text, "set-key --replace") {
 		t.Fatalf("the server accepts the key of the keychain item, but mai upgrade tells that it refuses the two keys "+
 			"and gives the step to replace the owner key of the server:\n%s", text)
 	}
-	if !strings.Contains(text, "the server accepts the key of the keychain item") {
+	if !strings.Contains(text, "the server accepts only the key of the keychain item") {
 		t.Fatalf("mai upgrade does not tell the result of the check of the server:\n%s", text)
 	}
-	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); !ok {
-		t.Fatal("the keychain item with the key that the server accepts is gone")
+	// The server proves the key of the item, thus it goes to the key file in place of the key
+	// that the different process wrote.
+	if got := fileKeys(t, k)[keys.OwnerAccount("mai")]; got != testOwnerKey {
+		t.Fatal("the key file does not have the owner key that the server accepts")
+	}
+	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); ok {
+		t.Fatal("the keychain item stays")
 	}
 }
 

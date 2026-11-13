@@ -212,10 +212,11 @@ func TestUpgradeKeepsAKeychainItemWithADifferentAgentKey(t *testing.T) {
 	}
 }
 
-// For the owner key, the server tells which key it accepts. "mai upgrade" removes the
-// keychain item only when the server accepts the key of the key file and refuses the key of
-// the item.
-func TestUpgradeRemovesTheOwnerItemOnlyWhenTheServerAcceptsTheKeyOfTheKeyFile(t *testing.T) {
+// For the owner key, the server tells which key it accepts. When the server accepts only the
+// key of the key file, "mai upgrade" removes the keychain item. When the server accepts only the
+// key of the item, "mai upgrade" writes that key to the key file and removes the item. No step
+// tells the user to change the key file.
+func TestUpgradeKeepsTheOwnerKeyThatTheServerAccepts(t *testing.T) {
 	_, _, k, home := legacyInstall(t, map[string]string{keys.OwnerAccount("mai"): "mai1:owner:old"})
 	out, errs := captureLifecycle(t)
 	if err := k.file.Set(keys.OwnerAccount("mai"), testOwnerKey); err != nil {
@@ -241,16 +242,19 @@ func TestUpgradeRemovesTheOwnerItemOnlyWhenTheServerAcceptsTheKeyOfTheKeyFile(t 
 		t.Fatal(err)
 	}
 	errs.Reset()
-	if lcMoveKeys("mai", configPort(t), m) {
-		t.Fatal("the move gave true, but the keychain item with the accepted key stays")
+	out.Reset()
+	if !lcMoveKeys("mai", configPort(t), m) {
+		t.Fatalf("the move gave false: %s", errs.String())
 	}
-	if got, _ := k.legacy.Get(keys.OwnerAccount("mai")); got != testOwnerKey {
-		t.Fatal("the keychain item with the key that the server accepts is gone")
+	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); ok {
+		t.Fatal("the keychain item stays")
 	}
-	text := errs.String()
-	if !strings.Contains(text, "the server accepts the key of the keychain item") ||
-		!strings.Contains(text, "remove the account owner@mai from the key file") {
-		t.Fatalf("stderr: %q", text)
+	if got := fileKeys(t, k)[keys.OwnerAccount("mai")]; got != testOwnerKey {
+		t.Fatal("the key file does not have the owner key that the server accepts")
+	}
+	text := out.String() + errs.String()
+	if !strings.Contains(text, "the server accepts only the key of the keychain item") || strings.Contains(text, "from the key file") {
+		t.Fatalf("output: %q", text)
 	}
 	if strings.Contains(text, "mai1:") {
 		t.Fatal("the output shows a key")

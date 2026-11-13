@@ -258,6 +258,8 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   `mai upgrade` gives a step and the exit code 1. For the owner key,
   `mai upgrade` does a test of the two keys on the server. When the server
   accepts only the key of the key file, `mai upgrade` deletes the keychain
+  item. When the server accepts only the key of the keychain item,
+  `mai upgrade` writes that key to the key file and deletes the keychain
   item. Thus no command deletes or replaces a key that the server accepts.
 - After `mai upgrade`, start each app that runs `mai mcp` again, or start its
   MCP server again. `mai upgrade` also gives this step when it deletes the

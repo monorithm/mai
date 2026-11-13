@@ -26,8 +26,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the item. Then `mai upgrade` gives a step and the exit code 1. For the owner
   key, `mai upgrade` does a test of the two keys on the server. When the
   server accepts only the key of the key file, `mai upgrade` deletes the
-  keychain item. `mai agent rotate` also deletes the keychain item of the
-  agent.
+  keychain item. When the server accepts only the key of the keychain item,
+  `mai upgrade` writes that key to the key file and deletes the keychain
+  item. `mai agent rotate` also deletes the keychain item of the agent.
 - After `mai upgrade`, start each app that runs `mai mcp` again, or start
   its MCP server again. `mai upgrade` also gives this step when it deletes
   the keychain item of an agent. It also gives the step when the manifest
