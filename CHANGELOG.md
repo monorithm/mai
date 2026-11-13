@@ -35,6 +35,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `session` uses the pool session of the bridge. The presence check occurs
   one time for each bridge process.
 - `mai hook` shows one line for each session of its bridge that has new mail.
+- The first tool call on a lease with no session gives the lease a free pool
+  session. When no pool session is free, the tool result is the error
+  `NO_FREE_SESSION` with `retry_safe` true and HTTP 200.
+- The tool error code `NO_FREE_SESSION`. The guide `mai://guide` tells the
+  steps for a call that gets it.
 
 ### Changed
 
@@ -45,6 +50,74 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   away.
 - `mai session list` on the host shows the label and the state of each
   session, and the app, the folder, and the process ID of each lease.
+- When no pool session of the agent is free, a lease request with no session
+  gives a lease with the session `null`. Each agent can have 16 such leases.
+  After that limit, the lease request gives `NO_FREE_SESSION`.
+- `scripts/it_container.sh` and the milter container test take the image from
+  `MAI_IT_IMAGE` (default `mai:dev`).
+- `scripts/it_named_sessions.sh` waits for each lease state. It also does a
+  test of the pool label rule and of a bridge with a full pool.
+
+### Fixed
+
+- The owner API and the server CLI refuse a named session with a label of the
+  pool (`s` and digits, for example `s1`). The result is `BAD_LABEL`, and the
+  message tells the owner to use `--count`.
+- A lease request for a label of the pool, for example `s2` or `cursor.s2`,
+  gives `BAD_LABEL`. Thus a login never takes a pool session, and the pool
+  never gives a named session.
+- Each error of a lease request has a code. A failure of the mail login gives
+  its code: 503 for `MAIL_SERVER_DOWN` and `STORE_UNAVAILABLE`, 502 for each
+  other code, with `retry_safe`. A revoke during the lease request gives
+  `SESSION_REVOKED`. Other failures give a coded 500 `INTERNAL`.
+- A store failure during the check of the agent key gives
+  `STORE_UNAVAILABLE`, not `BAD_KEY`.
+- A heartbeat gives `"new_mail": null` when the count of new mail fails, and a
+  coded 503 when the store does not reply. It never gives a 500 with no code.
+- The server refuses a label, an agent name, a login, or a lease token with
+  a line break at the end. Before, the owner API and the server CLI made
+  the named session `cursor.s1\n`, and a lease request for `s2\n` gave
+  `SESSION_UNKNOWN`, not `BAD_LABEL`.
+- A lease with no session ends when the owner removes its agent. Its
+  heartbeat and its tool calls give HTTP 401 `LEASE_UNKNOWN`. Thus the bridge
+  renews the lease and gets `BAD_KEY`. Before, the heartbeat gave 200 and each
+  tool call gave `NO_FREE_SESSION` with `retry_safe` true.
+- When a revoke closes the selected pool session during a bind or a pool lease
+  request, the server tries the next free pool session. Thus
+  `NO_FREE_SESSION` occurs only when no pool session is free.
+- The bridge `mai mcp` starts and serves named sessions when no pool session
+  of the agent is free. It accepts a pool lease with no session, and logs
+  that a chat can log in to a named session. When a heartbeat gives the pool
+  session, the bridge records it.
+- A server error, an error with no code, or a network error of a lease
+  request does not end a named session in the bridge. The call gets a tool
+  error with the code of the server, or `SERVER_UNAVAILABLE`, with
+  `retry_safe` true. The next call or heartbeat tries again.
+- A failed renew of the pool lease stops the bridge only when the agent key is
+  not valid (`BAD_KEY`). For each other failure, the named sessions stay.
+- A login to a session waits for a logout of the same session in the same
+  bridge. Thus the login does not get `SESSION_BUSY` from the lease that the
+  logout ends.
+- A login whose lease request gets a server error gives a tool error that the
+  chat can try again, not a JSON-RPC error.
+- The bridge ends each lease and removes its notice file on SIGHUP, the same
+  as on SIGINT and SIGTERM.
+- While the pool lease has no session, the notice file has no pool entry.
+  `mai hook` shows the named sessions of such a notice.
+- A heartbeat with no count of new mail (`"new_mail": null`) keeps the last
+  count in the notice file.
+- `mai session new AGENT --label s1` gives `BAD_LABEL` before it calls the
+  server. A label `s` with only digits after it is for the pool. Use
+  `--count N`.
+- The plan of `mai uninstall` shows the keychain service from which it deletes
+  the keys, also in a test build with `MAI_TEST_KEYCHAIN_SERVICE`.
+- The bridge ends the lease of a lease request that a logout or a stop
+  interrupts. A login to the same session then does not get `SESSION_BUSY`,
+  and no lease stays on the server after a stop.
+- The bridge writes the notice file each time it gets a new lease, also when a
+  tool call gets the new lease.
+- A login that gets an HTTP 5xx error gives `retry_safe` true, the same as a
+  tool call with a handle.
 
 ## [3.0.1] - 2026-11-12
 
