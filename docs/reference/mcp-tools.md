@@ -23,9 +23,13 @@ of the bridge `mai mcp` is necessary as the bearer token.
 4. The tool `login` is optional. It takes the label or the login of a named
    session, gets the lease as a call with the label does, and gives a handle.
    A `login` to a session that the bridge holds gives the handle of that
-   lease, also when a call with the label got the lease.
+   lease, also when a call with the label got the lease. A value that is not
+   a label or a login gives `BAD_LABEL` with the path `session`, and no lease
+   request.
 5. The tool `logout` takes a label, a login, or a handle, and ends the lease
-   of that named session in the bridge.
+   of that named session in the bridge. With no value, or with a value that
+   is not a label, a login, or a handle, the result is `INVALID_ARGUMENT`
+   with the path `session`.
 6. The bridge removes the argument `session` and sends the call with the
    lease of that session.
 

@@ -97,6 +97,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `BRIDGE_ONLY`, `NO_FREE_SESSION`, and `BAD_LABEL` also tell this rule. The
   error table of the guide also lists the codes `BAD_KEY` and
   `KEY_FILE_ERROR` of the bridge.
+- `login` uses the value of `session` as it is, with the rule of a tool
+  call. A value that is not a label or a login gives `BAD_LABEL` with the
+  path `session`, and no lease request. An example is a label with a space
+  or a line break at the end. Before, `login` removed the spaces and the
+  line breaks at the start and at the end of the value. A `logout` with no
+  `session`, an empty string, or `null` gives `INVALID_ARGUMENT` with the
+  path `session`. Before, it gave `SESSION_UNKNOWN`.
 - `scripts/it_named_sessions.sh` builds mai with no tag and uses only a
   scratch `MAI_HOME`. It does a test of calls with the label `lane-c` and no
   login. At the end, it makes sure that `mai uninstall` removed the keys of the

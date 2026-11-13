@@ -257,7 +257,7 @@ func TestLogoutEndsTheLeaseOfTheHandle(t *testing.T) {
 	if code := errorCode(t, h.call(t, 5, "logout", map[string]any{"session": handle})); code != "SESSION_UNKNOWN" {
 		t.Fatalf("second logout = %s", code)
 	}
-	if code := errorCode(t, h.call(t, 6, "logout", nil)); code != "SESSION_UNKNOWN" {
+	if code := errorCode(t, h.call(t, 6, "logout", nil)); code != "INVALID_ARGUMENT" {
 		t.Fatalf("logout with no handle = %s", code)
 	}
 	if r := result(t, h.call(t, 7, "whoami", map[string]any{"session": keep})); r["session"] != "cursor.lane-b" {

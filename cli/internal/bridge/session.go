@@ -351,16 +351,23 @@ func (b *Bridge) openOnce(ctx context.Context, name, login string) (l *lease, fa
 	return l, nil
 }
 
+// msgLoginSession is the message of BAD_LABEL for a login with a value of the argument
+// session that is not a label or a login.
+const msgLoginSession = "Give the label or the login of a session as the argument session, for example lane-1. " +
+	"For a label with the form of a handle, give the login."
+
 // login answers the tool login. It gets a lease for the named session of the argument
 // session, which is a label or a login of the agent of the bridge, and gives a handle. A
 // second login to a session that the bridge holds gives the same handle, also when a tool
 // call with the label of the session got the lease.
+//
+// login uses the value as it is, with the rule of a tool call (isSessionName). A different
+// value, for example a label with a space or a line break, gets BAD_LABEL and no lease
+// request.
 func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
-	var name string
-	ok := json.Unmarshal(c.args[argSession], &name) == nil
-	name = strings.TrimSpace(name)
-	if c.badArgs || !ok || name == "" {
-		b.writeResult(id, toolError("BAD_LABEL", "Give the label or the login of a session as the argument session."))
+	name, given, text := c.session()
+	if !given || !text || !isSessionName(name) {
+		b.writeResult(id, toolError("BAD_LABEL", msgLoginSession))
 		return
 	}
 	l, fail := b.open(ctx, name)
@@ -378,9 +385,12 @@ func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
 //
 // When the heartbeat loop waits for the answer of a lease request, the logout waits for that
 // answer, and then ends the new lease also (request).
+//
+// The argument session is necessary. No value, an empty string, or null gets
+// INVALID_ARGUMENT, as a value that is not a handle, a label, or a login.
 func (b *Bridge) logout(id json.RawMessage, c toolCall) {
 	value, given, text := c.session()
-	if given && (!text || !handleRule.MatchString(value) && !isSessionName(value)) {
+	if !given || !text || !handleRule.MatchString(value) && !isSessionName(value) {
 		b.writeResult(id, toolError("INVALID_ARGUMENT", msgBadSession))
 		return
 	}
