@@ -59,7 +59,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   When the lease request is not successful, the call gets the tool error of
   `login` with the path `session`. Examples are `BAD_LABEL` for a label of
   the pool, and `SESSION_BUSY`. A value that is not a label, a login, or a
-  handle gives `INVALID_ARGUMENT`.
+  handle gives `INVALID_ARGUMENT`. A call with a label acts only as that
+  session. A server of 3.0 does not know named sessions, and it gives a
+  lease of a pool session. The bridge then ends that lease, and the call
+  gets `SERVER_UNAVAILABLE` with `retry_safe` false and the step
+  `mai upgrade`.
 - The code `KEY_FILE_ERROR` of the bridge. The bridge gives it when it cannot
   read the agent key from the key file or from its keychain item. A tool call
   or a `login` then gets this code with `retry_safe` false. The message gives

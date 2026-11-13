@@ -55,6 +55,7 @@ with the path `session`. The code is the same as the code of `login`:
 | The owner revoked the session | `SESSION_REVOKED` | false |
 | The mail server or the store does not reply | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE` | true |
 | A network error, or an error with no code | `SERVER_UNAVAILABLE` | true |
+| The server gives a lease of a different session, for example a server of 3.0 that does not know named sessions | `SERVER_UNAVAILABLE` | false |
 | The key file has no key for the agent, or the server refuses the agent key | `BAD_KEY` | false |
 | The bridge cannot read the agent key from the key file or from its keychain item | `KEY_FILE_ERROR` | false |
 | A different process holds the lock of the key file for more than 10 seconds | `BUSY` | true |
@@ -63,6 +64,11 @@ For `BAD_KEY`, the message gives the step. For an agent that exists on the
 server, the step is `mai agent rotate NAME`. For a new agent, the step is
 `mai agent add NAME`. For `KEY_FILE_ERROR`, the message gives the error of the
 key file and its step, for example `chmod 600 PATH`.
+
+A call with a label acts only as that session. When the server gives a lease
+of a different session, the bridge ends that lease, and the call does not
+run. The message tells the chat to tell the owner to run `mai upgrade`. The
+same rule applies to the new lease after a restart of the server.
 
 Calls at the same time for the same session get the error of one lease
 request. A refusal keeps no lease. Thus the next call with the label sends a

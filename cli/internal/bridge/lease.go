@@ -240,7 +240,7 @@ func isRefusal(err error) bool {
 
 // endsLease is true when the error of a renew ends l. These errors end l:
 //   - The bridge ended l.
-//   - The server refused the named session of l.
+//   - The server refused the named session of l, or gave a lease of a different session.
 //   - The agent key of the pool lease is not valid.
 func endsLease(l *lease, err error) bool {
 	if errors.Is(err, errEnded) {
@@ -249,7 +249,30 @@ func endsLease(l *lease, err error) bool {
 	if l.handle == "" {
 		return isBadKey(err)
 	}
-	return isRefusal(err)
+	var ws *wrongSessionError
+	return isRefusal(err) || errors.As(err, &ws)
+}
+
+// wrongSessionError means that the server gave a lease of a different session, or of no
+// session, for a lease request of a named session. A server that does not know named
+// sessions, for example a server of mai 3.0, reads no session in a lease request and gives a
+// lease on a pool session. The bridge never uses such a lease for the named session, else a
+// call with the label of a session acts as a different session.
+type wrongSessionError struct{ want, got string }
+
+func (e *wrongSessionError) Error() string {
+	got := "no session"
+	if e.got != "" {
+		got = "the session " + e.got
+	}
+	return "the server gave a lease of " + got + " for the session " + e.want
+}
+
+// message is the message of the tool error. It gives the step for the owner.
+func (e *wrongSessionError) message() string {
+	return "The server gave a lease of a different session for the session " + e.want +
+		". Thus the server does not know named sessions, for example a server of mai 3.0. The bridge ended that lease, and the call did not run. " +
+		"Tell the owner to run mai upgrade, which makes the container with the image of the CLI."
 }
 
 // msgNoFreeSession is the message of NO_FREE_SESSION. It is the same as the message of the
@@ -397,19 +420,16 @@ func (b *Bridge) renewOnce(ctx context.Context, l *lease, old string) error {
 		}
 		return err
 	}
-	before := l.session()
+	if l.handle != "" && a.Session != name {
+		// A named lease is only of its session. The bridge ends the new lease, and the
+		// caller drops l (endsLease).
+		b.deleteLease(a.Lease)
+		return &wrongSessionError{want: name, got: a.Session}
+	}
 	if !l.setIfLive(a) {
 		// The chat logged out during the request. End the new lease immediately.
 		b.deleteLease(a.Lease)
 		return errEnded
-	}
-	if l.handle != "" && a.Session != "" && a.Session != before {
-		b.mu.Lock()
-		if b.byLogin[before] == l.handle {
-			delete(b.byLogin, before)
-		}
-		b.byLogin[a.Session] = l.handle
-		b.mu.Unlock()
 	}
 	if l.handle == "" && a.Session == "" {
 		b.logNoPool()

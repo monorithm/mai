@@ -329,8 +329,12 @@ func (b *Bridge) openOnce(ctx context.Context, name, login string) (l *lease, fa
 	if err != nil {
 		return nil, loginError(b.Agent, err)
 	}
-	if a.Session == "" {
-		a.Session = login
+	if a.Session != login {
+		// A call with the label or the login of a session acts only as that session.
+		werr := &wrongSessionError{want: login, got: a.Session}
+		b.deleteLease(a.Lease)
+		b.logf("%v. The bridge ended that lease.", werr)
+		return nil, sessionError("SERVER_UNAVAILABLE", werr.message(), false)
 	}
 	handle, err := newHandle()
 	if err != nil {
@@ -343,7 +347,6 @@ func (b *Bridge) openOnce(ctx context.Context, name, login string) (l *lease, fa
 	}
 	l = b.newLease(handle, a)
 	b.named[handle] = l
-	b.byLogin[a.Session] = handle
 	b.byLogin[login] = handle
 	b.mu.Unlock()
 	b.startBeats(l)

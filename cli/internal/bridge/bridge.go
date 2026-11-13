@@ -300,10 +300,12 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 // renewFailed answers a call when the lease of its session ended and the renew failed.
 //
 // Only an agent key that is not valid stops the bridge. A named session that the server
-// refused (isRefusal) goes, and the call gets the code of the server. For each other
+// refused (isRefusal) goes, and the call gets the code of the server. A named session whose
+// new lease is of a different session (wrongSessionError) also goes. For each other
 // failure, the lease stays in the bridge, and the call gets a tool error with retry_safe
 // true. The next call or heartbeat tries again.
 func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, err error) error {
+	var ws *wrongSessionError
 	switch {
 	case errors.Is(err, errEnded):
 		if hasID {
@@ -314,6 +316,12 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 		b.writeError(id, -32001, stopText(b.Agent, err))
 		b.logf("stop: %s", leaseErrorText(b.Agent, err))
 		return errStop
+	case l.handle != "" && errors.As(err, &ws):
+		b.drop(l, err)
+		if hasID {
+			b.answerFailure(id, isCall, l, "SERVER_UNAVAILABLE", ws.message(), false)
+		}
+		return nil
 	case l.handle != "" && isRefusal(err):
 		b.drop(l, err)
 		if hasID {
