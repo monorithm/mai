@@ -6,6 +6,34 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Named sessions as in 2.x, with no session secret on the host. The owner API
+  `POST /api/sessions` makes a named session `AGENT.LABEL`, or with `count`
+  the pool sessions `AGENT.s1` to `AGENT.sN`. `POST /api/sessions/LOGIN/rotate`
+  gives a session a new internal secret, and `POST /api/sessions/LOGIN/revoke`
+  closes it for good. Each of the two ends the lease of the session.
+  `GET /api/sessions` shows the status and the lease of each session. The
+  owner API gives no session secret.
+- A lease request can name a session of the agent in the field `session`, for
+  example `lane-a` or `cursor.lane-a`. The server refuses a session of a
+  different agent (`SESSION_UNKNOWN`), a revoked session (`SESSION_REVOKED`),
+  and a session that a different lease holds (`SESSION_BUSY`). A lease request
+  with no name gets a pool session, and never a named session.
+- MCP contract 3.1.0: the tools `login` and `logout` of the bridge, and the
+  optional argument `session` of each other tool. The argument is a handle:
+  `ses-` and 16 base32 characters. The server removes the argument before the
+  tool runs. A call of `login` or `logout` that comes to the server gives the
+  error `BRIDGE_ONLY`.
+
+### Changed
+
+- The server CLI commands `session new AGENT --label L`,
+  `session new AGENT --count N`, `session rotate`, and `session revoke` show
+  only the login. `session list` shows the login, the status, and the time of
+  the last login. The flags `--file`, `--credential-only`, and `--expires` go
+  away.
+
 ## [3.0.1] - 2026-11-12
 
 ### Fixed

@@ -45,10 +45,10 @@ No command shows a session secret.
 | `init` | | Applies the migrations and makes the system accounts `owner` and `board`. |
 | `agent add` | `NAME [NAME ...]` | Makes an agent account for each name. Gives the board account read access to the queue of the agent. |
 | `agent list` | `[--json]` | Shows the agents, their status and the number of live sessions. |
-| `session new` | `AGENT --label LABEL [--expires 7d] [--save PATH] [--credential-only] [--file PATH]` | Makes a session credential. The agent must exist. |
-| `session list` | `[--agent AGENT] [--json]` | Shows the session logins. |
-| `session rotate` | `LOGIN [--file PATH]` | Gives a session a new secret. |
-| `session revoke` | `LOGIN` | Revokes a session. |
+| `session new` | `AGENT --label LABEL`, or `AGENT --count N` | Makes the named session `AGENT.LABEL`, or each pool session `AGENT.s1` to `AGENT.sN` that does not exist. Shows only the login of each session. The agent must exist. |
+| `session list` | `[--agent AGENT] [--json]` | Shows the sessions, their status, and the time of the last login. |
+| `session rotate` | `LOGIN` | Gives a session a new internal secret. The lease of the session ends at its next call. |
+| `session revoke` | `LOGIN` | Closes a session for good. The lease of the session ends at its next call. |
 | `mcp` | | Starts the MCP server on stdio. |
 | `serve-http` | `[--host 0.0.0.0] [--port 8080]` | Starts the MCP server and the UI on HTTP. |
 | `watch` | `--credential-file PATH [--timeout 1500]` | Waits for new mail. The unit of the timeout is seconds. |
@@ -58,16 +58,17 @@ No command shows a session secret.
 | `import-maildir` | `PATH [--add-agents] [--rename-header-prefix OLD=NEW] [--dry-run]` | Imports a maildir of version 0.5.0. |
 | `project seed` | `PROJECT --supervisor AGENT --worker AGENT [--lane NAME] [--goal TEXT] [--min-coverage 80]` | Makes or updates a board project with a supervisor and one worker lane. The default lane name is the worker name. |
 
-## Flags of session new
+## Session commands
 
-| Flag | Where | Function |
-|---|---|---|
-| `--credential-only` | Container | Shows only the credential line. |
-| `--file PATH` | Container | Writes the credential to PATH in the container. The file gets mode 0600. |
-| `--expires` | Container | A number and a unit: `h` (hours) or `d` (days). The default is `7d`. |
+No session command shows a session secret or writes a credential file. The
+server keeps each secret in the container.
 
-Without `--save`, `--credential-only` and `--file`, the command shows the
-login, the credential and the expiry date.
+A label has 1 to 32 characters: lower-case letters, digits and `-`. The first
+character is a letter or a digit. A named session has no expiry. Only a revoke
+closes it.
+
+A lease request with no session name gets a pool session. The pool gives only
+the sessions with a label `s1` to `s8`, and never a named session.
 
 ## Agent names
 
