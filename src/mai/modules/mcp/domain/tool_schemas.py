@@ -1,4 +1,9 @@
-"""The 22 tools of the mai contract: input schemas, output schemas, annotations, groups, and roles."""
+"""The 22 tools of the mai contract: input schemas, output schemas, annotations, groups, and roles.
+
+The bridge "mai mcp" answers the tools login and logout itself. Each other tool
+has the optional argument "session": the handle that login gave. The bridge
+sends the call with the lease of that handle.
+"""
 
 ALL = "all"
 WORK_ROLES = ("worker", "supervisor", "reviewer")
@@ -13,7 +18,17 @@ ADDRESS = {
 REF = {"type": "string", "pattern": r"^ref-[0-9a-f]{16}$"}
 THREAD_REF = {"type": "string", "pattern": r"^thr-[0-9a-f]{16}$"}
 ITEM_REF = {"type": "string", "pattern": r"^itm-[a-zA-Z2-7]{12}$"}
-SESSION = {"type": "string", "pattern": r"^ses-[a-z2-7A-Z]{26}$"}
+SESSION = {"type": "string", "pattern": r"^ses-[a-z2-7]{16}$"}
+SESSION_ARG = dict(
+    SESSION,
+    description="The handle that login gave. With no handle, the call uses the pool session of the app.",
+)
+SESSION_NAME = {
+    "type": "string",
+    "description": "The label or the login of a session of your agent, for example lane-a or cursor.lane-a.",
+}
+# The tools that only the bridge answers. The server gives BRIDGE_ONLY for them.
+BRIDGE_TOOLS = ("login", "logout")
 KIND = {"type": "string", "enum": ["request", "reply", "status", "notice", "signal"]}
 PRIORITY = {"type": "string", "enum": ["low", "normal", "high"]}
 STATUS = {"type": "string", "enum": ["unread", "notified", "seen", "done"]}
@@ -107,6 +122,11 @@ def tool(
     if group in ("work", "supervision"):
         # The board tools keep the inputs of the board contract; extra fields go to the board module to check.
         inputs = dict(inputs, additionalProperties=True)
+    if name not in BRIDGE_TOOLS:
+        props = inputs.get("properties")
+        properties = dict(props) if isinstance(props, dict) else {}
+        properties["session"] = SESSION_ARG
+        inputs = {**inputs, "properties": properties}
     return {
         "name": name,
         "description": description,
@@ -120,16 +140,35 @@ def tool(
 
 TOOLS = [
     tool(
-        "logout",
-        "End the lease of this app. The next tool call gets LEASE_UNKNOWN.",
+        "login",
+        "Log in to a named session of your agent. Give the handle of the result as session in each tool call.",
         "session",
         ALL,
-        obj(),
-        out({"ended": {"type": "boolean"}}, ["ended"]),
+        obj({"session": SESSION_NAME}, ["session"]),
+        out(
+            {
+                "session": SESSION,
+                "login": {"type": "string"},
+                "agent": {"type": "string"},
+            },
+            ["session", "login", "agent"],
+        ),
+        idempotent=True,
+    ),
+    tool(
+        "logout",
+        "End the lease of the handle that login gave.",
+        "session",
+        ALL,
+        obj(
+            {"session": dict(SESSION, description="The handle that login gave.")},
+            ["session"],
+        ),
+        out({"session": SESSION, "ended": {"type": "boolean"}}),
     ),
     tool(
         "whoami",
-        "Show the session of the lease of this app.",
+        "Show the session of this call, its agent, and its roles.",
         "session",
         ALL,
         obj(),

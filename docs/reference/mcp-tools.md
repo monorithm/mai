@@ -1,10 +1,24 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `2.1.0`.
+The server name is `mai`. The contract version is `3.1.0`.
 
-Before a login, `tools/list` gives only `login` and `whoami`. On stdio, the
-server sends `notifications/tools/list_changed` after a login. On HTTP,
-`tools/list` gives all 22 tools.
+On HTTP, `tools/list` gives all 22 tools. For each tool call, the lease token
+of the bridge `mai mcp` is necessary as the bearer token.
+
+## Sessions
+
+1. A tool call with no `session` argument uses the pool session of the bridge,
+   for example `cursor.s1`.
+2. The tool `login` takes the label or the login of a named session of the
+   agent of the bridge, for example `lane-a`. The bridge gets a lease on that
+   session and gives a handle, for example `ses-abcdefghijklmnop`.
+3. Each other tool has the optional argument `session`. With a handle, the
+   bridge sends the call with the lease of that handle. The server removes the
+   argument before the tool runs.
+4. The tool `logout` takes a handle and ends its lease.
+
+The bridge answers `login` and `logout` itself. A call of these tools that
+comes to the server gives the error `BRIDGE_ONLY`.
 
 ## Resources
 
@@ -41,7 +55,7 @@ command `mai agent add` adds an agent. The code of the server has no list of age
 | `ref` | `ref-` and 16 hex digits | `ref-3f9a0c1d2b4e5f60` |
 | `thread_ref` | `thr-` and 16 hex digits | `thr-a1b2c3d4e5f60718` |
 | `item_ref` | `itm-` and 12 base32 characters | `itm-k3q9x2m7p4ta` |
-| `session` | A session handle: `ses-` and 26 base32 characters | `ses-...` |
+| `session` | A handle of the bridge: `ses-` and 16 base32 characters (`a` to `z`, `2` to `7`) | `ses-abcdefghijklmnop` |
 | `kind` | `request`, `reply`, `status`, `notice`, `signal` | `request` |
 | `priority` | `low`, `normal`, `high` | `normal` |
 | `status` | `unread`, `notified`, `seen`, `done` | `seen` |
@@ -58,7 +72,11 @@ has the error).
 | `LOGIN_FAILED` | The credential is not correct. |
 | `CREDENTIAL_EXPIRED` | The credential is expired. |
 | `CREDENTIAL_REVOKED` | The credential is revoked. |
-| `SESSION_UNKNOWN` | The session handle is not known. |
+| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. |
+| `SESSION_BUSY` | A different lease holds the named session. |
+| `SESSION_REVOKED` | The owner revoked the named session. |
+| `BAD_LABEL` | The label is not correct. |
+| `BRIDGE_ONLY` | A call of `login` or `logout` came to the server, not to the bridge. |
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
 | `FORBIDDEN_ROLE` | The roles of the session do not let the session use the tool. |
 | `RECIPIENT_UNKNOWN` | The address is not known. |

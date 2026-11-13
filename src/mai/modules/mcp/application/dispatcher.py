@@ -229,24 +229,18 @@ class Dispatcher:
             raise ToolError("INVALID_ARGUMENT", path="arguments")
         validate(spec["inputSchema"], args)
         check_one_of(name, args)
-        handle = conn.handle if conn is not None else None
+        if name not in schemas.BRIDGE_TOOLS:
+            # The bridge selects the lease of the call from the handle in "session". The tool
+            # never gets the argument: the lease of the call gives the session.
+            args = {key: value for key, value in args.items() if key != "session"}
         state = None
         if transport == "http":
             state = await self._lease_state(headers)
-        elif handle is None:
-            if name != "whoami":
-                raise ToolError(
-                    "NOT_LOGGED_IN" if transport == "stdio" else "SESSION_UNKNOWN",
-                    path="session",
-                )
-        else:
-            try:
-                state = await self._resolver(handle)
-            except ToolError:
-                if name != "whoami":
-                    raise
-                if conn is not None and handle == conn.handle:
-                    conn.handle = None
+        if name in schemas.BRIDGE_TOOLS:
+            # The bridge "mai mcp" answers login and logout. This call did not go through it.
+            raise ToolError("BRIDGE_ONLY")
+        if transport != "http":
+            state = await self._stdio_call_state(name, conn)
         if state is not None and not schemas.allowed(spec, getattr(state, "roles", {})):
             raise ToolError("FORBIDDEN_ROLE")
         func = self._registry.get(name)
@@ -257,10 +251,26 @@ class Dispatcher:
             result = await result
         if not isinstance(result, dict):
             raise ToolError("INTERNAL")
-        if conn is not None and name == "logout" and handle == conn.handle:
-            conn.handle = None
-            _list_changed(conn)
         return result
+
+    async def _stdio_call_state(self, name: str, conn: McpConnection | None) -> object:
+        """The session state of a stdio call from the handle of the connection.
+
+        Only whoami runs with no session.
+        """
+        handle = conn.handle if conn is not None else None
+        if handle is None:
+            if name != "whoami":
+                raise ToolError("NOT_LOGGED_IN", path="session")
+            return None
+        try:
+            return await self._resolver(handle)
+        except ToolError:
+            if name != "whoami":
+                raise
+            if conn is not None and handle == conn.handle:
+                conn.handle = None
+            return None
 
     async def _lease_state(self, headers: Mapping[str, str] | None) -> object:
         """The session state of the lease of the call. Raises LeaseRequired."""
@@ -271,8 +281,3 @@ class Dispatcher:
             return await self._lease_resolver(token)
         except Exception:  # noqa: BLE001 - each failure of the lease check gives LEASE_UNKNOWN
             raise LeaseRequired() from None
-
-
-def _list_changed(conn: McpConnection) -> None:
-    if conn.notify is not None:
-        conn.notify({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})

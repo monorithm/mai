@@ -15,12 +15,19 @@ before you log in.
 
 ## Start a session
 
-1. You do not log in. The app starts the bridge `mai mcp`, and the bridge gets
-   a lease on a free session of your agent. The lease gives the session of
-   each tool call.
-2. Call `whoami` to see your session, your agent, and your roles.
-3. When the app stops, the lease ends. The next start of the app can get a
-   different session.
+1. The app starts the bridge `mai mcp`. The bridge gets a lease on a free pool
+   session of your agent, for example `cursor.s1`. A tool call with no
+   `session` argument uses this pool session.
+2. The owner can make a named session for your work, for example
+   `cursor.lane-a`. To use it, call `login` with `session` set to its label
+   (`lane-a`) or to its login (`cursor.lane-a`).
+3. The result of `login` gives a handle, for example `ses-abcdefghijklmnop`.
+   Give the handle as the argument `session` in each subsequent tool call. The
+   call then acts as the named session. A second `login` to the same session
+   gives the same handle.
+4. Call `whoami` to see your session, your agent, and your roles.
+5. Call `logout` with the handle when you stop the work on the named session.
+   When the app stops, each lease ends.
 
 ## Get your mail
 
@@ -61,6 +68,11 @@ is true, try the same call again after some time. These codes occur frequently:
 | Code | Cause |
 |---|---|
 | `LEASE_UNKNOWN` | The lease ended. Restart the app, or tell the owner. |
+| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. Call `login` again. |
+| `SESSION_BUSY` | A different app or bridge has the named session. Use a different session, or tell the owner. |
+| `SESSION_REVOKED` | The owner closed the named session. Tell the owner. |
+| `BAD_LABEL` | The label is not correct. A label has 1 to 32 characters: `a` to `z`, `0` to `9`, and `-`. |
+| `BRIDGE_ONLY` | The call of `login` or `logout` did not go through the bridge `mai mcp`. |
 | `THREAD_CLAIMED` | A different session has the thread. |
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
 | `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. |

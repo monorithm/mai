@@ -4,15 +4,13 @@ from mai.modules.credentials import CredentialsModule
 from mai.platform.database import Database, DatabaseModule
 from mai.platform.mailserver import MailServerModule
 
-from .api.leases_controller import (
-    AgentLeasesController,
-    LeasesController,
-    SessionLeasesController,
-)
+from .api.leases_controller import AgentLeasesController, LeasesController
 from .api.session_tools import SessionTools
+from .api.sessions_controller import SessionsController
 from .application.lease_service import LeaseService
 from .application.log_in_command import LogInHandler
 from .application.log_out_command import LogOutHandler
+from .application.owner_sessions import OwnerSessions
 from .application.resolve_session_query import ResolveSessionHandler
 from .application.session_cache import SessionCache
 from .application.session_service import SessionService
@@ -31,15 +29,17 @@ def _handle_store(database: Database) -> HandleStore:
     return InMemoryHandleStore()
 
 
-# The module keeps the MCP session handles. DATABASE_BACKEND selects the
-# adapter of the handle store. The migrations run in app_migrate.
+# The module keeps the leases, the MCP session handles, and the owner API of
+# the sessions. DATABASE_BACKEND selects the adapter of the handle store. The
+# migrations run in app_migrate.
 @Module(
     imports=[DatabaseModule, MailServerModule, CredentialsModule],
-    controllers=[LeasesController, SessionLeasesController, AgentLeasesController],
+    controllers=[LeasesController, SessionsController, AgentLeasesController],
     providers=[
         ClassProvider(provide=LeaseStore, use_class=InMemoryLeaseStore),
         ClassProvider(provide=NewMailCounter, use_class=ImapNewMailCounter),
         LeaseService,
+        OwnerSessions,
         FactoryProvider(
             provide=HandleStore, use_factory=_handle_store, inject=(Database,)
         ),
@@ -50,7 +50,7 @@ def _handle_store(database: Database) -> HandleStore:
         SessionService,
         SessionTools,
     ],
-    exports=[SessionService, SessionTools, LeaseService],
+    exports=[SessionService, SessionTools, LeaseService, OwnerSessions],
 )
 class SessionsModule:
     pass

@@ -63,7 +63,7 @@ def test_get_and_delete_are_405(client):
 
 def test_post_lists_tools(client):
     r = post(client, LIST)
-    assert r.status_code == 200 and len(r.json()["result"]["tools"]) == 21
+    assert r.status_code == 200 and len(r.json()["result"]["tools"]) == 22
     assert r.headers["cache-control"] == "no-store"
 
 
