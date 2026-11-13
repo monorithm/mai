@@ -144,13 +144,20 @@ def with_error(outputs):
     """OUTPUTS that also accept the structured content of a tool error.
 
     The required fields of a result become one of two alternatives: the
-    fields of a successful result, or the field error.
+    fields of a successful result, or the field error. Each alternative also
+    has the properties of its required fields. A validator in strict mode, for
+    example ajv with strict true, refuses a required field that is not in the
+    properties of the same schema object.
     """
     schema = {k: v for k, v in outputs.items() if k != "required"}
-    schema["properties"] = dict(outputs.get("properties", {}), error=TOOL_ERROR)
+    props = dict(outputs.get("properties", {}), error=TOOL_ERROR)
+    schema["properties"] = props
     required = outputs.get("required")
     if required:
-        schema["anyOf"] = [{"required": list(required)}, {"required": ["error"]}]
+        schema["anyOf"] = [
+            {"properties": {k: props[k] for k in required}, "required": list(required)},
+            {"properties": {"error": TOOL_ERROR}, "required": ["error"]},
+        ]
     return schema
 
 

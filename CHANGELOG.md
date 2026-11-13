@@ -121,6 +121,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the validator of the server used the Python rule for `$`, which also matches
   before a line break at the end. A strict MCP client uses the ECMA-262 rule,
   and it refused such a value.
+- Each output schema compiles in the strict mode of ajv. In 3.1.1, each
+  alternative of the 12 output schemas with the keyword `required` had only
+  `required`, and the properties were only in the parent schema. Ajv with
+  `strict: true` refused these schemas. Thus an MCP client with such a
+  validator could not list the tools. With this change, each alternative
+  also has the properties of the fields in its keyword `required`. The
+  schemas accept and refuse the same results as before.
 
 ## [3.1.1] - 2026-11-13
 

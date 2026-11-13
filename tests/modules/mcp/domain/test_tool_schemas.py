@@ -31,9 +31,10 @@ def test_login_takes_a_name_and_each_other_tool_an_optional_session():
     assert login["required"] == ["session"]
     assert login["properties"]["session"]["type"] == "string"
     assert login["additionalProperties"] is False
-    assert schemas.BY_NAME["login"]["outputSchema"]["anyOf"] == [
-        {"required": ["session", "login", "agent"]},
-        {"required": ["error"]},
+    branches = schemas.BY_NAME["login"]["outputSchema"]["anyOf"]
+    assert [b["required"] for b in branches] == [
+        ["session", "login", "agent"],
+        ["error"],
     ]
     logout = schemas.BY_NAME["logout"]["inputSchema"]
     assert logout["required"] == ["session"]
