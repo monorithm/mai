@@ -188,10 +188,13 @@ func isRefusedKey(err error) bool {
 }
 
 // leaseErrorText gives the text of a failed lease request for a log line. For BAD_KEY of the
-// server, the text gives the step.
+// server and for an agent key that the key file does not have, the text gives the steps.
 func leaseErrorText(agent string, err error) string {
-	if isRefusedKey(err) {
+	switch {
+	case isRefusedKey(err):
 		return "BAD_KEY: " + refusedKeyMessage(agent)
+	case errors.Is(err, errNoKey):
+		return "BAD_KEY: " + noKeyMessage(agent)
 	}
 	return err.Error()
 }

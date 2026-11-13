@@ -305,6 +305,7 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 		return nil
 	case l.handle == "" && isBadKey(err):
 		b.writeError(id, -32001, stopText(b.Agent, err))
+		b.logf("stop: %s", leaseErrorText(b.Agent, err))
 		return errStop
 	case l.handle != "" && isRefusal(err):
 		b.drop(l, err)
