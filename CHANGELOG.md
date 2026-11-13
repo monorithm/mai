@@ -98,6 +98,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   handle of its login in each call, also in `reply` and `read_message`. A call
   with no `session` acts as the pool session, which does not have the mail of
   the named session. Thus such a call gives `UNKNOWN_MESSAGE`.
+- A summary of a mail with no `Date` header, a `Date` header that does not
+  parse, or no `From` address matches the output schema. The fields `date`
+  and `from` can be `null`. In 3.1.0, a strict client refused each
+  `list_inbox`, `read_message`, `read_thread`, and `wait_for_mail` result
+  with such a mail, for example a mail from `mai import-maildir`.
+- `claim_thread` finds a queue mail that arrived after the last command of the
+  session. A second select of the selected mailbox sends `NOOP`.
+  Thus Dovecot syncs the view of the session before the search. In 3.1.0,
+  the first `claim_thread` gave `UNKNOWN_MESSAGE`, and only a second call
+  found the mail.
 
 ## [3.1.0] - 2026-11-13
 

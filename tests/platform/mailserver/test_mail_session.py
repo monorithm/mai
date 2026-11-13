@@ -217,6 +217,8 @@ class FakeImap(socketserver.StreamRequestHandler):
                 done = self.rfile.readline()
                 assert done.strip().upper() == b"DONE"
                 self.w(f"{tag} OK idle done")
+            elif cmd == "NOOP":
+                self.w(f"{tag} OK noop done")
             elif cmd == "LOGOUT":
                 self.w("* BYE bye")
                 self.w(f"{tag} OK bye")
@@ -333,6 +335,9 @@ class _ReadOnlyImap:
         if not readonly:
             raise imaplib.IMAP4.readonly(f"{mailbox} is not writable")
         return "OK", [b"3"]
+
+    def noop(self):
+        return "OK", [b""]
 
 
 def test_a_read_only_mailbox_opens_read_only_and_is_not_a_lost_connection():
@@ -513,3 +518,30 @@ def test_a_552_reply_to_the_data_gives_body_too_large_and_no_second_send(fake_sm
     assert len(server.connections) == 1
     assert server.accepted == []
     session.close()
+
+
+class RecordingImap:
+    """An IMAP connection that records the commands of the session."""
+
+    def __init__(self):
+        self.calls = []
+
+    def select(self, mailbox, readonly=False):
+        self.calls.append(("select", mailbox))
+        return "OK", [b"1"]
+
+    def noop(self):
+        self.calls.append(("noop",))
+        return "OK", [b""]
+
+
+def test_a_select_of_the_selected_mailbox_syncs_the_view_with_noop():
+    # Dovecot gives a mail that arrived after the SELECT only at the next sync.
+    # Without the NOOP, a search of the selected queue does not find it.
+    session = MailSession("cursor.lane-a", "good", imap_port=1, smtp_port=1)
+    imap = RecordingImap()
+    # The fake has only the IMAP4 calls that _select makes.
+    conn = cast(imaplib.IMAP4, imap)
+    assert session._select(conn, "INBOX")
+    assert session._select(conn, "INBOX")
+    assert imap.calls == [("select", '"INBOX"'), ("noop",)]

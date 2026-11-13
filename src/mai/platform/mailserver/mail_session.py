@@ -209,6 +209,12 @@ class MailSession:
             readonly = True
         key = (mailbox, readonly)
         if self._selected == key:
+            # Dovecot gives a change of a different process, for example a
+            # new mail in the queue, to this view only at the next sync.
+            typ, _ = imap.noop()
+            if typ != "OK":
+                self._selected = None
+                return False
             return True
         try:
             typ, _ = imap.select(_quote(mailbox), readonly=readonly)
