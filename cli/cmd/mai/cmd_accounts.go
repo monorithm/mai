@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -26,8 +30,8 @@ func init() {
 	register("agent", "Add, list, rotate, or remove an agent account", func(args []string) int {
 		return runAgent(args, os.Stdout, os.Stderr)
 	})
-	register("session", "List the sessions and their leases, or end the lease of a session", func(args []string) int {
-		return runSession(args, os.Stdout, os.Stderr)
+	register("session", "Make, list, rotate, revoke, or end the named sessions of an agent", func(args []string) int {
+		return runSession(args, os.Stdin, os.Stdout, os.Stderr)
 	})
 	register("approvals", "Show the approved and refused leases of the last 30 days", func(args []string) int {
 		return runApprovals(args, os.Stdout, os.Stderr)
@@ -138,52 +142,225 @@ func runAgent(args []string, out, errOut io.Writer) int {
 	return 2
 }
 
-func runSession(args []string, out, errOut io.Writer) int {
-	const use = "usage: mai session list | end LOGIN"
-	if len(args) == 0 || (args[0] == "list" && len(args) != 1) || (args[0] == "end" && len(args) != 2) {
-		fmt.Fprintln(errOut, use)
+// sessionUse is the usage text of mai session.
+const sessionUse = `usage: mai session new AGENT --label LABEL
+       mai session new AGENT --count N
+       mai session list [--agent AGENT] [--json]
+       mai session rotate LOGIN
+       mai session revoke LOGIN [--yes]
+       mai session end LOGIN`
+
+// labelRule is the rule of a session label on the server: AGENT.LABEL is the login.
+var labelRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// parseAll parses the flags of fs before, between, and after the other arguments, and
+// returns the other arguments in sequence.
+func parseAll(fs *flag.FlagSet, args []string) ([]string, error) {
+	var rest []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return rest, nil
+		}
+		rest = append(rest, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// sessionLogin gives the login of a session argument. As in 2.x, the command accepts the
+// address of the session, for example cursor.lane-a@mai.internal.
+func sessionLogin(arg string) string {
+	login, _, _ := strings.Cut(arg, "@")
+	return login
+}
+
+func runSession(args []string, in io.Reader, out, errOut io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(errOut, sessionUse)
 		return 2
+	}
+	sub, rest := args[0], args[1:]
+	fs := flag.NewFlagSet("session "+sub, flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	var (
+		label, agent string
+		count        int
+		asJSON, yes  bool
+	)
+	switch sub {
+	case "new":
+		fs.StringVar(&label, "label", "", "make the named session AGENT.`LABEL`")
+		fs.IntVar(&count, "count", 0, "make the sessions AGENT.s1 to AGENT.s`N` that do not exist")
+	case "list":
+		fs.StringVar(&agent, "agent", "", "show only the sessions of the agent `NAME`")
+		fs.BoolVar(&asJSON, "json", false, "show the sessions as JSON")
+	case "revoke":
+		fs.BoolVar(&yes, "yes", false, "agree with no typed word, for a script")
+	case "rotate", "end":
+	default:
+		fmt.Fprintln(errOut, sessionUse)
+		return 2
+	}
+	pos, err := parseAll(fs, rest)
+	if err != nil {
+		fmt.Fprintln(errOut, sessionUse)
+		return 2
+	}
+	want := 1
+	if sub == "list" {
+		want = 0
+	}
+	if len(pos) != want {
+		fmt.Fprintln(errOut, sessionUse)
+		return 2
+	}
+	if sub == "new" {
+		if (label == "") == (count == 0) {
+			fmt.Fprintln(errOut, "mai session new: give --label LABEL or --count N")
+			fmt.Fprintln(errOut, sessionUse)
+			return 2
+		}
+		if label != "" && !labelRule.MatchString(label) {
+			fmt.Fprintf(errOut, "mai session new: the label %q does not agree with the rule [a-z0-9][a-z0-9-]{0,31}\n", label)
+			return 2
+		}
+		if label == "" && count < 1 {
+			fmt.Fprintln(errOut, "mai session new: --count must be 1 or more")
+			return 2
+		}
 	}
 	c, _, _, err := ownerClient()
 	if err != nil {
 		return fail(errOut, err)
 	}
 	ctx := context.Background()
-	switch args[0] {
+	switch sub {
+	case "new":
+		return sessionNew(ctx, c, pos[0], label, count, out, errOut)
 	case "list":
-		sessions, err := c.ListSessions(ctx)
-		if err != nil {
+		return sessionList(ctx, c, agent, asJSON, out, errOut)
+	case "rotate":
+		login := sessionLogin(pos[0])
+		if _, err := c.RotateSession(ctx, login); err != nil {
 			return fail(errOut, err)
 		}
-		leases, err := c.ListLeases(ctx)
-		if err != nil {
+		fmt.Fprintln(out, login)
+		return 0
+	case "revoke":
+		login := sessionLogin(pos[0])
+		if !yes {
+			fmt.Fprintf(out, "The revoke of the session %s is permanent. Its lease ends, and no chat can log in to it again.\n", login)
+		}
+		if !confirmWord(in, out, "revoke", yes) {
+			fmt.Fprintln(errOut, "mai session revoke: stopped. The session did not change.")
+			return 1
+		}
+		if _, err := c.RevokeSession(ctx, login); err != nil {
 			return fail(errOut, err)
 		}
-		bySession := map[string]api.Lease{}
-		for _, l := range leases {
-			bySession[l.Session] = l
-		}
-		w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "LOGIN\tAGENT\tLEASED\tAPP\tFOLDER\tPID\tLAST SEEN")
-		for _, s := range sessions {
-			l, ok := bySession[s.Login]
-			if !ok {
-				fmt.Fprintf(w, "%s\t%s\t%s\t-\t-\t-\t-\n", s.Login, s.Agent, yesNo(s.Leased))
-				continue
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", s.Login, s.Agent, yesNo(s.Leased), l.App, l.Folder, l.PID, l.LastSeenAt)
-		}
-		_ = w.Flush()
+		fmt.Fprintln(out, login)
 		return 0
 	case "end":
-		if err := c.EndSession(ctx, args[1]); err != nil {
+		login := sessionLogin(pos[0])
+		if err := c.EndSession(ctx, login); err != nil {
 			return fail(errOut, err)
 		}
-		fmt.Fprintln(out, args[1])
+		fmt.Fprintln(out, login)
 		return 0
 	}
-	fmt.Fprintln(errOut, use)
+	fmt.Fprintln(errOut, sessionUse)
 	return 2
+}
+
+// sessionNew makes one named session, or the pool sessions AGENT.s1 to AGENT.sN, and prints
+// only the login of each new session.
+func sessionNew(ctx context.Context, c *api.Client, agent, label string, count int, out, errOut io.Writer) int {
+	if label != "" {
+		s, err := c.NewSession(ctx, agent, label)
+		if err != nil {
+			return fail(errOut, sessionHint(err, agent))
+		}
+		fmt.Fprintln(out, s.Login)
+		return 0
+	}
+	made, err := c.NewSessions(ctx, agent, count)
+	if err != nil {
+		return fail(errOut, sessionHint(err, agent))
+	}
+	if len(made) == 0 {
+		fmt.Fprintf(errOut, "mai session new: the sessions %s.s1 to %s.s%d exist. No session is new.\n", agent, agent, count)
+		return 0
+	}
+	for _, s := range made {
+		fmt.Fprintln(out, s.Login)
+	}
+	return 0
+}
+
+// sessionHint adds the next step to an error of the server.
+func sessionHint(err error, agent string) error {
+	if api.Code(err) == "AGENT_UNKNOWN" {
+		return fmt.Errorf("%w; run mai agent add %s first", err, agent)
+	}
+	return err
+}
+
+func sessionList(ctx context.Context, c *api.Client, agent string, asJSON bool, out, errOut io.Writer) int {
+	all, err := c.ListSessions(ctx)
+	if err != nil {
+		return fail(errOut, err)
+	}
+	sessions := make([]api.Session, 0, len(all))
+	for _, s := range all {
+		if agent == "" || s.Agent == agent {
+			sessions = append(sessions, s)
+		}
+	}
+	if asJSON {
+		b, err := json.MarshalIndent(sessions, "", "  ")
+		if err != nil {
+			return fail(errOut, err)
+		}
+		fmt.Fprintln(out, string(b))
+		return 0
+	}
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "LOGIN\tAGENT\tLABEL\tSTATE\tLEASED\tAPP\tFOLDER\tPID\tLAST SEEN")
+	for _, s := range sessions {
+		app, folder, pid, seen := "-", "-", "-", "-"
+		if s.Leased {
+			app, folder, pid, seen = dash(s.App), dash(s.Folder), strconv.Itoa(s.PID), dash(s.LastSeenAt)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			s.Login, s.Agent, dash(s.Label), dash(s.Status), yesNo(s.Leased), app, folder, pid, seen)
+	}
+	_ = w.Flush()
+	return 0
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// confirmWord wants the typed word, unless yes is true.
+func confirmWord(in io.Reader, out io.Writer, word string, yes bool) bool {
+	if yes {
+		return true
+	}
+	if in == nil {
+		return false
+	}
+	fmt.Fprintf(out, "Type %s to agree: ", word)
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	return strings.TrimSpace(line) == word
 }
 
 func yesNo(b bool) string {
