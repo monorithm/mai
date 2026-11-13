@@ -1,6 +1,6 @@
 // Package api is the client of the owner HTTP API of the mai server. It reads the
-// configuration file of the CLI and the owner key from the keychain. It never prints or logs
-// a key.
+// configuration file of the CLI and the owner key from the key file. It never prints or
+// logs a key.
 package api
 
 import (
@@ -23,7 +23,6 @@ type Config struct {
 	Port     int    `json:"port"`
 	Image    string `json:"image"`
 	DataDir  string `json:"data_dir"`
-	Approval string `json:"approval"`
 }
 
 // DefaultConfig returns the configuration with each default value.
@@ -33,7 +32,6 @@ func DefaultConfig() Config {
 		Port:     8765,
 		Image:    "ghcr.io/monorithm/mai:" + version.Version,
 		DataDir:  "",
-		Approval: "each-bridge",
 	}
 }
 
@@ -62,9 +60,6 @@ func LoadConfig(dir string) (Config, error) {
 	}
 	if f.DataDir != "" {
 		c.DataDir = f.DataDir
-	}
-	if f.Approval != "" {
-		c.Approval = f.Approval
 	}
 	return c, nil
 }

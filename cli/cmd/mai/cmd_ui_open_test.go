@@ -1,5 +1,3 @@
-//go:build presencefake
-
 package main
 
 import (
@@ -8,7 +6,6 @@ import (
 	"testing"
 )
 
-// This test needs the fake presence check: go test -tags presencefake ./...
 func TestUIOpenUsesTicketAndNeverPrintsIt(t *testing.T) {
 	f, _, _ := testEnv(t)
 	var opened string
@@ -31,10 +28,5 @@ func TestUIOpenUsesTicketAndNeverPrintsIt(t *testing.T) {
 	}
 	if strings.Contains(out.String()+errOut.String(), "secretticket") {
 		t.Fatal("the CLI printed the ticket")
-	}
-	t.Setenv("MAI_TEST_PRESENCE", "refuse")
-	opened = ""
-	if code := runUI([]string{"open"}, &out, &errOut); code != 1 || opened != "" {
-		t.Fatalf("open after a refusal: %d %q", code, opened)
 	}
 }

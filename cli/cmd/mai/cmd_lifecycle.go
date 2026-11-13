@@ -24,9 +24,9 @@ import (
 	"github.com/monorithm/mai/cli/v3/internal/config"
 	"github.com/monorithm/mai/cli/v3/internal/engine"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
-	"github.com/monorithm/mai/cli/v3/internal/presence"
 	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
@@ -38,13 +38,12 @@ func init() {
 	register("status", "Show the health, the versions, the engine, the data, and the port", runStatus)
 	register("logs", "Show the log of the container", runLogs)
 	register("exec", "Run the server CLI in the container, for recovery", runExec)
-	register("upgrade", "Get the image of this CLI version and make the container again", runUpgrade)
-	register("doctor", "Examine the engine, the port, the disk, the keychain, and the presence check", runDoctor)
+	register("upgrade", "Get the image of this CLI version, make the container again, and move the keys from the keychain", runUpgrade)
+	register("doctor", "Examine the engine, the port, the disk, the key file, and the legacy keychain items", runDoctor)
 }
 
 // Seams for the tests.
 var (
-	lcOwnerStore              = keychain.System
 	lcOut           io.Writer = os.Stdout
 	lcErr           io.Writer = os.Stderr
 	lcHealthWait              = engine.StartWait
@@ -156,26 +155,26 @@ func lcNewOwnerKey() (string, error) {
 	return "mai1:owner:" + secret, nil
 }
 
-// setOwner keeps the owner key in the keychain and gives it to the server on stdin. The
-// server keeps only a hash.
-func (s *lcSession) setOwner(ctx context.Context, id string, m *manifest.Manifest) error {
-	store := lcOwnerStore()
-	account := keychain.OwnerAccount(s.cfg.Instance)
-	key, err := store.Get(keychain.Service, account)
+// setOwner keeps the owner key in the key file and gives it to the server on stdin. The
+// server keeps only a hash. A legacy keychain item of the owner key moves to the key file.
+func (s *lcSession) setOwner(ctx context.Context, id string) error {
+	kf, err := openKeys()
+	if err != nil {
+		return err
+	}
+	account := keys.OwnerAccount(s.cfg.Instance)
+	key, err := kf.Get(account)
 	made := false
-	if errors.Is(err, keychain.ErrNotFound) {
+	if errors.Is(err, keys.ErrNotFound) {
 		if key, err = lcNewOwnerKey(); err != nil {
 			return err
 		}
-		if err := store.Set(keychain.Service, account, key); err != nil {
-			return fmt.Errorf("keep the owner key in the keychain: %w", err)
+		if err := kf.Set(account, key); err != nil {
+			return fmt.Errorf("keep the owner key in the key file: %w", err)
 		}
 		made = true
 	} else if err != nil {
-		return fmt.Errorf("read the owner key from the keychain: %w", err)
-	}
-	if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
-		return err
+		return fmt.Errorf("read the owner key: %w", err)
 	}
 	code, err := s.eng.Exec(ctx, id, []string{"mai", "owner", "set-key"}, strings.NewReader(key+"\n"), io.Discard, lcErr)
 	switch {
@@ -184,7 +183,7 @@ func (s *lcSession) setOwner(ctx context.Context, id string, m *manifest.Manifes
 	case code == 0:
 		fmt.Fprintln(lcOut, "mai: the owner key is set")
 	case code == lcOwnerKeyExists && made:
-		fmt.Fprintln(lcErr, "mai: the server has a different owner key. To give it the key of the keychain, run: mai exec -- mai owner set-key --replace")
+		fmt.Fprintln(lcErr, "mai: the server has a different owner key. To give it the key of the key file, run: mai exec -- mai owner set-key --replace")
 	case code == lcOwnerKeyExists:
 	default:
 		return fmt.Errorf("mai owner set-key gave exit code %d", code)
@@ -320,7 +319,7 @@ func runStart(args []string) int {
 		return lcFail("%v", err)
 	}
 	if !*skipOwner {
-		if err := s.setOwner(ctx, id, m); err != nil {
+		if err := s.setOwner(ctx, id); err != nil {
 			return lcFail("%v", err)
 		}
 	}
@@ -445,7 +444,7 @@ func runStatus(args []string) int {
 		p("health", "not healthy. Run: mai logs")
 	}
 	if v.Version != "" {
-		if key, err := lcOwnerStore().Get(keychain.Service, keychain.OwnerAccount(s.cfg.Instance)); err == nil {
+		if key := lcOwnerKey(s.cfg.Instance); key != "" {
 			var ui struct {
 				Enabled bool `json:"enabled"`
 			}
@@ -458,6 +457,19 @@ func runStatus(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// lcOwnerKey gives the owner key of the instance, or "" when the key file has none.
+func lcOwnerKey(instance string) string {
+	kf, err := openKeys()
+	if err != nil {
+		return ""
+	}
+	key, err := kf.Get(keys.OwnerAccount(instance))
+	if err != nil {
+		return ""
+	}
+	return key
 }
 
 func runLogs(args []string) int {
@@ -498,9 +510,6 @@ func runExec(args []string) int {
 	rest := fs.Args()
 	if len(rest) == 0 {
 		return lcFail("usage: mai exec -- ARGS")
-	}
-	if err := presence.Check("mai exec runs a command as root in the mail server"); err != nil {
-		return lcFail("the presence check failed: %v", err)
 	}
 	s, err := lcOpen(o, true)
 	if err != nil {
@@ -545,6 +554,11 @@ func runUpgrade(args []string) int {
 	if err != nil {
 		return lcFail("read the manifest: %v", err)
 	}
+	// The move of the keys comes first, thus it also occurs when the image does not change.
+	exit := 0
+	if !lcMoveKeys(s.cfg.Instance, m) {
+		exit = 1
+	}
 	c, ok, err := s.owned(ctx)
 	if err != nil {
 		return lcFail("%v", err)
@@ -561,7 +575,7 @@ func runUpgrade(args []string) int {
 	if ok {
 		if c.Image == imageID {
 			fmt.Fprintf(lcOut, "mai: the container has the image %s\n", s.cfg.Image)
-			return 0
+			return exit
 		}
 		fmt.Fprintln(lcErr, "mai: stop the container")
 		if err := s.eng.Stop(ctx, c.ID); err != nil {
@@ -582,7 +596,7 @@ func runUpgrade(args []string) int {
 		return lcFail("%v", err)
 	}
 	if !*skipOwner {
-		if err := s.setOwner(ctx, id, m); err != nil {
+		if err := s.setOwner(ctx, id); err != nil {
 			return lcFail("%v", err)
 		}
 	}
@@ -594,11 +608,59 @@ func runUpgrade(args []string) int {
 		return lcFail("write the configuration: %v", err)
 	}
 	fmt.Fprintf(lcOut, "mai: the server runs %s\n", s.cfg.Image)
-	return 0
+	return exit
 }
 
-// lcDoctorKeychainService is the keychain service of the round trip of doctor.
-const lcDoctorKeychainService = "dev.mai.doctor"
+// lcRecordedKeys gives the account of each legacy keychain item in the manifest. mai 3.0
+// and 3.1 recorded each item that they wrote.
+func lcRecordedKeys(m *manifest.Manifest) []string {
+	var out []string
+	for _, it := range m.Of(manifest.KeychainKey) {
+		out = append(out, it.Name)
+	}
+	return out
+}
+
+// lcMoveKeys moves each key of the instance from the legacy keychain to the key file, and
+// removes each legacy item whose account the key file has. It removes the record of each
+// legacy item that is gone from the manifest. It gives false when a key did not move.
+func lcMoveKeys(instance string, m *manifest.Manifest) bool {
+	kf, err := openKeys()
+	if err != nil {
+		fmt.Fprintf(lcErr, "mai: the key file: %v\n", err)
+		return false
+	}
+	if !kf.HasLegacy() {
+		return true
+	}
+	candidates, err := kf.Candidates(instance, lcRecordedKeys(m))
+	if err != nil {
+		fmt.Fprintf(lcErr, "mai: the key file: %v\n", err)
+		return false
+	}
+	r, err := kf.MoveAll(candidates)
+	if len(r.Moved) > 0 {
+		fmt.Fprintf(lcOut, "mai: moved %d key(s) from the keychain to the key file %s: %s\n",
+			len(r.Moved), kf.Path(), strings.Join(r.Moved, ", "))
+	}
+	if len(r.Cleaned) > 0 {
+		fmt.Fprintf(lcOut, "mai: removed %d old keychain item(s), because the key file has a newer key: %s\n",
+			len(r.Cleaned), strings.Join(r.Cleaned, ", "))
+	}
+	for _, it := range m.Of(manifest.KeychainKey) {
+		if keys.InstanceOf(it.Name) != instance {
+			continue
+		}
+		if has, herr := kf.HasLegacyItem(it.Name); herr == nil && !has {
+			_ = m.Remove(it)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run mai upgrade again.\n", err)
+		return false
+	}
+	return true
+}
 
 func runDoctor(args []string) int {
 	fs := lcFlags("doctor")
@@ -648,17 +710,7 @@ func runDoctor(args []string) int {
 			ok("disk", fmt.Sprintf("%d GB free", free>>30))
 		}
 	}
-	if err := lcKeychainRoundTrip(keychain.System()); err != nil {
-		bad("keychain", err.Error(), lcKeychainStep(g))
-	} else {
-		ok("keychain", "set, get, and delete of a test item succeeded")
-	}
-	// Available asks the OS without a prompt. Doctor never shows a Touch ID or password prompt.
-	if presence.Available() {
-		ok("presence", "the presence check is available")
-	} else {
-		bad("presence", "this system or build has no presence check", "on Linux, install the polkit action of the package; on Windows, 3.0.0 has no presence check")
-	}
+	lcDoctorKeys(s, ok, bad)
 	if problems > 0 {
 		fmt.Fprintf(lcOut, "%d problem(s)\n", problems)
 		return 1
@@ -672,36 +724,55 @@ func (s *lcSession) portIsMai(ctx context.Context) bool {
 	return err == nil && ok && c.State != nil && c.State.Running
 }
 
-func lcKeychainRoundTrip(st keychain.Store) error {
-	val, err := lcNewOwnerKey()
+// lcDoctorKeys examines the key file and the legacy keychain items of the instance. It reads
+// no key, and macOS shows no prompt.
+func lcDoctorKeys(s *lcSession, ok func(k, v string), bad func(k, v, step string)) {
+	inst := s.cfg.Instance
+	kf, err := openKeys()
 	if err != nil {
-		return err
+		bad("keys", err.Error(), "make sure that the home folder of the user exists")
+		return
 	}
-	account := "doctor-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	if err := st.Set(lcDoctorKeychainService, account, val); err != nil {
-		return fmt.Errorf("set: %w", err)
+	var me *keys.ModeError
+	switch err := kf.Check(); {
+	case errors.As(err, &me):
+		bad("keys", err.Error(), fmt.Sprintf("run: chmod 600 %q", me.Path))
+		return
+	case err != nil:
+		bad("keys", err.Error(), "correct the key file "+kf.Path()+", or move it to a different folder")
+		return
 	}
-	got, err := st.Get(lcDoctorKeychainService, account)
-	derr := st.Delete(lcDoctorKeychainService, account)
+	mine, err := kf.OfInstance(inst)
 	if err != nil {
-		return fmt.Errorf("get: %w", err)
+		bad("keys", err.Error(), "correct the key file "+kf.Path())
+		return
 	}
-	if got != val {
-		return errors.New("get gave a different value")
+	ok("keys", fmt.Sprintf("%s holds %d key(s) of the instance %s", kf.Path(), len(mine), inst))
+	if !kf.HasLegacy() {
+		ok("legacy", "MAI_HOME is set, thus the CLI uses no keychain item")
+		return
 	}
-	if derr != nil {
-		return fmt.Errorf("delete: %w", derr)
+	m, err := s.manifest()
+	if err != nil {
+		bad("legacy", "read the manifest: "+err.Error(), "correct the manifest in "+s.dirs.State)
+		return
 	}
-	return nil
-}
-
-func lcKeychainStep(goos string) string {
-	switch goos {
-	case "linux":
-		return "start a Secret Service (for example gnome-keyring), then run mai doctor again"
-	case "windows":
-		return "make sure that the Credential Manager service runs"
+	candidates, err := kf.Candidates(inst, lcRecordedKeys(m))
+	if err != nil {
+		bad("legacy", err.Error(), "correct the key file "+kf.Path())
+		return
+	}
+	items, err := kf.LegacyItems(candidates)
+	switch {
+	case errors.Is(err, keychain.ErrUnavailable):
+		ok("legacy", "no keychain is available, thus it holds no key of mai")
+	case err != nil:
+		bad("legacy", "the examination of the keychain failed: "+err.Error(), "unlock the login keychain, then run mai doctor again")
+	case len(items) > 0:
+		bad("legacy", fmt.Sprintf("%d key(s) of the instance %s are in the keychain of mai 3.0 or 3.1 (service %s): %s",
+			len(items), inst, keychain.Service, strings.Join(items, ", ")),
+			"run: mai upgrade. It moves the keys to the key file and removes the keychain items")
 	default:
-		return "unlock the login keychain, then run mai doctor again"
+		ok("legacy", "the keychain holds no key of the instance "+inst)
 	}
 }

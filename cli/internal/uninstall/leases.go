@@ -8,18 +8,26 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 )
+
+// KeySource gives the key of an account. The key file of the CLI (keys.File) is one.
+type KeySource interface {
+	Get(account string) (string, error)
+}
 
 // EndLeases ends each lease of the server through the owner API. It never fails: it gives a
 // line of text that tells what it did. The bridges stop at their next call.
-func EndLeases(ctx context.Context, hc *http.Client, base string, kc keychain.Store, service, instance string) string {
+func EndLeases(ctx context.Context, hc *http.Client, base string, ks KeySource, instance string) string {
 	if hc == nil {
 		hc = &http.Client{Timeout: 3 * time.Second}
 	}
-	key, err := kc.Get(service, keychain.OwnerAccount(instance))
+	if ks == nil {
+		return "Leases: not ended (no key file)."
+	}
+	key, err := ks.Get(keys.OwnerAccount(instance))
 	if err != nil {
-		return "Leases: not ended (no owner key in the keychain)."
+		return "Leases: not ended (no owner key in the key file)."
 	}
 	do := func(method, path string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, method, base+path, nil)

@@ -102,7 +102,7 @@ func waitFor(t *testing.T, what string, check func() bool) {
 	t.Fatalf("no %s", what)
 }
 
-func TestTwoLoginsInOneBridgeGiveTwoHandlesAndOnePresenceCheck(t *testing.T) {
+func TestTwoLoginsInOneBridgeGiveTwoHandles(t *testing.T) {
 	h := startNamed(t)
 	a := h.login(t, 1, "lane-a")
 	b := h.login(t, 2, "cursor.lane-b")
@@ -114,12 +114,12 @@ func TestTwoLoginsInOneBridgeGiveTwoHandlesAndOnePresenceCheck(t *testing.T) {
 	if a["login"] != "cursor.lane-a" || b["login"] != "cursor.lane-b" || a["session"] == b["session"] {
 		t.Fatalf("login results = %v and %v", a, b)
 	}
-	if n := h.checks.Load(); n != 1 {
-		t.Fatalf("presence checks = %d, want 1", n)
-	}
 	h.stop(t)
 	h.srv.mu.Lock()
 	defer h.srv.mu.Unlock()
+	if n := h.keys.reads.Load(); n != 3 {
+		t.Fatalf("reads of the agent key = %d, want 3: one for each lease request", n)
+	}
 	if len(h.srv.leaseReqs) != 3 || h.srv.leaseReqs[1]["session"] != "lane-a" || h.srv.leaseReqs[2]["session"] != "cursor.lane-b" {
 		t.Fatalf("lease requests = %v", h.srv.leaseReqs)
 	}
@@ -358,7 +358,7 @@ func (h *harness) firstBeats(t *testing.T, sessions ...string) {
 	})
 }
 
-func TestANamedLeaseRenewsWithNoNewPresenceCheck(t *testing.T) {
+func TestANamedLeaseRenewsWithTheAgentKey(t *testing.T) {
 	h := newHarness(t, memoryWithKey())
 	h.srv.hbSeconds = 60
 	h.start(context.Background())
@@ -371,10 +371,10 @@ func TestANamedLeaseRenewsWithNoNewPresenceCheck(t *testing.T) {
 	if r := result(t, h.call(t, 3, "whoami", nil)); r["session"] == nil || r["session"] == "" {
 		t.Fatalf("the pool after the expiry = %v", r)
 	}
-	if n := h.checks.Load(); n != 1 {
-		t.Fatalf("presence checks = %d, want 1", n)
-	}
 	h.stop(t)
+	if n := h.keys.reads.Load(); n != 4 {
+		t.Fatalf("reads of the agent key = %d, want 4: one for each lease request", n)
+	}
 	h.srv.mu.Lock()
 	defer h.srv.mu.Unlock()
 	if len(h.srv.leaseReqs) != 4 || h.srv.leaseReqs[2]["session"] != "cursor.lane-a" {

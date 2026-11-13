@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 )
 
 const ownerKey = "mai1:owner:testsecret"
@@ -217,25 +217,27 @@ func asError(err error, target **Error) bool {
 func TestLoadConfigDefaultsAndFields(t *testing.T) {
 	dir := t.TempDir()
 	c, err := LoadConfig(dir)
-	if err != nil || c.Instance != "mai" || c.Port != 8765 || c.Approval != "each-bridge" {
+	if err != nil || c.Instance != "mai" || c.Port != 8765 {
 		t.Fatalf("defaults: %+v %v", c, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ConfigFile), []byte(`{"instance":"x","port":9000}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c, err = LoadConfig(dir)
-	if err != nil || c.Instance != "x" || c.Port != 9000 || c.Approval != "each-bridge" || c.BaseURL() != "http://127.0.0.1:9000" {
+	if err != nil || c.Instance != "x" || c.Port != 9000 || c.BaseURL() != "http://127.0.0.1:9000" {
 		t.Fatalf("fields: %+v %v", c, err)
 	}
 }
 
 func TestOpenReadsOwnerKey(t *testing.T) {
 	t.Setenv("MAI_HOME", t.TempDir())
-	store := keychain.NewMemory()
+	store := keys.Open(t.TempDir(), nil)
 	if _, _, err := Open(store); err != ErrNoOwnerKey {
 		t.Fatalf("no key: %v", err)
 	}
-	_ = store.Set(keychain.Service, keychain.OwnerAccount("mai"), ownerKey)
+	if err := store.Set(keys.OwnerAccount("mai"), ownerKey); err != nil {
+		t.Fatal(err)
+	}
 	c, cfg, err := Open(store)
 	if err != nil || cfg.Instance != "mai" || c.key != ownerKey || c.base != "http://127.0.0.1:8765" {
 		t.Fatalf("open: %+v %v", cfg, err)

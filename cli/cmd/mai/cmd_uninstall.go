@@ -12,7 +12,6 @@ import (
 
 	"github.com/moby/moby/client"
 
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 	"github.com/monorithm/mai/cli/v3/internal/uninstall"
 )
@@ -107,9 +106,14 @@ func runUninstall(args []string) int {
 		fmt.Fprintln(os.Stderr, "mai uninstall:", err)
 		return 1
 	}
+	kf, err := openKeys()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mai uninstall:", err)
+		return 1
+	}
 	u := &uninstall.Uninstaller{
 		Engine:   eng,
-		Keychain: keychain.System(),
+		Keys:     kf,
 		Dirs:     dirs,
 		Instance: *instance,
 		Yes:      *yes,

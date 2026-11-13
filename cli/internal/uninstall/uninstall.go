@@ -16,6 +16,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
@@ -62,8 +63,7 @@ func Failed(rs []Result) bool {
 // Uninstaller removes one instance and the files of the CLI.
 type Uninstaller struct {
 	Engine   Engine
-	Keychain keychain.Store
-	Service  string // keychain service; empty = keychain.Service
+	Keys     *keys.File // the key file, with the legacy keychain; nil = no key is removed
 	Dirs     paths.Dirs
 	Instance string // empty = the instance of config.json
 	Yes      bool
@@ -83,17 +83,12 @@ type Plan struct {
 	Images     []manifest.Item
 	AppEntries []manifest.Item
 	AppFiles   []manifest.Item // files of apps that mai connect made
-	Keys       []string
+	Keys       []string        // accounts of the instance in the key file
+	Legacy     []string        // accounts of the instance with a legacy keychain item
+	LegacyErr  error           // the error of the examination of the legacy keychain
 	Paths      []string
 	Manifest   *manifest.Manifest
 	Config     Config
-}
-
-func (u *Uninstaller) service() string {
-	if u.Service != "" {
-		return u.Service
-	}
-	return keychain.Service
 }
 
 func (u *Uninstaller) out() io.Writer {
@@ -146,10 +141,25 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	sort.SliceStable(p.AppEntries, func(i, j int) bool {
 		return p.AppEntries[i].Pointer != "/version" && p.AppEntries[j].Pointer == "/version"
 	})
-	for _, it := range man.Of(manifest.KeychainKey) {
-		p.Keys = appendNew(p.Keys, it.Name)
+	if u.Keys != nil {
+		inFile, err := u.Keys.OfInstance(inst)
+		if err != nil {
+			return nil, fmt.Errorf("read the key file: %w", err)
+		}
+		p.Keys = appendNew(p.Keys, keys.OwnerAccount(inst))
+		for _, a := range inFile {
+			p.Keys = appendNew(p.Keys, a)
+		}
+		var recorded []string
+		for _, it := range man.Of(manifest.KeychainKey) {
+			recorded = append(recorded, it.Name)
+		}
+		candidates, err := u.Keys.Candidates(inst, recorded)
+		if err != nil {
+			return nil, fmt.Errorf("read the key file: %w", err)
+		}
+		p.Legacy, p.LegacyErr = u.Keys.LegacyItems(candidates)
 	}
-	p.Keys = appendNew(p.Keys, keychain.OwnerAccount(inst))
 	// A file of an app can hold content of the user after mai connect made it, thus it does
 	// not go with the folders of mai.
 	p.AppFiles = man.Of(manifest.File)
@@ -189,7 +199,13 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 		fmt.Fprintf(w, "  app file   %s (only when it holds nothing else)\n", it.Path)
 	}
 	for _, k := range p.Keys {
-		fmt.Fprintf(w, "  keychain   %s / %s\n", keychain.ServiceOf(u.Keychain, u.service()), k)
+		fmt.Fprintf(w, "  key        %s (in %s)\n", k, u.Keys.Path())
+	}
+	for _, k := range p.Legacy {
+		fmt.Fprintf(w, "  keychain   %s / %s (an item of mai 3.0 or 3.1)\n", keychain.Service, k)
+	}
+	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+		fmt.Fprintf(w, "  keychain   %s: not examined: %v\n", keychain.Service, p.LegacyErr)
 	}
 	for _, f := range p.Paths {
 		fmt.Fprintf(w, "  folder     %s\n", f)
@@ -289,7 +305,11 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 		}
 		fmt.Fprintln(w, "Backup written to", u.Backup)
 	}
-	fmt.Fprintln(w, EndLeases(ctx, u.HTTP, u.baseURL(p), u.Keychain, u.service(), p.Instance))
+	var ks KeySource
+	if u.Keys != nil {
+		ks = u.Keys
+	}
+	fmt.Fprintln(w, EndLeases(ctx, u.HTTP, u.baseURL(p), ks, p.Instance))
 	rs := u.Remove(ctx, p)
 	rs = append(rs, u.Search(ctx, p.Instance)...)
 	if u.Binary != nil {
@@ -425,21 +445,26 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			rs = append(rs, Result{Item: item, State: Gone})
 		}
 	}
-	for _, k := range p.Keys {
-		err := u.Keychain.Delete(u.service(), k)
-		if errors.Is(err, keychain.ErrNotFound) {
-			err = nil
+	var keep []string
+	if u.Keys != nil {
+		var others []string
+		rs, others = u.removeKeys(rs, p)
+		if len(others) > 0 {
+			keep = []string{u.Keys.Path(), u.Keys.Path() + ".lock"}
+			fmt.Fprintf(u.out(), "The key file %s stays, because it holds the keys of the instances: %s\n",
+				u.Keys.Path(), strings.Join(others, ", "))
 		}
-		rs = append(rs, check("keychain "+k, err, func() (bool, error) {
-			_, e := u.Keychain.Get(u.service(), k)
-			if errors.Is(e, keychain.ErrNotFound) {
-				return false, nil
-			}
-			return e == nil, e
-		}))
 	}
 	for _, f := range p.Paths {
 		if f == "" {
+			continue
+		}
+		if len(keep) > 0 && within(f, keep[0]) {
+			if _, err := removeExcept(f, keep); err != nil {
+				rs = append(rs, Result{Item: "folder " + f, State: Failure, Detail: err.Error()})
+				continue
+			}
+			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: "only the key file with the keys of a different instance stays"})
 			continue
 		}
 		err := os.RemoveAll(f)
@@ -452,6 +477,93 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}))
 	}
 	return rs
+}
+
+// removeKeys removes the keys of the instance from the key file and the legacy keychain
+// items of the instance, and does a check of each one. It gives the instances whose keys stay
+// in the key file.
+func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
+	for _, k := range p.Keys {
+		err := u.Keys.Delete(k)
+		if errors.Is(err, keys.ErrNotFound) {
+			err = nil
+		}
+		rs = append(rs, check("key "+k, err, func() (bool, error) { return u.Keys.Has(k) }))
+	}
+	// A key that a different process wrote after the plan also goes.
+	extra, err := u.Keys.DeleteInstance(p.Instance)
+	if err != nil {
+		rs = append(rs, Result{Item: "keys of " + p.Instance + " in " + u.Keys.Path(), State: Failure, Detail: err.Error()})
+	}
+	for _, k := range extra {
+		rs = append(rs, Result{Item: "key " + k, State: Gone})
+	}
+	for _, k := range p.Legacy {
+		err := u.Keys.DeleteLegacy(k)
+		rs = append(rs, check("keychain "+keychain.Service+" / "+k, err, func() (bool, error) { return u.Keys.HasLegacyItem(k) }))
+	}
+	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+		rs = append(rs, Result{Item: "keychain " + keychain.Service, State: Skipped,
+			Detail: "the examination of the items of the instance failed: " + p.LegacyErr.Error()})
+	}
+	rest, err := u.Keys.Accounts()
+	if err != nil {
+		rs = append(rs, Result{Item: "key file " + u.Keys.Path(), State: Failure, Detail: err.Error()})
+		// The key file stays, because the uninstall cannot tell if it holds the keys of a
+		// different instance.
+		return rs, []string{"unknown"}
+	}
+	var others []string
+	for _, a := range rest {
+		others = appendNew(others, keys.InstanceOf(a))
+	}
+	sort.Strings(others)
+	return rs, others
+}
+
+// within tells if path is root or is in the folder root.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// removeExcept removes root and all that it holds, except each path of keep and the folders
+// that hold such a path. It gives true when a path of keep is in root.
+func removeExcept(root string, keep []string) (bool, error) {
+	holds := false
+	for _, k := range keep {
+		if filepath.Clean(k) == filepath.Clean(root) {
+			return true, nil
+		}
+		if within(root, k) {
+			holds = true
+		}
+	}
+	if !holds {
+		return false, os.RemoveAll(root)
+	}
+	fi, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !fi.IsDir() {
+		// A link is not the folder that holds the key file. Remove only the link.
+		return false, os.Remove(root)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return true, err
+	}
+	var errs []error
+	for _, e := range entries {
+		if _, err := removeExcept(filepath.Join(root, e.Name()), keep); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return true, errors.Join(errs...)
 }
 
 func (u *Uninstaller) removeImage(ctx context.Context, it manifest.Item, removed map[string]bool) Result {

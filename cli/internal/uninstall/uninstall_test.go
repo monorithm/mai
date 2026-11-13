@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
@@ -23,7 +24,8 @@ func managed(instance string) map[string]string {
 
 type env struct {
 	eng  *fakeEngine
-	kc   *keychain.Memory
+	kc   *keychain.Memory // the legacy keychain
+	keys *keys.File
 	dirs paths.Dirs
 	bin  string
 	app  string
@@ -46,6 +48,7 @@ func setup(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{eng: newFakeEngine(), kc: keychain.NewMemory(), dirs: dirs}
+	e.keys = keys.Open(dirs.State, e.kc)
 	e.bin = filepath.Join(home, "bin", "mai")
 	_ = os.MkdirAll(filepath.Dir(e.bin), 0o700)
 	_ = os.WriteFile(e.bin, []byte("binary"), 0o700)
@@ -62,8 +65,16 @@ func setup(t *testing.T) *env {
 		{ID: "sha256:img3", Tags: []string{"ghcr.io/monorithm/mai:3.0.0"}},
 		{ID: "sha256:shared", Tags: []string{"busybox:latest"}},
 	}
-	_ = e.kc.Set(keychain.Service, keychain.OwnerAccount("mai"), "mai1:owner:x")
-	_ = e.kc.Set(keychain.Service, keychain.AgentAccount("mai", "cursor"), "mai1:cursor:x")
+	// The owner key is in the key file, with a stale legacy item. The key of cursor is only
+	// in the legacy keychain, with a record of mai 3.1 in the manifest.
+	if err := e.keys.Set(keys.OwnerAccount("mai"), "mai1:owner:x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.keys.Set(keys.AgentAccount("mai", "codex"), "mai1:codex:x"); err != nil {
+		t.Fatal(err)
+	}
+	e.kc.Put(keys.OwnerAccount("mai"), "mai1:owner:old")
+	e.kc.Put(keys.AgentAccount("mai", "cursor"), "mai1:cursor:x")
 
 	man, err := manifest.Load(filepath.Join(dirs.State, manifest.FileName), "mai")
 	if err != nil {
@@ -75,8 +86,8 @@ func setup(t *testing.T) *env {
 		{Type: manifest.Volume, Name: "mai3-spool"},
 		{Type: manifest.Image, Name: "ghcr.io/monorithm/mai:3.0.0", ID: "sha256:img3"},
 		{Type: manifest.Image, Name: "busybox:latest", ID: "sha256:shared"},
-		{Type: manifest.KeychainKey, Name: keychain.OwnerAccount("mai")},
-		{Type: manifest.KeychainKey, Name: keychain.AgentAccount("mai", "cursor")},
+		{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai")},
+		{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "cursor")},
 		{Type: manifest.AppEntry, Name: "cursor", Path: e.app, Pointer: "/mcpServers/mai"},
 	} {
 		if err := man.Add(it); err != nil {
@@ -88,13 +99,13 @@ func setup(t *testing.T) *env {
 
 func (e *env) uninstaller(out *bytes.Buffer) *Uninstaller {
 	return &Uninstaller{
-		Engine:   e.eng,
-		Keychain: e.kc,
-		Dirs:     e.dirs,
-		Yes:      true,
-		Out:      out,
-		BaseURL:  "http://127.0.0.1:1",
-		Binary:   &Binary{Path: e.bin, GOOS: "linux"},
+		Engine:  e.eng,
+		Keys:    e.keys,
+		Dirs:    e.dirs,
+		Yes:     true,
+		Out:     out,
+		BaseURL: "http://127.0.0.1:1",
+		Binary:  &Binary{Path: e.bin, GOOS: "linux"},
 	}
 }
 
@@ -141,10 +152,8 @@ func TestFullUninstallRemovesEachItem(t *testing.T) {
 	if len(seen) != 1 || seen[0].Name != "cursor" {
 		t.Errorf("app entries removed: %v", seen)
 	}
-	for _, acct := range []string{keychain.OwnerAccount("mai"), keychain.AgentAccount("mai", "cursor")} {
-		if _, err := e.kc.Get(keychain.Service, acct); !errors.Is(err, keychain.ErrNotFound) {
-			t.Errorf("the keychain item %s exists", acct)
-		}
+	if items := e.kc.Accounts(); len(items) != 0 {
+		t.Errorf("the legacy keychain items %v exist", items)
 	}
 	for _, d := range []string{e.dirs.Config, e.dirs.State, e.dirs.Cache, e.bin} {
 		if _, err := os.Stat(d); !errors.Is(err, os.ErrNotExist) {
@@ -152,7 +161,14 @@ func TestFullUninstallRemovesEachItem(t *testing.T) {
 		}
 	}
 	text := out.String()
-	for _, want := range []string{"container  mai", "volume     mai3-data", "Size of the mail data: 4.0 KiB", "gone     container mai", "kept     image sha256:shared", "gone     binary "} {
+	for _, want := range []string{
+		"container  mai", "volume     mai3-data", "Size of the mail data: 4.0 KiB", "gone     container mai",
+		"kept     image sha256:shared", "gone     binary ",
+		"key        owner@mai (in " + e.keys.Path() + ")", "key        agent:codex@mai (in ",
+		"keychain   dev.mai / agent:cursor@mai (an item of mai 3.0 or 3.1)", "keychain   dev.mai / owner@mai (an item",
+		"gone     key owner@mai", "gone     key agent:codex@mai",
+		"gone     keychain dev.mai / agent:cursor@mai", "gone     keychain dev.mai / owner@mai",
+	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output has no %q:\n%s", want, text)
 		}
@@ -255,9 +271,11 @@ func TestEndLeasesDeletesEachLease(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	kc := keychain.NewMemory()
-	_ = kc.Set("svc", keychain.OwnerAccount("mai"), "mai1:owner:k")
-	line := EndLeases(context.Background(), srv.Client(), srv.URL, kc, "svc", "mai")
+	kf := keys.Open(t.TempDir(), nil)
+	if err := kf.Set(keys.OwnerAccount("mai"), "mai1:owner:k"); err != nil {
+		t.Fatal(err)
+	}
+	line := EndLeases(context.Background(), srv.Client(), srv.URL, kf, "mai")
 	if line != "Leases: 2 ended." {
 		t.Errorf("line %q", line)
 	}
@@ -270,12 +288,15 @@ func TestEndLeasesDeletesEachLease(t *testing.T) {
 }
 
 func TestEndLeasesNeverFails(t *testing.T) {
-	kc := keychain.NewMemory()
-	if line := EndLeases(context.Background(), nil, "http://127.0.0.1:1", kc, "svc", "mai"); !strings.Contains(line, "not ended") {
+	kf := keys.Open(t.TempDir(), nil)
+	if line := EndLeases(context.Background(), nil, "http://127.0.0.1:1", kf, "mai"); !strings.Contains(line, "not ended") {
 		t.Errorf("line %q", line)
 	}
-	_ = kc.Set("svc", keychain.OwnerAccount("mai"), "mai1:owner:k")
-	if line := EndLeases(context.Background(), nil, "http://127.0.0.1:1", kc, "svc", "mai"); !strings.Contains(line, "not ended") {
+	if line := EndLeases(context.Background(), nil, "http://127.0.0.1:1", nil, "mai"); !strings.Contains(line, "not ended") {
+		t.Errorf("line with no key file %q", line)
+	}
+	_ = kf.Set(keys.OwnerAccount("mai"), "mai1:owner:k")
+	if line := EndLeases(context.Background(), nil, "http://127.0.0.1:1", kf, "mai"); !strings.Contains(line, "not ended") {
 		t.Errorf("line %q", line)
 	}
 }

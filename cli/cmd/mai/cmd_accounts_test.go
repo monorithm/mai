@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/monorithm/mai/cli/v3/internal/connect"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
@@ -119,9 +119,27 @@ func (f *fakeOwner) handler(t *testing.T) http.Handler {
 	})
 }
 
+// testKeyFile is the key file of a test, in its MAI_HOME, with a legacy keychain in memory.
+type testKeyFile struct {
+	file   *keys.File
+	legacy *keychain.Memory
+}
+
+// useTestKeys makes the commands use the key file in the state folder of MAI_HOME, with a
+// legacy keychain in memory.
+func useTestKeys(t *testing.T) *testKeyFile {
+	t.Helper()
+	k := &testKeyFile{legacy: keychain.NewMemory()}
+	k.file = keys.Open(filepath.Join(os.Getenv("MAI_HOME"), "state"), k.legacy)
+	old := openKeys
+	openKeys = func() (*keys.File, error) { return k.file, nil }
+	t.Cleanup(func() { openKeys = old })
+	return k
+}
+
 // testEnv makes a temp HOME and MAI_HOME, a config.json with the port of a fake server, and a
-// keychain in memory with the owner key.
-func testEnv(t *testing.T) (*fakeOwner, *keychain.Memory, string) {
+// key file with the owner key.
+func testEnv(t *testing.T) (*fakeOwner, *testKeyFile, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -137,11 +155,10 @@ func testEnv(t *testing.T) (*fakeOwner, *keychain.Memory, string) {
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(`{"instance":"mai","port":`+port+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store := keychain.NewMemory()
-	_ = store.Set(keychain.Service, keychain.OwnerAccount("mai"), testOwnerKey)
-	old := accountsKeychain
-	accountsKeychain = func() keychain.Store { return store }
-	t.Cleanup(func() { accountsKeychain = old })
+	store := useTestKeys(t)
+	if err := store.file.Set(keys.OwnerAccount("mai"), testOwnerKey); err != nil {
+		t.Fatal(err)
+	}
 	return f, store, home
 }
 
@@ -163,16 +180,24 @@ func TestAgentAddListRemove(t *testing.T) {
 	if out.String() != "cursor\n" {
 		t.Fatalf("add printed %q", out.String())
 	}
-	key, err := store.Get(keychain.Service, keychain.AgentAccount("mai", "cursor"))
+	key, err := store.file.Get(keys.AgentAccount("mai", "cursor"))
 	if err != nil || key != "mai1:cursor:agentsecret" {
-		t.Fatalf("keychain: %v", err)
+		t.Fatalf("key file: %v", err)
 	}
-	if items := loadTestManifest(t, home).Of(manifest.KeychainKey); len(items) != 1 || items[0].Name != keychain.AgentAccount("mai", "cursor") {
-		t.Fatalf("manifest: %+v", items)
+	if store.file.Path() != filepath.Join(home, "maihome", "state", "keys.json") {
+		t.Fatalf("the key file is %s", store.file.Path())
+	}
+	if items := loadTestManifest(t, home).Of(manifest.KeychainKey); len(items) != 0 {
+		t.Fatalf("the manifest records a keychain item: %+v", items)
 	}
 	b, _ := os.ReadFile(filepath.Join(home, "maihome", "state", manifest.FileName))
 	if strings.Contains(string(b), "agentsecret") {
 		t.Fatal("the manifest holds the key")
+	}
+	// A legacy item of mai 3.1 for the agent goes at the remove, with its record.
+	store.legacy.Put(keys.AgentAccount("mai", "cursor"), "mai1:cursor:old")
+	if err := loadTestManifest(t, home).Add(manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "cursor")}); err != nil {
+		t.Fatal(err)
 	}
 	out.Reset()
 	if code := runAgent([]string{"list"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "cursor") {
@@ -182,8 +207,11 @@ func TestAgentAddListRemove(t *testing.T) {
 	if code := runAgent([]string{"remove", "cursor"}, &out, &errOut); code != 0 {
 		t.Fatalf("remove: %d %s", code, errOut.String())
 	}
-	if _, err := store.Get(keychain.Service, keychain.AgentAccount("mai", "cursor")); err != keychain.ErrNotFound {
+	if ok, err := store.file.Has(keys.AgentAccount("mai", "cursor")); err != nil || ok {
 		t.Fatalf("the key stays: %v", err)
+	}
+	if len(store.legacy.Accounts()) != 0 {
+		t.Fatalf("the legacy items %v stay", store.legacy.Accounts())
 	}
 	if items := loadTestManifest(t, home).Of(manifest.KeychainKey); len(items) != 0 {
 		t.Fatalf("the manifest keeps %+v", items)
@@ -195,7 +223,7 @@ func TestAgentAddListRemove(t *testing.T) {
 	if code := runAgent([]string{"add", "a", "b"}, &out, &errOut); code != 0 || out.String() != "a\nb\n" {
 		t.Fatalf("add of two agents: %d %q", code, out.String())
 	}
-	if _, err := store.Get(keychain.Service, keychain.AgentAccount("mai", "b")); err != nil {
+	if _, err := store.file.Get(keys.AgentAccount("mai", "b")); err != nil {
 		t.Fatalf("no key for b: %v", err)
 	}
 }
@@ -430,29 +458,6 @@ func TestSessionCommandsPrintNoSecret(t *testing.T) {
 				t.Fatalf("%q printed %q", args, out.String()+errOut.String())
 			}
 		}
-	}
-}
-
-func TestApprovalsShowsLastDays(t *testing.T) {
-	_, _, home := testEnv(t)
-	var out, errOut bytes.Buffer
-	if code := runApprovals(nil, &out, &errOut); code != 0 || !strings.Contains(out.String(), "no approvals") {
-		t.Fatalf("empty: %d %q", code, out.String())
-	}
-	now := time.Now().UTC()
-	doc := fmt.Sprintf(`{"approvals":[
-		{"time":%q,"agent":"cursor","app":"claude","folder":"/new","pid":1,"result":"approved"},
-		{"time":%q,"agent":"cursor","app":"claude","folder":"/old","pid":2,"result":"refused"}]}`,
-		now.Format(time.RFC3339), now.Add(-40*24*time.Hour).Format(time.RFC3339))
-	state := filepath.Join(home, "maihome", "state")
-	_ = os.MkdirAll(state, 0o700)
-	_ = os.WriteFile(filepath.Join(state, ApprovalsFile), []byte(doc), 0o600)
-	out.Reset()
-	if code := runApprovals(nil, &out, &errOut); code != 0 {
-		t.Fatalf("list: %d %s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "/new") || strings.Contains(out.String(), "/old") {
-		t.Fatalf("approvals printed:\n%s", out.String())
 	}
 }
 

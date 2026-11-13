@@ -27,8 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
 )
 
 // Exit codes of Run.
@@ -44,13 +42,17 @@ const maxLine = 64 << 20
 // long wait of one chat thus does not stop the tool calls of a different chat.
 const maxInFlight = 32
 
+// KeySource gives the key of an account. The key file of the CLI (keys.File) is one.
+type KeySource interface {
+	Get(account string) (string, error)
+}
+
 // Bridge holds the state of one bridge process. Set the exported fields, then call Run.
 type Bridge struct {
 	Agent    string
 	Instance string
-	Endpoint string // The base URL of the server, for example http://127.0.0.1:8765.
-	Store    keychain.Store
-	Presence func(reason string) error
+	Endpoint string    // The base URL of the server, for example http://127.0.0.1:8765.
+	Keys     KeySource // The bridge reads the agent key at each lease request.
 	Client   *http.Client
 	StateDir string
 	App      string // The app at the top of the process chain.
@@ -61,10 +63,8 @@ type Bridge struct {
 	Stdout   io.Writer
 	Stderr   io.Writer
 
-	// approveMu lets one lease request occur at a time. approved is true after the
-	// presence check of this process.
-	approveMu sync.Mutex
-	approved  bool
+	// requestMu lets one lease request occur at a time.
+	requestMu sync.Mutex
 
 	// mu guards pool, named, and byLogin.
 	mu      sync.Mutex
@@ -122,16 +122,6 @@ func (b *Bridge) logf(format string, args ...any) {
 	if b.Stderr != nil {
 		fmt.Fprintf(b.Stderr, "mai mcp: "+format+"\n", args...)
 	}
-}
-
-// Reason is the text of the presence prompt for the first lease of the bridge.
-func (b *Bridge) Reason() string {
-	app := b.App
-	if app == "" {
-		app = "unknown"
-	}
-	return fmt.Sprintf("mai: approve a session for the agent %s. App: %s. Folder: %s. Process: %d.",
-		b.Agent, app, b.Folder, b.PID)
 }
 
 // callJSON sends one API call with a bearer token and decodes a 2xx answer into out.
@@ -310,7 +300,7 @@ func refusal(agent string, err error) (string, string) {
 	if errors.As(err, &ae) {
 		return ae.Code, ae.Message
 	}
-	return "BAD_KEY", "The keychain has no key for the agent " + agent + ". Run mai agent add " + agent + "."
+	return "BAD_KEY", noKeyMessage(agent)
 }
 
 // stopText is the text of the error that stops the bridge, when the agent key is not valid.
@@ -421,7 +411,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 	a, err := b.request(ctx, "")
 	if err != nil {
 		if errors.Is(err, errNoKey) {
-			fmt.Fprintf(b.Stderr, "mai mcp: the keychain has no key for the agent %s. Run \"mai agent add %s\".\n", b.Agent, b.Agent)
+			fmt.Fprintf(b.Stderr, "mai mcp: the key file has no key for the agent %s. Run \"mai agent add %s\".\n", b.Agent, b.Agent)
 		} else {
 			b.logf("no lease for the agent %s: %v", b.Agent, err)
 		}
