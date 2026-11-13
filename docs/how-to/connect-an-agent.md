@@ -57,15 +57,39 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
 ```
 
 The bridge `mai mcp` gets a lease from the server and bridges stdio to
-`http://127.0.0.1:8765/mcp`. The server gives a free session of the agent. The
-bridge cannot select a session.
+`http://127.0.0.1:8765/mcp`. The server gives a free pool session of the
+agent, for example `cursor.s1`. A chat can also log in to a named session.
+
+## Use a named session
+
+One bridge can serve many chats, for example all the chats of one Cursor
+window. To give a chat its own session, do these steps:
+
+1. Make the named session:
+
+   ```sh
+   mai session new cursor --label lane-a
+   ```
+
+   The CLI shows only the login, `cursor.lane-a`.
+
+2. In the chat, tell the agent to call the tool `login` with `session` set
+   to `lane-a`. The bridge gives a handle, for example
+   `ses-k7m2q4r5t6v3w2xa`.
+3. Tell the agent to give the handle as the argument `session` in each tool
+   call. A tool call with no `session` uses the pool session of the app.
+4. To end the session of the chat, tell the agent to call the tool `logout`
+   with the handle.
+
+A login gets no new presence prompt, because you approved the bridge at its
+first lease. The handle is valid only in that bridge.
 
 ## Hooks
 
 `mai connect` also writes the hooks of the app. The hook command is
-`mai hook --format F --event E`. It reads the notice file of its bridge and
-shows the count of new mail. It never calls the server, and on an error it
-shows nothing.
+`mai hook --format F --event E`. It reads the notice file of its bridge. It
+shows one line for each session of the bridge that has new mail. It never
+calls the server, and on an error it shows nothing.
 
 ## Disconnect an app
 
@@ -79,5 +103,9 @@ mai disconnect cursor
 
 | Command | Action |
 |---|---|
-| `mai session list` | Show the sessions, their leases, and the app and folder of each lease. |
-| `mai session end LOGIN` | End the lease of a session. The bridge gets an error at its next call. |
+| `mai session new AGENT --label L` | Make the named session `AGENT.L`. |
+| `mai session new AGENT --count N` | Make each session of `AGENT.s1` to `AGENT.sN` that does not exist. |
+| `mai session list` | Show the sessions with the label, the state, and the lease of each session. For a lease, show its app and folder. |
+| `mai session rotate LOGIN` | Give the session a new internal secret, and end its lease. |
+| `mai session revoke LOGIN` | Close the session, and end its lease. This change is permanent. |
+| `mai session end LOGIN` | End the lease of a session. At its next call, the bridge gets a new lease for the same session. |

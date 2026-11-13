@@ -1,7 +1,12 @@
 // Package bridge is "mai mcp": it gets a lease for an agent and bridges the MCP stdio of an
 // app to POST /mcp of the server.
 //
-// The lease token is only in the memory of the bridge. It is never in a file, an argument,
+// The bridge holds the pool lease of the agent, and one lease for each named session that
+// a chat logged in to with the tool login. The chat gives the handle of the login as the
+// argument session of each tool call. The bridge removes the argument and sends the call
+// with the lease of that handle. A tool call with no argument session uses the pool lease.
+//
+// Each lease token is only in the memory of the bridge. It is never in a file, an argument,
 // or the environment. Stdout carries only JSON-RPC lines. Logs go to stderr.
 package bridge
 
@@ -14,13 +19,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/monorithm/mai/cli/v3/internal/hook"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
 )
 
@@ -32,6 +34,10 @@ const (
 
 // maxLine is the largest JSON-RPC line that the bridge reads from the app.
 const maxLine = 64 << 20
+
+// maxInFlight is the largest number of requests that the bridge sends at the same time. A
+// long wait of one chat thus does not stop the tool calls of a different chat.
+const maxInFlight = 32
 
 // Bridge holds the state of one bridge process. Set the exported fields, then call Run.
 type Bridge struct {
@@ -50,12 +56,25 @@ type Bridge struct {
 	Stdout   io.Writer
 	Stderr   io.Writer
 
-	mu        sync.Mutex
-	lease     string
-	session   string
-	heartbeat time.Duration
-	outMu     sync.Mutex
-	renewMu   sync.Mutex
+	// approveMu lets one lease request occur at a time. approved is true after the
+	// presence check of this process.
+	approveMu sync.Mutex
+	approved  bool
+
+	// mu guards pool, named, and byLogin.
+	mu      sync.Mutex
+	pool    *lease
+	named   map[string]*lease // handle -> lease
+	byLogin map[string]string // login -> handle
+
+	loginMu     sync.Mutex
+	noticeMu    sync.Mutex
+	noticesGone bool
+	outMu       sync.Mutex
+
+	beatCtx context.Context
+	beats   sync.WaitGroup
+	fatal   chan error
 }
 
 // apiError is an error answer of the server.
@@ -97,7 +116,7 @@ func (b *Bridge) logf(format string, args ...any) {
 	}
 }
 
-// Reason is the text of the presence prompt for a new lease.
+// Reason is the text of the presence prompt for the first lease of the bridge.
 func (b *Bridge) Reason() string {
 	app := b.App
 	if app == "" {
@@ -105,64 +124,6 @@ func (b *Bridge) Reason() string {
 	}
 	return fmt.Sprintf("mai: approve a session for the agent %s. App: %s. Folder: %s. Process: %d.",
 		b.Agent, app, b.Folder, b.PID)
-}
-
-// errNoKey means that the keychain has no key for the agent.
-var errNoKey = errors.New("no agent key")
-
-// acquire does the presence check, reads the agent key, and gets a new lease.
-func (b *Bridge) acquire(ctx context.Context) error {
-	if b.Presence == nil {
-		return errors.New("no presence check")
-	}
-	if err := b.Presence(b.Reason()); err != nil {
-		return fmt.Errorf("the presence check failed: %w", err)
-	}
-	key, err := b.Store.Get(keychain.Service, keychain.AgentAccount(b.Instance, b.Agent))
-	if errors.Is(err, keychain.ErrNotFound) {
-		return errNoKey
-	}
-	if err != nil {
-		return fmt.Errorf("the keychain read failed: %w", err)
-	}
-	body, _ := json.Marshal(map[string]any{"app": b.App, "folder": b.Folder, "pid": b.PID})
-	var out struct {
-		Lease            string `json:"lease"`
-		Session          string `json:"session"`
-		HeartbeatSeconds int    `json:"heartbeat_seconds"`
-	}
-	if err := b.callJSON(ctx, http.MethodPost, "/api/leases", key, body, &out); err != nil {
-		return err
-	}
-	if !strings.HasPrefix(out.Lease, "lease_") {
-		return errors.New("the server gave no lease")
-	}
-	hb := time.Duration(out.HeartbeatSeconds) * time.Second
-	if hb <= 0 {
-		hb = 30 * time.Second
-	}
-	b.mu.Lock()
-	b.lease, b.session, b.heartbeat = out.Lease, out.Session, hb
-	b.mu.Unlock()
-	b.logf("the agent %s has the session %s", b.Agent, out.Session)
-	return nil
-}
-
-// renew gets a new lease when the lease old is still the current lease. When a different
-// call already got a new lease, renew does nothing.
-func (b *Bridge) renew(ctx context.Context, old string) error {
-	b.renewMu.Lock()
-	defer b.renewMu.Unlock()
-	if b.currentLease() != old {
-		return nil
-	}
-	return b.acquire(ctx)
-}
-
-func (b *Bridge) currentLease() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.lease
 }
 
 // callJSON sends one API call with a bearer token and decodes a 2xx answer into out.
@@ -196,86 +157,6 @@ func (b *Bridge) callJSON(ctx context.Context, method, path, bearer string, body
 		return json.Unmarshal(data, out)
 	}
 	return nil
-}
-
-// beat sends one heartbeat and writes the notice file.
-func (b *Bridge) beat(ctx context.Context) error {
-	lease := b.currentLease()
-	var out struct {
-		Session string `json:"session"`
-		NewMail int    `json:"new_mail"`
-	}
-	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	err := b.callJSON(hctx, http.MethodPost, "/api/leases/current/heartbeat", lease, []byte("{}"), &out)
-	if isLeaseUnknown(err) {
-		b.logf("the server does not know the lease; the bridge asks for a new lease")
-		if err := b.renew(ctx, lease); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err != nil {
-		// A network error does not stop the bridge. The next heartbeat tries again.
-		b.logf("the heartbeat failed: %v", err)
-		return nil
-	}
-	if out.Session != "" {
-		b.mu.Lock()
-		b.session = out.Session
-		b.mu.Unlock()
-	}
-	b.writeNotice(hook.Notice{Session: out.Session, NewMail: out.NewMail, UpdatedAt: time.Now().UTC().Format(time.RFC3339)})
-	return nil
-}
-
-func (b *Bridge) noticePath() string { return hook.NoticePath(b.StateDir, b.AppPID, b.Agent) }
-
-// writeNotice writes the notice file with mode 0600 in a folder with mode 0700. The file
-// holds no secret.
-func (b *Bridge) writeNotice(n hook.Notice) {
-	if b.StateDir == "" || n.Session == "" {
-		return
-	}
-	dir := hook.NoticeDir(b.StateDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		b.logf("the notice folder is not available: %v", err)
-		return
-	}
-	_ = os.Chmod(dir, 0o700)
-	data, _ := json.Marshal(n)
-	tmp, err := os.CreateTemp(dir, ".notice-*")
-	if err != nil {
-		b.logf("the notice file is not available: %v", err)
-		return
-	}
-	name := tmp.Name()
-	_, werr := tmp.Write(data)
-	cerr := tmp.Close()
-	_ = os.Chmod(name, 0o600)
-	if werr != nil || cerr != nil || os.Rename(name, b.noticePath()) != nil {
-		_ = os.Remove(name)
-		b.logf("the notice file write failed")
-	}
-}
-
-// end deletes the lease and the notice file.
-func (b *Bridge) end() {
-	if b.StateDir != "" {
-		_ = os.Remove(b.noticePath())
-	}
-	lease := b.currentLease()
-	if lease == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := b.callJSON(ctx, http.MethodDelete, "/api/leases/current", lease, nil, nil); err != nil && !isLeaseUnknown(err) {
-		b.logf("the end of the lease failed: %v", err)
-	}
-	b.mu.Lock()
-	b.lease = ""
-	b.mu.Unlock()
 }
 
 func (b *Bridge) writeLine(line []byte) {
@@ -316,25 +197,36 @@ func requestID(line []byte) (json.RawMessage, bool, error) {
 // errStop means that the bridge cannot continue.
 var errStop = errors.New("the bridge stops")
 
-// handle sends one JSON-RPC line to /mcp and writes the answer.
+// handle sends one JSON-RPC line to /mcp with the lease of its session and writes the
+// answer. It answers the tools login and logout itself.
 func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	id, hasID, err := requestID(line)
 	if err != nil {
 		b.writeError(nil, -32700, "parse error")
 		return nil
 	}
-	lease := b.currentLease()
-	answer, err := b.post(ctx, lease, line)
+	l, line, ok := b.route(ctx, id, hasID, line)
+	if !ok {
+		return nil
+	}
+	token := l.current()
+	answer, err := b.post(ctx, token, line)
 	if isLeaseUnknown(err) {
-		b.logf("the server does not know the lease; the bridge asks for a new lease")
-		if rerr := b.renew(ctx, lease); rerr != nil {
-			b.writeError(id, -32001, "mai: the lease ended and no new lease is available: "+rerr.Error())
-			return errStop
+		b.logf("the server does not know the lease of the session %s; the bridge asks for a new lease", l.session())
+		if rerr := b.renew(ctx, l, token); rerr != nil {
+			return b.renewFailed(id, hasID, l, rerr)
 		}
-		answer, err = b.post(ctx, b.currentLease(), line)
+		answer, err = b.post(ctx, l.current(), line)
 		if isLeaseUnknown(err) {
-			b.writeError(id, -32001, "mai: the lease ended. Start the MCP server again.")
-			return errStop
+			if l.handle == "" {
+				b.writeError(id, -32001, "mai: the lease ended. Start the MCP server again.")
+				return errStop
+			}
+			b.drop(l, err)
+			if hasID {
+				b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
+			}
+			return nil
 		}
 	}
 	if err != nil {
@@ -348,6 +240,37 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	}
 	for _, a := range answer {
 		b.writeLine(a)
+	}
+	return nil
+}
+
+// renewFailed answers a call when the lease of its session ended and the renew failed.
+// For the pool lease, the bridge stops. A named session that the server refuses goes, and
+// the call gets the code of the server.
+func (b *Bridge) renewFailed(id json.RawMessage, hasID bool, l *lease, err error) error {
+	if l.handle == "" {
+		b.writeError(id, -32001, "mai: the lease ended and no new lease is available: "+err.Error())
+		return errStop
+	}
+	var ae *apiError
+	switch {
+	case errors.Is(err, errEnded):
+		if hasID {
+			b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
+		}
+	case errors.As(err, &ae):
+		b.drop(l, err)
+		if hasID {
+			code, msg := ae.Code, ae.Message
+			if code == "" {
+				code, msg = "SESSION_UNKNOWN", msgUnknownHandle
+			}
+			b.writeResult(id, toolError(code, "The session "+l.session()+" ended: "+msg))
+		}
+	default:
+		if hasID {
+			b.writeError(id, -32603, "mai: no new lease for the session "+l.session()+": "+err.Error())
+		}
 	}
 	return nil
 }
@@ -433,8 +356,8 @@ func sseData(data []byte) [][]byte {
 	return out
 }
 
-// Run gets a lease, bridges stdin to /mcp until stdin ends or ctx ends, and then ends the
-// lease. Cancel ctx on SIGINT or SIGTERM.
+// Run gets the pool lease, bridges stdin to /mcp until stdin ends or ctx ends, and then
+// ends each lease of the bridge. Cancel ctx on SIGINT or SIGTERM.
 func (b *Bridge) Run(ctx context.Context) int {
 	if err := harden(); err != nil {
 		b.logf("the process protection failed: %v", err)
@@ -443,7 +366,12 @@ func (b *Bridge) Run(ctx context.Context) int {
 	if b.Client == nil {
 		b.Client = &http.Client{Transport: &http.Transport{Proxy: nil}}
 	}
-	if err := b.acquire(ctx); err != nil {
+	b.mu.Lock()
+	b.named, b.byLogin = map[string]*lease{}, map[string]string{}
+	b.mu.Unlock()
+	b.fatal = make(chan error, 1)
+	a, err := b.request(ctx, "")
+	if err != nil {
 		if errors.Is(err, errNoKey) {
 			fmt.Fprintf(b.Stderr, "mai mcp: the keychain has no key for the agent %s. Run \"mai agent add %s\".\n", b.Agent, b.Agent)
 		} else {
@@ -451,19 +379,24 @@ func (b *Bridge) Run(ctx context.Context) int {
 		}
 		return ExitError
 	}
+	b.logf("the agent %s has the session %s", b.Agent, a.Session)
+
 	ctx, cancel := context.WithCancel(ctx)
-	fatal := make(chan error, 1)
-	hbDone := make(chan struct{})
-	go func() {
-		defer close(hbDone)
-		b.heartbeatLoop(ctx, fatal)
-	}()
-	// Stop the heartbeat before the end of the lease. Then no heartbeat writes the notice
-	// file again after its removal.
+	b.beatCtx = ctx
+	pool := b.newLease("", a)
+	b.mu.Lock()
+	b.pool = pool
+	b.mu.Unlock()
+	b.startBeats(pool)
+	var inflight sync.WaitGroup
+	stop := make(chan struct{}, 1)
+	// Stop each request and each heartbeat before the end of the leases. Then no heartbeat
+	// writes the notice file again after its removal.
 	defer func() {
 		cancel()
-		<-hbDone
-		b.end()
+		inflight.Wait()
+		b.beats.Wait()
+		b.endAll()
 	}()
 
 	lines := make(chan []byte)
@@ -485,21 +418,44 @@ func (b *Bridge) Run(ctx context.Context) int {
 		}
 	}()
 
+	slots := make(chan struct{}, maxInFlight)
 	for {
 		select {
 		case <-ctx.Done():
 			return ExitOK
-		case err := <-fatal:
+		case err := <-b.fatal:
 			b.writeError(nil, -32001, "mai: the lease ended and no new lease is available: "+err.Error())
 			b.logf("stop: %v", err)
 			return ExitError
+		case <-stop:
+			return ExitError
 		case line, ok := <-lines:
 			if !ok {
+				// The app closed stdin. Each request that started gets its answer first.
+				inflight.Wait()
+				select {
+				case <-stop:
+					return ExitError
+				default:
+					return ExitOK
+				}
+			}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
 				return ExitOK
 			}
-			if err := b.handle(ctx, line); err != nil {
-				return ExitError
-			}
+			inflight.Add(1)
+			go func() {
+				defer inflight.Done()
+				defer func() { <-slots }()
+				if err := b.handle(ctx, line); err != nil {
+					select {
+					case stop <- struct{}{}:
+					default:
+					}
+				}
+			}()
 		}
 	}
 }
@@ -518,25 +474,6 @@ func readLine(r *bufio.Reader) ([]byte, error) {
 		}
 		if !isPrefix {
 			return line, nil
-		}
-	}
-}
-
-func (b *Bridge) heartbeatLoop(ctx context.Context, fatal chan<- error) {
-	for {
-		if err := b.beat(ctx); err != nil {
-			if ctx.Err() == nil {
-				fatal <- err
-			}
-			return
-		}
-		b.mu.Lock()
-		d := b.heartbeat
-		b.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(d):
 		}
 	}
 }

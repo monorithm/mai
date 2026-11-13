@@ -70,7 +70,46 @@ func server(t *testing.T) *httptest.Server {
 		}}})
 	}))
 	mux.HandleFunc("GET /api/sessions", auth(func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"sessions": []map[string]any{{"login": "cursor.s2", "agent": "cursor", "leased": true}}})
+		write(w, 200, map[string]any{"sessions": []map[string]any{
+			{
+				"login": "cursor.s2", "agent": "cursor", "label": "s2", "status": "active", "leased": true,
+				"app": "claude", "folder": "/w", "pid": 12, "last_seen_at": "2026-11-12T10:01:00Z",
+			},
+			{
+				"login": "cursor.lane-a", "agent": "cursor", "label": "lane-a", "status": "revoked", "leased": false,
+				"app": nil, "folder": nil, "pid": nil, "last_seen_at": nil,
+			},
+		}})
+	}))
+	mux.HandleFunc("POST /api/sessions", auth(func(w http.ResponseWriter, r *http.Request) {
+		var in map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		agent, _ := in["agent"].(string)
+		if agent != "cursor" {
+			write(w, 404, map[string]any{"error": map[string]string{"code": "AGENT_UNKNOWN", "message": "no agent"}})
+			return
+		}
+		if n, ok := in["count"].(float64); ok {
+			var made []map[string]any
+			for i := 2; i <= int(n); i++ {
+				l := "s" + string(rune('0'+i))
+				made = append(made, map[string]any{"login": "cursor." + l, "agent": "cursor", "label": l, "status": "active"})
+			}
+			write(w, 201, map[string]any{"sessions": made})
+			return
+		}
+		label, _ := in["label"].(string)
+		if label == "taken" {
+			write(w, 409, map[string]any{"error": map[string]string{"code": "SESSION_EXISTS", "message": "the session exists"}})
+			return
+		}
+		write(w, 201, map[string]any{"login": "cursor." + label, "agent": "cursor", "label": label, "status": "active"})
+	}))
+	mux.HandleFunc("POST /api/sessions/{login}/rotate", auth(func(w http.ResponseWriter, r *http.Request) {
+		write(w, 200, map[string]any{"login": r.PathValue("login"), "status": "active"})
+	}))
+	mux.HandleFunc("POST /api/sessions/{login}/revoke", auth(func(w http.ResponseWriter, r *http.Request) {
+		write(w, 200, map[string]any{"login": r.PathValue("login"), "status": "revoked"})
 	}))
 	mux.HandleFunc("DELETE /api/sessions/{login}/lease", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
@@ -137,7 +176,7 @@ func TestClientCalls(t *testing.T) {
 		t.Fatalf("leases: %+v %v", leases, err)
 	}
 	sessions, err := c.ListSessions(ctx)
-	if err != nil || len(sessions) != 1 || !sessions[0].Leased {
+	if err != nil || len(sessions) != 2 || !sessions[0].Leased {
 		t.Fatalf("sessions: %+v %v", sessions, err)
 	}
 	if err := c.EndSession(ctx, "cursor.s2"); err != nil {
@@ -200,5 +239,49 @@ func TestOpenReadsOwnerKey(t *testing.T) {
 	c, cfg, err := Open(store)
 	if err != nil || cfg.Instance != "mai" || c.key != ownerKey || c.base != "http://127.0.0.1:8765" {
 		t.Fatalf("open: %+v %v", cfg, err)
+	}
+}
+
+func TestSessionCalls(t *testing.T) {
+	s := server(t)
+	c := New(s.URL, ownerKey)
+	ctx := context.Background()
+
+	one, err := c.NewSession(ctx, "cursor", "lane-a")
+	want := SessionState{Login: "cursor.lane-a", Agent: "cursor", Label: "lane-a", Status: "active"}
+	if err != nil || one != want {
+		t.Fatalf("new session: %+v %v", one, err)
+	}
+	if _, err := c.NewSession(ctx, "cursor", "taken"); Code(err) != "SESSION_EXISTS" {
+		t.Fatalf("new session that exists: %v", err)
+	}
+	if _, err := c.NewSession(ctx, "nobody", "x"); Code(err) != "AGENT_UNKNOWN" {
+		t.Fatalf("new session of an unknown agent: %v", err)
+	}
+	made, err := c.NewSessions(ctx, "cursor", 3)
+	if err != nil || len(made) != 2 || made[0].Login != "cursor.s2" || made[1].Login != "cursor.s3" {
+		t.Fatalf("new sessions: %+v %v", made, err)
+	}
+
+	sessions, err := c.ListSessions(ctx)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("list: %+v %v", sessions, err)
+	}
+	leased := Session{
+		Login: "cursor.s2", Agent: "cursor", Label: "s2", Status: "active", Leased: true,
+		App: "claude", Folder: "/w", PID: 12, LastSeenAt: "2026-11-12T10:01:00Z",
+	}
+	free := Session{Login: "cursor.lane-a", Agent: "cursor", Label: "lane-a", Status: "revoked"}
+	if sessions[0] != leased || sessions[1] != free {
+		t.Fatalf("list:\n%+v\n%+v", sessions[0], sessions[1])
+	}
+
+	r, err := c.RotateSession(ctx, "cursor.lane-a")
+	if err != nil || r != (SessionState{Login: "cursor.lane-a", Status: "active"}) {
+		t.Fatalf("rotate: %+v %v", r, err)
+	}
+	v, err := c.RevokeSession(ctx, "cursor.lane-a")
+	if err != nil || v != (SessionState{Login: "cursor.lane-a", Status: "revoked"}) {
+		t.Fatalf("revoke: %+v %v", v, err)
 	}
 }

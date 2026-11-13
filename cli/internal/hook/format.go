@@ -89,13 +89,27 @@ func ParsePayload(raw []byte) Payload {
 	return p
 }
 
+// Lines gives the text of each session of the notice that has new mail: the pool session
+// first, then each named session.
+func Lines(n Notice) []string {
+	var out []string
+	for _, s := range n.All() {
+		if s.NewMail > 0 {
+			out = append(out, Text(s))
+		}
+	}
+	return out
+}
+
 // Render gives the output for the app, or "" when the hook must print nothing: an unknown
 // format or event, no new mail, or a Stop hook in a turn that a Stop hook already continued.
+// The text has one line for each session with new mail.
 func Render(format, event string, p Payload, n Notice) string {
-	if n.NewMail <= 0 {
+	lines := Lines(n)
+	if len(lines) == 0 {
 		return ""
 	}
-	text := Text(n)
+	text := strings.Join(lines, "\n")
 	if format == Plain {
 		return text
 	}
