@@ -72,8 +72,10 @@ example `cursor.lane-1`, is also correct. No `login` call is necessary:
    the result of that request: the lease or the tool error.
 3. When the lease request is not successful, the call gets the tool error of
    `login` with the path `session`. Examples are `BAD_LABEL` for a label of
-   the pool, `SESSION_BUSY`, and `SERVER_UNAVAILABLE`. A refusal keeps no
-   lease, thus the next call sends a new lease request.
+   the pool, `SESSION_BUSY`, and `SERVER_UNAVAILABLE`. When the key file has
+   no key for the agent, the code is `BAD_KEY`. When the bridge cannot read
+   the key file, the code is `KEY_FILE_ERROR`. A refusal keeps no lease, thus
+   the next call sends a new lease request.
 4. A `login` to a session that the bridge holds gives the handle of that
    lease, also when a call with the label got the lease.
 5. A `logout` with the label, the login, or the handle ends the lease of the

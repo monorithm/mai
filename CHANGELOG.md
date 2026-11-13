@@ -79,7 +79,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lease, for example a pool session.
 - The instructions of `initialize` and the guide `mai://guide` tell a chat to
   give the label of its session as `session` in each call. The messages of
-  `BRIDGE_ONLY`, `NO_FREE_SESSION`, and `BAD_LABEL` also tell this rule.
+  `BRIDGE_ONLY`, `NO_FREE_SESSION`, and `BAD_LABEL` also tell this rule. The
+  error table of the guide also lists the codes `BAD_KEY` and
+  `KEY_FILE_ERROR` of the bridge.
 - `scripts/it_named_sessions.sh` builds mai with no tag and uses only a
   scratch `MAI_HOME`. It does a test of calls with the label `lane-c` and no
   login. At the end, it makes sure that `mai uninstall` removed the keys of the

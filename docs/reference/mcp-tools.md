@@ -51,6 +51,14 @@ with the path `session`. The code is the same as the code of `login`:
 | The owner revoked the session | `SESSION_REVOKED` | false |
 | The mail server or the store does not reply | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE` | true |
 | A network error, or an error with no code | `SERVER_UNAVAILABLE` | true |
+| The key file has no key for the agent, or the server refuses the agent key | `BAD_KEY` | false |
+| The bridge cannot read the agent key from the key file or from its keychain item | `KEY_FILE_ERROR` | false |
+| A different process holds the lock of the key file for more than 10 seconds | `BUSY` | true |
+
+For `BAD_KEY`, the message gives the step. For an agent that exists on the
+server, the step is `mai agent rotate NAME`. For a new agent, the step is
+`mai agent add NAME`. For `KEY_FILE_ERROR`, the message gives the error of the
+key file and its step, for example `chmod 600 PATH`.
 
 Calls at the same time for the same session get the error of one lease
 request. A refusal keeps no lease. Thus the next call with the label sends a
@@ -198,6 +206,8 @@ result with the output schema gets the code of the error.
 | `SESSION_BUSY` | A different lease holds the named session. |
 | `SESSION_REVOKED` | The owner revoked the named session. |
 | `BAD_LABEL` | The label is not correct, or it is a label of the pool. |
+| `BAD_KEY` | Only the bridge gives this code in a tool result. The key file has no key for the agent, or the server refuses the agent key. The message gives the step: `mai agent rotate NAME` for an agent that exists, or `mai agent add NAME` for a new agent. |
+| `KEY_FILE_ERROR` | Only the bridge gives this code. The bridge cannot read the agent key from the key file or from its keychain item. The message gives the step, for example `chmod 600 PATH`. `retry_safe` is false. |
 | `NO_FREE_SESSION` | No pool session of the agent is free. Give the label of a named session as `session`, or try the call again after some time. |
 | `BRIDGE_ONLY` | A call of `login` or `logout`, or a call with the argument `session`, came to the server, not to the bridge. |
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
@@ -211,7 +221,7 @@ result with the output schema gets the code of the error.
 | `MAIL_SERVER_DOWN` | Dovecot or Postfix does not operate. |
 | `STORE_UNAVAILABLE` | The database does not operate. |
 | `SERVER_UNAVAILABLE` | Only the bridge gives this code. The lease request of the bridge got a network error, or an error with no code. Try the call again after some time. |
-| `BUSY` | Too many waits are open, or a lease operation waited too long for a different lease operation. |
+| `BUSY` | Too many waits are open, or a lease operation waited too long for a different lease operation. In the bridge, a different process holds the lock of the key file for more than 10 seconds. |
 | `INTERNAL` | An internal error occurred. |
 | `INVALID_TRANSITION` | The item cannot go to that state. |
 | `WIP_LIMIT` | The number of items in progress is at the limit. |

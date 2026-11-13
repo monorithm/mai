@@ -91,6 +91,8 @@ is true, try the same call again after some time. These codes occur frequently:
 | `THREAD_CLAIMED` | A different session has the thread. |
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
 | `SERVER_UNAVAILABLE` | The bridge got no lease from the server for the session of the call. Try the call again after some time. |
+| `BAD_KEY` | The key file on the host has no valid key for your agent. The message gives the step for the owner. Tell the owner. |
+| `KEY_FILE_ERROR` | The bridge cannot read the key of your agent on the host. The message gives the step for the owner. Tell the owner. |
 | `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. A `session` is a label, a login, or a handle. |
 | `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. Give the label of your session as `session` in each call. |
 
