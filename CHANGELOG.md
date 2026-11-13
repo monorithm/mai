@@ -25,6 +25,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ses-` and 16 base32 characters. The server removes the argument before the
   tool runs. A call of `login` or `logout` that comes to the server gives the
   error `BRIDGE_ONLY`.
+- The host CLI commands `mai session new AGENT --label L`,
+  `mai session new AGENT --count N`, `mai session rotate LOGIN`, and
+  `mai session revoke LOGIN` as in 2.x. Each command shows only the login.
+  For `mai session revoke`, type `revoke` to agree, or use `--yes`.
+- The bridge `mai mcp` does the tools `login` and `logout`. A login gives a
+  handle `ses-...` that is valid only in that bridge. A tool call with the
+  handle as `session` acts as that named session. A tool call with no
+  `session` uses the pool session of the bridge. The presence check occurs
+  one time for each bridge process.
+- `mai hook` shows one line for each session of its bridge that has new mail.
 
 ### Changed
 
@@ -33,6 +43,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only the login. `session list` shows the login, the status, and the time of
   the last login. The flags `--file`, `--credential-only`, and `--expires` go
   away.
+- `mai session list` on the host shows the label and the state of each
+  session, and the app, the folder, and the process ID of each lease.
 
 ## [3.0.1] - 2026-11-12
 
