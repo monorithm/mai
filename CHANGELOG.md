@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-13
+
 ### Added
 
 - The key file of the host CLI. The file `keys.json` in the state folder holds

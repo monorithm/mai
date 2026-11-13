@@ -35,7 +35,7 @@ func TestTheUpgradeTextTellsToStartTheAppsAgain(t *testing.T) {
 	}
 	step := regexp.MustCompile(`(?is)(restart|start)\b[^.]{0,80}\b(app|apps|MCP server|bridge|bridges)\b[^.]{0,40}\bagain\b|restart[^.]{0,60}\b(app|apps|MCP server|bridges?)\b`)
 	for name, text := range map[string]string{
-		"CHANGELOG.md [Unreleased]":                     section(read("CHANGELOG.md"), "## [Unreleased]", "\n## ["),
+		"CHANGELOG.md [3.2.0]":                          section(read("CHANGELOG.md"), "## [3.2.0]", "\n## ["),
 		"docs/reference/cli.md Keys of mai 3.0 and 3.1": section(read(filepath.Join("docs", "reference", "cli.md")), "### Keys of mai 3.0 and 3.1", "\n## "),
 	} {
 		if !step.MatchString(text) {

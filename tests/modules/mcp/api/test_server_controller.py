@@ -27,7 +27,7 @@ def test_version_needs_no_key_and_health_needs_the_owner_key():
     with AsgiTestClient(app) as client:
         version = client.get("/api/version")
         assert version.status_code == 200
-        assert version.json() == {"version": "3.1.1", "contract": "3.2.0"}
+        assert version.json() == {"version": "3.2.0", "contract": "3.2.0"}
         refused = client.get("/api/health")
         assert refused.status_code == 401
         assert refused.json()["error"]["code"] == "BAD_KEY"

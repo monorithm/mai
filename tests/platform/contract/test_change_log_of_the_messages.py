@@ -12,15 +12,19 @@ SENTENCE = re.compile(
 )
 
 
-def unreleased() -> str:
+# The release that added the rule of the label as session.
+RELEASE = "## [3.2.0]"
+
+
+def release_section() -> str:
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    start = text.index("## [Unreleased]")
+    start = text.index(RELEASE)
     end = text.index("\n## [", start + 1)
     return " ".join(text[start:end].split())
 
 
 def test_each_message_that_the_change_log_names_tells_the_rule_of_the_label() -> None:
-    found = SENTENCE.search(unreleased())
+    found = SENTENCE.search(release_section())
     assert found, "the change log names no message that tells the rule"
     codes = re.findall(r"`([A-Z_]+)`", found.group(1))
     assert codes
