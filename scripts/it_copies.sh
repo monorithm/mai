@@ -2,14 +2,14 @@
 # Start a mai container from an image and test the copy of each mail to the owner:
 # the mailbox copies, the ACL of the owner, the copies rule of the milter, and the
 # envelope record.
-# Usage: scripts/it_copies.sh [IMAGE]   (default mai:wf-copies)
+# Usage: scripts/it_copies.sh [IMAGE]   (default $MAI_IT_IMAGE, else mai:wf-copies)
 # Build the image first: docker build --pull=false -t mai:wf-copies .
 # MAI_IT_NAME, MAI_IT_VOLUME, and MAI_IT_PORT set the names of the container
 # and the volume, and the host port.
 # It removes the container and its volumes at the end. It never pulls an image.
 # The credentials stay in the container: the checks read them there and print no secret.
 set -eu
-image=${1:-mai:wf-copies}
+image=${1:-${MAI_IT_IMAGE:-mai:wf-copies}}
 name=${MAI_IT_NAME:-mai-wf-copies-it}
 volume=${MAI_IT_VOLUME:-mai-wf-copies-data}
 port=${MAI_IT_PORT:-18770}
@@ -46,9 +46,10 @@ from bustan import create_app_context
 from mai.app_module import AppModule
 from mai.modules.credentials import CredentialService
 
+# A label of the pool (s1, s2, ...) is only for the pool sessions.
 SESSIONS = (
-    ("alpha", "s1", "/data/alpha.cred"),
-    ("beta", "s1", "/data/beta.cred"),
+    ("alpha", "it-copies", "/data/alpha.cred"),
+    ("beta", "it-copies", "/data/beta.cred"),
 )
 
 

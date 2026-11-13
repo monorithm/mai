@@ -1,12 +1,13 @@
 #!/bin/sh
 # Start a mai container from an image, add the test agents, make the test credentials,
 # and run the container tests.
-# Usage: scripts/it_container.sh [IMAGE]   (default mai:dev)
+# Usage: scripts/it_container.sh [IMAGE]   (default $MAI_IT_IMAGE, else mai:dev)
+# MAI_IT_IMAGE sets the image of the container and of the milter test.
 # MAI_IT_NAME, MAI_IT_VOLUME, and MAI_IT_PORT set the names of the container
 # and the volume, and the host port.
 # It removes the container and its volume at the end. It never pulls an image.
 set -eu
-image=${1:-mai:dev}
+image=${1:-${MAI_IT_IMAGE:-mai:dev}}
 name=${MAI_IT_NAME:-mai-it}
 volume=${MAI_IT_VOLUME:-mai-it-data}
 port=${MAI_IT_PORT:-18765}
@@ -77,7 +78,7 @@ agent_key() {
     "http://127.0.0.1:$port/api/agents/$1/key" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["agent_key"])'
 }
-MAI_IT=1 MAI_IT_CONTAINER=$name MAI_IT_URL="http://127.0.0.1:$port/mcp" \
+MAI_IT=1 MAI_IT_IMAGE=$image MAI_IT_CONTAINER=$name MAI_IT_URL="http://127.0.0.1:$port/mcp" \
 MAI_IT_PROJECT=itproj MAI_IT_LANE=cursor \
 MAI_IT_SUPERVISOR_KEY=$(agent_key architect) \
 MAI_IT_WORKER_KEY=$(agent_key cursor) \
