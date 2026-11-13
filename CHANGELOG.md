@@ -152,7 +152,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to that server.
 - `mai upgrade --instance NAME` does the check of the owner keys on the port
   of the container of that instance. When that port is not known, it does no
-  check. The new container gets the port and the data folder of the
+  check. The port is known only while the container runs and is not paused.
+  This rule also applies to the instance of `config.json`. Before, the
+  upgrade sent the two owner keys to the port of a stopped container, where
+  a different program can listen. For the same cause, `mai status` shows the
+  line `server` only while the container runs. The new container gets the port and the data folder of the
   container that it replaces. The upgrade examines them before it stops that
   container. Before, the upgrade used the values of the instance of
   `config.json`. Thus it sent the owner keys of the instance to a different

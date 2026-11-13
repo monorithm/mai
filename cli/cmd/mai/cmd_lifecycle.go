@@ -69,9 +69,8 @@ type lcSession struct {
 	file string
 	// flags holds the values of the flags of the command.
 	flags config.Overrides
-	// known is true when cfg.Port is the port of the server of the instance: the port of
-	// config.json when the file names the instance, the flag --port, or the host port of the
-	// container of the instance.
+	// known is true when cfg.Port is the port of the server of the instance. owned sets it
+	// only while the container of the instance runs with that host port.
 	known bool
 }
 
@@ -116,11 +115,11 @@ func lcOpen(o config.Overrides, connect bool) (*lcSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", config.Path(dirs.Config), err)
 	}
-	s := &lcSession{dirs: dirs, file: cfg.Instance, flags: o, known: true}
+	s := &lcSession{dirs: dirs, file: cfg.Instance, flags: o}
 	if o.Instance != "" && o.Instance != cfg.Instance {
 		// The values of config.json are of a different instance. The session uses the flags,
 		// the values of the container of the instance (owned), or the defaults.
-		cfg, s.known = config.Defaults(), o.Port != 0
+		cfg = config.Defaults()
 	}
 	s.cfg = cfg.Apply(o)
 	if !connect {
@@ -189,8 +188,11 @@ func lcLegacyMessage(name string) string {
 
 // owned finds the container of the instance and refuses a container of a 2.x install. For an
 // instance that config.json does not name, the session then uses the port and the data folder
-// of the container.
+// of the container. The port is the port of the server of the instance (known) only while the
+// container runs with that host port. A container that is stopped or paused does not answer,
+// and a different program can use the host port of a stopped container.
 func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool, error) {
+	s.known = false
 	c, ok, err := s.eng.Container(ctx, s.cfg.Instance)
 	if err != nil || !ok {
 		return c, ok, err
@@ -198,13 +200,20 @@ func (s *lcSession) owned(ctx context.Context) (container.InspectResponse, bool,
 	if engine.Owned(c) != nil {
 		return c, true, errors.New(lcLegacyMessage(s.cfg.Instance))
 	}
+	port := engine.HostPort(c)
 	if s.other() {
-		if p := engine.HostPort(c); p != 0 {
-			s.cfg.Port, s.known = p, true
+		if port != 0 {
+			s.cfg.Port = port
 		}
 		s.cfg.DataDir = engine.DataDir(c)
 	}
+	s.known = port != 0 && port == s.cfg.Port && lcServes(c)
 	return c, true, nil
+}
+
+// lcServes tells if the container runs and is not paused. Only then its server answers.
+func lcServes(c container.InspectResponse) bool {
+	return c.State != nil && c.State.Running && !c.State.Paused
 }
 
 // saveConfig writes config.json after a successful start. For the instance of config.json, it
@@ -523,16 +532,18 @@ func runStatus(args []string) int {
 	if c.Config != nil {
 		p("image", c.Config.Image)
 	}
+	if !lcServes(c) {
+		// A different program can use the host port of a stopped container. Thus the status
+		// shows no server.
+		p("health", "not running")
+		return 1
+	}
 	var v struct {
 		Version  string `json:"version"`
 		Contract string `json:"contract"`
 	}
 	if err := lcAPIGet(s.cfg.Port, "/api/version", "", &v); err == nil {
 		p("server", fmt.Sprintf("%s (contract %s)", v.Version, v.Contract))
-	}
-	if c.State == nil || !c.State.Running || c.State.Paused {
-		p("health", "not running")
-		return 1
 	}
 	healthy := s.eng.Healthy(ctx, c.ID, nil) == nil
 	if healthy {
@@ -668,7 +679,8 @@ func runUpgrade(args []string) int {
 		return lcFail("read the manifest: %v", err)
 	}
 	// For an instance that config.json does not name, the container gives the port of the
-	// server. The check of the owner keys uses only that port.
+	// server. The check of the owner keys uses only that port, and only while the container
+	// runs with it.
 	c, ok, ownErr := s.owned(ctx)
 	// The move of the keys comes first, thus it also occurs when the image does not change.
 	exit := 0
