@@ -191,7 +191,7 @@ func loginError(agent string, err error) map[string]any {
 		}
 		return sessionError(ae.Code, msg, safe)
 	}
-	return sessionError("SERVER_UNAVAILABLE", "The login got no lease: "+err.Error()+". Try again later.", true)
+	return sessionError("SERVER_UNAVAILABLE", "The login got no lease: "+noStop(err.Error())+". Try again later.", true)
 }
 
 // msgUnknownHandle is the message of SESSION_UNKNOWN for a handle that the bridge does not

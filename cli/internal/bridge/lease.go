@@ -262,10 +262,14 @@ func unavailable(l *lease, err error) (string, string) {
 		if ae.Code == "NO_FREE_SESSION" {
 			return ae.Code, msgNoFreeSession
 		}
-		return ae.Code, "The bridge got no lease for " + l.describe() + ": " + ae.Message + ". Try again later."
+		return ae.Code, "The bridge got no lease for " + l.describe() + ": " + noStop(ae.Message) + ". Try again later."
 	}
-	return "SERVER_UNAVAILABLE", "The bridge got no lease for " + l.describe() + ": " + err.Error() + ". Try again later."
+	return "SERVER_UNAVAILABLE", "The bridge got no lease for " + l.describe() + ": " + noStop(err.Error()) + ". Try again later."
 }
+
+// noStop removes the full stop at the end of a text. Each message of the server ends with a
+// full stop, and the bridge adds its own sentence after it.
+func noStop(s string) string { return strings.TrimSuffix(strings.TrimSpace(s), ".") }
 
 // logNoPool tells that the agent has no free pool session.
 func (b *Bridge) logNoPool() {
