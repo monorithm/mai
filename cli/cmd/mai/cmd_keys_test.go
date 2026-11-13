@@ -140,9 +140,9 @@ func TestUpgradeMovesEachKeyOfTheInstance(t *testing.T) {
 	k := useTestKeys(t)
 	k.legacy.Put(keys.OwnerAccount("mai"), "mai1:owner:legacy")
 	k.legacy.Put(keys.AgentAccount("mai", "cursor"), "mai1:cursor:legacy")
-	k.legacy.Put(keys.AgentAccount("mai", "codex"), "mai1:codex:old")
+	k.legacy.Put(keys.AgentAccount("mai", "codex"), "mai1:codex:same")
 	k.legacy.Put(keys.OwnerAccount("mai-dev"), "mai1:owner:dev")
-	if err := k.file.Set(keys.AgentAccount("mai", "codex"), "mai1:codex:new"); err != nil {
+	if err := k.file.Set(keys.AgentAccount("mai", "codex"), "mai1:codex:same"); err != nil {
 		t.Fatal(err)
 	}
 	m := testManifest(t,
@@ -157,7 +157,7 @@ func TestUpgradeMovesEachKeyOfTheInstance(t *testing.T) {
 	for account, want := range map[string]string{
 		keys.OwnerAccount("mai"):           "mai1:owner:legacy",
 		keys.AgentAccount("mai", "cursor"): "mai1:cursor:legacy",
-		keys.AgentAccount("mai", "codex"):  "mai1:codex:new",
+		keys.AgentAccount("mai", "codex"):  "mai1:codex:same",
 	} {
 		k.file = keys.Open(filepath.Dir(k.file.Path()), nil)
 		if got, err := k.file.Get(account); err != nil || got != want {

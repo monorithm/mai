@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 const (
@@ -469,7 +470,7 @@ func TestMoveAllMovesAndCleans(t *testing.T) {
 	dir := t.TempDir()
 	legacy := keychain.NewMemory()
 	legacy.Put(OwnerAccount("mai"), ownerKey)
-	legacy.Put(AgentAccount("mai", "cursor"), "mai1:cursor:old")
+	legacy.Put(AgentAccount("mai", "cursor"), agentKey)
 	legacy.Put(AgentAccount("mai-dev", "cursor"), "mai1:cursor:dev")
 	f := Open(dir, legacy)
 	if err := f.Set(AgentAccount("mai", "cursor"), agentKey); err != nil {
@@ -483,19 +484,20 @@ func TestMoveAllMovesAndCleans(t *testing.T) {
 	if err != nil || strings.Join(items, ",") != "agent:cursor@mai,owner@mai" {
 		t.Fatalf("legacy items = %v, %v", items, err)
 	}
-	r, err := f.MoveAll(accounts)
-	if err != nil || strings.Join(r.Moved, ",") != "owner@mai" || strings.Join(r.Cleaned, ",") != "agent:cursor@mai" || r.Unavailable {
+	r, err := f.MoveAll(accounts, nil)
+	if err != nil || strings.Join(r.Moved, ",") != "owner@mai" || strings.Join(r.Cleaned, ",") != "agent:cursor@mai" ||
+		len(r.Conflicts) != 0 || r.Unavailable {
 		t.Fatalf("MoveAll = %+v, %v", r, err)
 	}
 	d := readDoc(t, dir)
 	if d.Keys[OwnerAccount("mai")] != ownerKey || d.Keys[AgentAccount("mai", "cursor")] != agentKey {
-		t.Fatal("the key file does not have the moved key and the newer key")
+		t.Fatal("the key file does not have the moved key and the key of the key file")
 	}
 	if strings.Join(legacy.Accounts(), ",") != "agent:cursor@mai-dev" {
 		t.Fatalf("legacy items after MoveAll: %v", legacy.Accounts())
 	}
 	legacy.Err = fmt.Errorf("%w: no Secret Service", keychain.ErrUnavailable)
-	if r, err := f.MoveAll(accounts); err != nil || !r.Unavailable || len(r.Moved) != 0 {
+	if r, err := f.MoveAll(accounts, nil); err != nil || !r.Unavailable || len(r.Moved) != 0 {
 		t.Fatalf("MoveAll with no keychain = %+v, %v", r, err)
 	}
 	if _, err := f.LegacyItems(accounts); !errors.Is(err, keychain.ErrUnavailable) {
@@ -507,7 +509,7 @@ func TestMoveAllGivesEachFailure(t *testing.T) {
 	legacy := keychain.NewMemory()
 	legacy.Put(OwnerAccount("mai"), ownerKey)
 	f := Open(t.TempDir(), refuseGet{legacy})
-	r, err := f.MoveAll([]string{OwnerAccount("mai")})
+	r, err := f.MoveAll([]string{OwnerAccount("mai")}, nil)
 	if err == nil || len(r.Moved) != 0 || !strings.Contains(err.Error(), "owner@mai") {
 		t.Fatalf("MoveAll = %+v, %v", r, err)
 	}
@@ -527,7 +529,7 @@ func TestWithNoLegacyKeychainTheLegacyCallsDoNothing(t *testing.T) {
 	if err := f.DeleteLegacy(OwnerAccount("mai")); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := f.MoveAll([]string{OwnerAccount("mai")}); err != nil || len(r.Moved) != 0 {
+	if r, err := f.MoveAll([]string{OwnerAccount("mai")}, nil); err != nil || len(r.Moved) != 0 {
 		t.Fatalf("MoveAll = %+v, %v", r, err)
 	}
 }
@@ -536,3 +538,128 @@ func TestWithNoLegacyKeychainTheLegacyCallsDoNothing(t *testing.T) {
 type refuseGet struct{ *keychain.Memory }
 
 func (refuseGet) Get(string) (string, error) { return "", errors.New("the user refused the prompt") }
+
+// recordItem writes a manifest in dir that records the legacy item of the account, as mai 3.0
+// and 3.1 did.
+func recordItem(t *testing.T, dir, account string) {
+	t.Helper()
+	m, err := manifest.Load(filepath.Join(dir, manifest.FileName), InstanceOf(account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAKeychainThatIsNotAvailableGivesALegacyErrorForARecordedAccount(t *testing.T) {
+	dir := t.TempDir()
+	legacy := keychain.NewMemory()
+	legacy.Err = fmt.Errorf("%w: no session bus", keychain.ErrUnavailable)
+	f := Open(dir, legacy)
+	if _, err := f.Get(OwnerAccount("mai")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get with no record: %v, want ErrNotFound", err)
+	}
+	recordItem(t, dir, OwnerAccount("mai"))
+	_, err := f.Get(OwnerAccount("mai"))
+	var le *LegacyError
+	if !errors.As(err, &le) || errors.Is(err, ErrNotFound) || le.Account != OwnerAccount("mai") ||
+		!strings.Contains(err.Error(), "keychain is not available") || !strings.Contains(err.Error(), "do the command again") {
+		t.Fatalf("get with a record: %v, want a LegacyError with a step", err)
+	}
+	if _, err := f.Get(OwnerAccount("mai-dev")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get of a different instance: %v, want ErrNotFound", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, manifest.FileName), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Get(AgentAccount("mai", "cursor")); errors.Is(err, ErrNotFound) {
+		t.Fatal("get with a manifest that is not valid gives ErrNotFound")
+	}
+}
+
+func TestMoveAllKeepsALegacyItemWithADifferentKey(t *testing.T) {
+	dir := t.TempDir()
+	legacy := keychain.NewMemory()
+	f := Open(dir, legacy)
+	account := OwnerAccount("mai")
+	if err := f.Set(account, "mai1:owner:file"); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Put(account, "mai1:owner:item")
+	var asked []string
+	server := func(accepted string, err error) Accepts {
+		return func(a, key string) (bool, error) {
+			asked = append(asked, key)
+			return key == accepted, err
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		accepts Accepts
+	}{
+		{"no check", nil},
+		{"the server accepts the key of the item", server("mai1:owner:item", nil)},
+		{"the server refuses the two keys", server("", nil)},
+		{"the check fails", server("", errors.New("connection refused"))},
+	} {
+		r, err := f.MoveAll([]string{account}, tc.accepts)
+		if err != nil || len(r.Cleaned) != 0 || len(r.Moved) != 0 || len(r.Conflicts) != 1 || r.Conflicts[0].Account != account {
+			t.Fatalf("%s: MoveAll = %+v, %v", tc.name, r, err)
+		}
+		if got, _ := legacy.Get(account); got != "mai1:owner:item" {
+			t.Fatalf("%s: the legacy item is gone", tc.name)
+		}
+		if got := readDoc(t, dir).Keys[account]; got != "mai1:owner:file" {
+			t.Fatalf("%s: the key of the key file changed", tc.name)
+		}
+	}
+	asked = nil
+	r, err := f.MoveAll([]string{account}, server("mai1:owner:file", nil))
+	if err != nil || strings.Join(r.Cleaned, ",") != account || len(r.Conflicts) != 0 {
+		t.Fatalf("the server accepts the key of the key file: MoveAll = %+v, %v", r, err)
+	}
+	if strings.Join(asked, ",") != "mai1:owner:file,mai1:owner:item" {
+		t.Fatalf("the check asked about %d key(s), want each of the two keys", len(asked))
+	}
+	if ok, _ := legacy.Has(account); ok {
+		t.Fatal("the legacy item with the key that the server refuses stays")
+	}
+}
+
+// writeOnGet is a legacy keychain whose read writes a different key for the account to the
+// key file, as a different process can do during a move.
+type writeOnGet struct {
+	*keychain.Memory
+	dir string
+}
+
+func (w writeOnGet) Get(account string) (string, error) {
+	if err := Open(w.dir, nil).Set(account, "mai1:owner:other"); err != nil {
+		return "", err
+	}
+	return w.Memory.Get(account)
+}
+
+func TestAMoveKeepsTheLegacyItemWhenADifferentProcessWritesADifferentKey(t *testing.T) {
+	dir := t.TempDir()
+	legacy := keychain.NewMemory()
+	legacy.Put(OwnerAccount("mai"), ownerKey)
+	f := Open(dir, writeOnGet{Memory: legacy, dir: dir})
+	if got, err := f.Get(OwnerAccount("mai")); err != nil || got != "mai1:owner:other" {
+		t.Fatalf("get: %v; want the key of the key file", err)
+	}
+	if got, _ := legacy.Get(OwnerAccount("mai")); got != ownerKey {
+		t.Fatal("the legacy item with a different key is gone")
+	}
+	if err := f.Delete(OwnerAccount("mai")); err != nil {
+		t.Fatal(err)
+	}
+	r, err := f.MoveAll([]string{OwnerAccount("mai")}, nil)
+	if err != nil || len(r.Moved) != 0 || len(r.Conflicts) != 1 {
+		t.Fatalf("MoveAll = %+v, %v", r, err)
+	}
+	if ok, _ := legacy.Has(OwnerAccount("mai")); !ok {
+		t.Fatal("the legacy item is gone")
+	}
+}

@@ -183,8 +183,21 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
 - When the key file has no key for an account, the CLI reads the keychain item
   of the account. It writes the key to the key file, and then it deletes the
   keychain item. On macOS, the read can show one prompt for each item.
-- `mai upgrade` moves all the keys of the instance. When the key file has a key
-  for the account of a keychain item, it deletes the keychain item.
+- When no keychain is available and the manifest records a keychain item for
+  the account, the command gives an error with a step. Thus `mai start` does
+  not make a new owner key in place of the key of the keychain item. The
+  versions 3.0 and 3.1 did not operate with no keychain. Thus with no record,
+  no item exists.
+- `mai upgrade` moves all the keys of the instance. When the key file has the
+  same key for the account of a keychain item, `mai upgrade` deletes the
+  keychain item. A keychain item stays when the key file has a different key
+  for its account. Then `mai upgrade` gives a step and the exit code 1. For
+  the owner key, `mai upgrade` does a test of the two keys on the server. When
+  the server accepts only the key of the key file, `mai upgrade` deletes the
+  keychain item. Thus no command deletes or replaces a key that the server
+  accepts.
+- `mai agent rotate NAME` deletes the keychain item of the agent, because the
+  server then accepts only the new key.
 - `mai doctor` tells about each keychain item of the instance.
 - `mai uninstall` removes the keys of the instance from the key file and each
   keychain item of the instance. When the key file holds the keys of a

@@ -7,9 +7,9 @@
 // keys.json.lock lets one process at a time read or change the file. Thus two CLIs or
 // bridges at the same time do not lose a key.
 //
-// mai 3.0 and 3.1 kept the keys in the system keychain. When the key file has no key for an
-// account, Get reads the legacy item, writes the key to the key file, and then deletes the
-// legacy item.
+// mai 3.0 and 3.1 kept the keys in the system keychain, and the manifest of the state folder
+// recorded each item. When the key file has no key for an account, Get reads the legacy item,
+// writes the key to the key file, and then deletes the legacy item.
 //
 // On a self-run instance, a program that can use the Docker socket controls mai fully. Thus
 // the key file gives the same protection as the keychain, with no prompt.
@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
@@ -83,15 +84,23 @@ func (f *File) Path() string { return f.path }
 func (f *File) HasLegacy() bool { return f.legacy != nil }
 
 // LegacyError means that the key file has no key for the account, and that the read of its
-// legacy keychain item failed, for example because the user refused the prompt of macOS.
-// It is not ErrNotFound: the legacy item can hold the key.
+// legacy keychain item failed, for example because the user refused the prompt of macOS. It
+// is not ErrNotFound: the legacy item can hold the key. A keychain that is not available
+// gives a LegacyError only when the manifest records a legacy item for the account. The text
+// of the error gives the step for the user.
 type LegacyError struct {
 	Account string
 	Err     error
 }
 
 func (e *LegacyError) Error() string {
-	return "keys: the key file has no key for " + e.Account + ", and the read of its keychain item failed: " + e.Err.Error()
+	if errors.Is(e.Err, keychain.ErrUnavailable) {
+		return "keys: the key file has no key for " + e.Account + ", and the keychain is not available (" + e.Err.Error() +
+			"). The manifest records a keychain item of mai 3.0 or 3.1 for this account. " +
+			"Make the keychain available, for example in a desktop session of the user, and then do the command again"
+	}
+	return "keys: the key file has no key for " + e.Account + ", and the read of its keychain item failed: " + e.Err.Error() +
+		". Unlock the keychain and let mai read the item, and then do the command again"
 }
 
 func (e *LegacyError) Unwrap() error { return e.Err }
@@ -110,7 +119,9 @@ func (e *ModeError) Error() string {
 
 // Get gives the key of the account. When the key file has no key for the account, Get moves
 // the legacy keychain item of the account to the key file. It gives ErrNotFound when no key
-// exists, also when no keychain is available.
+// exists. When no keychain is available, Get gives ErrNotFound only when the manifest records
+// no legacy item for the account. mai 3.0 and 3.1 did not operate with no keychain, thus
+// then no legacy item exists.
 func (f *File) Get(account string) (string, error) {
 	var key string
 	var ok bool
@@ -123,23 +134,27 @@ func (f *File) Get(account string) (string, error) {
 	if f.legacy == nil {
 		return "", ErrNotFound
 	}
-	return f.move(account)
+	key, _, err := f.move(account)
+	return key, err
 }
 
 // move reads the legacy item of the account, writes it to the key file, and then deletes the
 // legacy item. When a different process wrote a key for the account in the meantime, that
-// key stays, and move gives it. When the write fails, the legacy item stays.
-func (f *File) move(account string) (string, error) {
+// key stays, and move gives it. Then the legacy item stays if it holds a different key, and
+// same is false. When the write fails, the legacy item stays.
+func (f *File) move(account string) (key string, same bool, err error) {
 	secret, err := f.legacy.Get(account)
 	switch {
-	case errors.Is(err, keychain.ErrNotFound), errors.Is(err, keychain.ErrUnavailable):
-		return "", ErrNotFound
+	case errors.Is(err, keychain.ErrNotFound):
+		return "", false, ErrNotFound
+	case errors.Is(err, keychain.ErrUnavailable) && !f.recorded(account):
+		return "", false, ErrNotFound
 	case err != nil:
-		return "", &LegacyError{Account: account, Err: err}
+		return "", false, &LegacyError{Account: account, Err: err}
 	case secret == "":
-		return "", ErrNotFound
+		return "", false, ErrNotFound
 	}
-	key := secret
+	key = secret
 	err = f.update(func(d *doc) bool {
 		if k, ok := d.Keys[account]; ok {
 			key = k
@@ -149,12 +164,33 @@ func (f *File) move(account string) (string, error) {
 		return true
 	})
 	if err != nil {
-		return "", fmt.Errorf("keys: move %s from the keychain to the key file: %w", account, err)
+		return "", false, fmt.Errorf("keys: move %s from the keychain to the key file: %w", account, err)
+	}
+	if key != secret {
+		// Nothing tells which of the two keys the server accepts, thus the legacy item stays.
+		// "mai upgrade" tells about it.
+		return key, false, nil
 	}
 	// The key is in the key file. When the delete fails, the legacy item stays, and
 	// "mai doctor" tells about it.
 	_ = f.DeleteLegacy(account)
-	return key, nil
+	return key, true, nil
+}
+
+// recorded tells if the manifest in the folder of the key file records a legacy keychain item
+// for the account. mai 3.0 and 3.1 recorded each item that they wrote. When the manifest
+// cannot be read, recorded gives true, because the item can exist.
+func (f *File) recorded(account string) bool {
+	m, err := manifest.Load(filepath.Join(filepath.Dir(f.path), manifest.FileName), InstanceOf(account))
+	if err != nil {
+		return true
+	}
+	for _, it := range m.Of(manifest.KeychainKey) {
+		if it.Name == account {
+			return true
+		}
+	}
+	return false
 }
 
 // Set writes the key of the account to the key file.
@@ -300,15 +336,38 @@ type MoveReport struct {
 	// Moved holds each account whose key went from the keychain to the key file.
 	Moved []string
 	// Cleaned holds each account whose legacy item MoveAll deleted, because the key file
-	// had a key for it. The key of the key file is the newer key.
+	// had the same key, or because the server accepts the key of the key file and refuses
+	// the key of the legacy item.
 	Cleaned []string
+	// Conflicts holds each legacy item that stays, because the key file has a different key
+	// for its account, and nothing proves that the server accepts the key of the key file.
+	// A conflict is not in the error of MoveAll.
+	Conflicts []Conflict
 	// Unavailable is true when no keychain is available. Then MoveAll moved no key.
 	Unavailable bool
 }
 
-// MoveAll moves the legacy keychain item of each account to the key file, and deletes each
-// legacy item whose account the key file has. The error joins the failure of each account.
-func (f *File) MoveAll(accounts []string) (MoveReport, error) {
+// Conflict is a legacy item whose key is not the key of the key file, with the result of the
+// check of the server. The legacy item and the key of the key file stay.
+type Conflict struct {
+	Account string
+	// FileAccepted and LegacyAccepted tell if the server accepts the key of the key file and
+	// the key of the legacy item.
+	FileAccepted, LegacyAccepted bool
+	// Err is the error of the check of the server, or nil.
+	Err error
+}
+
+// Accepts tells if the server accepts the key of the account. It gives an error when it
+// cannot tell, for example when the server does not run.
+type Accepts func(account, key string) (bool, error)
+
+// MoveAll moves the legacy keychain item of each account to the key file. When the key file
+// has a key for the account of a legacy item, MoveAll deletes the legacy item only when it
+// holds the same key, or when accepts tells that the server accepts the key of the key file
+// and refuses the key of the legacy item. Else the legacy item stays, and the report has a
+// conflict. accepts can be nil. The error joins the failure of each account.
+func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 	var r MoveReport
 	if f.legacy == nil {
 		return r, nil
@@ -327,25 +386,51 @@ func (f *File) MoveAll(accounts []string) (MoveReport, error) {
 		if !ok {
 			continue
 		}
-		inFile, err := f.Has(a)
-		if err != nil {
+		var key string
+		var inFile bool
+		if err := f.view(func(d *doc) { key, inFile = d.Keys[a] }); err != nil {
 			return r, err
 		}
-		if inFile {
-			if err := f.DeleteLegacy(a); err != nil {
-				errs = append(errs, fmt.Errorf("delete the keychain item %s: %w", a, err))
+		if !inFile {
+			_, same, err := f.move(a)
+			switch {
+			case errors.Is(err, ErrNotFound):
+			case err != nil:
+				errs = append(errs, err)
+			case !same:
+				// A different process wrote a different key in the meantime.
+				r.Conflicts = append(r.Conflicts, Conflict{Account: a})
+			default:
+				r.Moved = append(r.Moved, a)
+			}
+			continue
+		}
+		secret, err := f.legacy.Get(a)
+		switch {
+		case errors.Is(err, keychain.ErrNotFound):
+			continue
+		case err != nil:
+			errs = append(errs, &LegacyError{Account: a, Err: err})
+			continue
+		}
+		if secret != key {
+			c := Conflict{Account: a}
+			if accepts != nil {
+				c.FileAccepted, c.Err = accepts(a, key)
+				if c.Err == nil {
+					c.LegacyAccepted, c.Err = accepts(a, secret)
+				}
+			}
+			if c.Err != nil || !c.FileAccepted || c.LegacyAccepted {
+				r.Conflicts = append(r.Conflicts, c)
 				continue
 			}
-			r.Cleaned = append(r.Cleaned, a)
+		}
+		if err := f.DeleteLegacy(a); err != nil {
+			errs = append(errs, fmt.Errorf("delete the keychain item %s: %w", a, err))
 			continue
 		}
-		if _, err := f.move(a); err != nil {
-			if !errors.Is(err, ErrNotFound) {
-				errs = append(errs, err)
-			}
-			continue
-		}
-		r.Moved = append(r.Moved, a)
+		r.Cleaned = append(r.Cleaned, a)
 	}
 	return r, errors.Join(errs...)
 }

@@ -102,8 +102,14 @@ func runAgent(args []string, out, errOut io.Writer) int {
 		if err != nil {
 			return fail(errOut, err)
 		}
-		if err := kf.Set(keys.AgentAccount(cfg.Instance, name), key); err != nil {
+		account := keys.AgentAccount(cfg.Instance, name)
+		if err := kf.Set(account, key); err != nil {
 			return fail(errOut, fmt.Errorf("keep the agent key: %w; run mai agent rotate %s again", err, name))
+		}
+		// The server now accepts only the new key. Thus a legacy keychain item of the agent
+		// holds a key that is not valid, and it goes.
+		if err := removeLegacyItem(kf, m, account, errOut); err != nil {
+			return fail(errOut, err)
 		}
 		fmt.Fprintln(out, name)
 		return 0
@@ -128,16 +134,9 @@ func runAgent(args []string, out, errOut io.Writer) int {
 			if err := kf.Delete(account); err != nil && !errors.Is(err, keys.ErrNotFound) {
 				return fail(errOut, fmt.Errorf("remove the agent key: %w", err))
 			}
-			// A legacy keychain item of the agent also goes. Its record in the manifest stays
-			// until the item is gone, thus "mai uninstall" can remove the item.
-			switch err := kf.DeleteLegacy(account); {
-			case errors.Is(err, keychain.ErrUnavailable):
-			case err != nil:
-				fmt.Fprintf(errOut, "mai: the keychain item %s stays: %v\n", account, err)
-			default:
-				if err := m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
-					return fail(errOut, err)
-				}
+			// A legacy keychain item of the agent also goes.
+			if err := removeLegacyItem(kf, m, account, errOut); err != nil {
+				return fail(errOut, err)
 			}
 			fmt.Fprintln(out, name)
 		}
@@ -145,6 +144,20 @@ func runAgent(args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintln(errOut, use)
 	return 2
+}
+
+// removeLegacyItem removes the legacy keychain item of the account, and then its record in
+// the manifest. When the item stays, the record also stays, thus "mai uninstall" can remove
+// the item.
+func removeLegacyItem(kf *keys.File, m *manifest.Manifest, account string, errOut io.Writer) error {
+	switch err := kf.DeleteLegacy(account); {
+	case errors.Is(err, keychain.ErrUnavailable):
+	case err != nil:
+		fmt.Fprintf(errOut, "mai: the keychain item %s stays: %v\n", account, err)
+	default:
+		return m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account})
+	}
+	return nil
 }
 
 // sessionUse is the usage text of mai session.

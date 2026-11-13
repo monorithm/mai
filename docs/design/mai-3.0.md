@@ -561,9 +561,17 @@ binary that wrote it.
   item of the account. It writes the key to the key file, and then it deletes
   the keychain item. If the write is not successful, the keychain item stays.
   On macOS, the read can show one prompt for each item.
-- `mai upgrade` moves all the keys of the instance. When the key file has a
-  key for the account of a keychain item, the key of the key file is newer.
-  Then the CLI deletes the keychain item.
+- When no keychain is available and the manifest records a keychain item for
+  the account, the command gives an error with a step. Thus the CLI does not
+  make a new key in place of the key of the item. 3.0 and 3.1 did not operate
+  with no keychain. Thus with no record, no keychain item exists.
+- `mai upgrade` moves all the keys of the instance. When the key file has the
+  same key for the account of a keychain item, the CLI deletes the keychain
+  item. A keychain item stays when the key file has a different key for its
+  account. Then `mai upgrade` gives a step and the exit code 1. For the owner
+  key, `mai upgrade` does a test of the two keys on the server. When the
+  server accepts only the key of the key file, the CLI deletes the keychain
+  item. Thus no command deletes or replaces a key that the server accepts.
 - `mai doctor` tells about each keychain item of the instance. It reads no
   key, thus macOS shows no prompt.
 - `mai uninstall` removes the keys of the instance from the key file and each

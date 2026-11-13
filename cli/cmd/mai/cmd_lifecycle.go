@@ -621,9 +621,11 @@ func lcRecordedKeys(m *manifest.Manifest) []string {
 	return out
 }
 
-// lcMoveKeys moves each key of the instance from the legacy keychain to the key file, and
-// removes each legacy item whose account the key file has. It removes the record of each
-// legacy item that is gone from the manifest. It gives false when a key did not move.
+// lcMoveKeys moves each key of the instance from the legacy keychain to the key file. It
+// removes a legacy item whose account the key file has only when the item holds the same key,
+// or when the server accepts only the key of the key file. It removes the record of each
+// legacy item that is gone from the manifest. It gives false when a key did not move, or when
+// a legacy item stays.
 func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 	kf, err := openKeys()
 	if err != nil {
@@ -633,19 +635,37 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 	if !kf.HasLegacy() {
 		return true
 	}
-	candidates, err := kf.Candidates(instance, lcRecordedKeys(m))
+	recorded := lcRecordedKeys(m)
+	candidates, err := kf.Candidates(instance, recorded)
 	if err != nil {
 		fmt.Fprintf(lcErr, "mai: the key file: %v\n", err)
 		return false
 	}
-	r, err := kf.MoveAll(candidates)
+	r, err := kf.MoveAll(candidates, lcOwnerCheck(instance))
 	if len(r.Moved) > 0 {
 		fmt.Fprintf(lcOut, "mai: moved %d key(s) from the keychain to the key file %s: %s\n",
 			len(r.Moved), kf.Path(), strings.Join(r.Moved, ", "))
 	}
 	if len(r.Cleaned) > 0 {
-		fmt.Fprintf(lcOut, "mai: removed %d old keychain item(s), because the key file has a newer key: %s\n",
+		fmt.Fprintf(lcOut, "mai: removed %d old keychain item(s), because the key file has the same key, "+
+			"or because the server accepts only the key of the key file: %s\n",
 			len(r.Cleaned), strings.Join(r.Cleaned, ", "))
+	}
+	for _, c := range r.Conflicts {
+		fmt.Fprintf(lcErr, "mai: the keychain item %s stays: %s\n", c.Account, lcConflictText(instance, kf.Path(), c))
+	}
+	var mine []string
+	for _, a := range recorded {
+		if keys.InstanceOf(a) == instance {
+			mine = append(mine, a)
+		}
+	}
+	if r.Unavailable && len(mine) > 0 {
+		// mai 3.0 and 3.1 did not operate with no keychain. Thus only a recorded item can exist.
+		fmt.Fprintf(lcErr, "mai: the keychain is not available, thus the keys of mai 3.0 or 3.1 did not move: %s. "+
+			"The manifest records these keychain items. Make the keychain available, for example in a desktop session of the user, "+
+			"and then run mai upgrade again.\n", strings.Join(mine, ", "))
+		return false
 	}
 	for _, it := range m.Of(manifest.KeychainKey) {
 		if keys.InstanceOf(it.Name) != instance {
@@ -659,7 +679,80 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run mai upgrade again.\n", err)
 		return false
 	}
-	return true
+	return len(r.Conflicts) == 0
+}
+
+// errNoAgentCheck means that the CLI has no check of an agent key on the server. A lease
+// request with the key is not a check, because it takes a session.
+var errNoAgentCheck = errors.New("the CLI cannot ask the server about an agent key")
+
+// lcOwnerCheck gives the check of the server for a legacy item whose key is not the key of the
+// key file. Only the owner key has a check: an owner API call with the key.
+func lcOwnerCheck(instance string) keys.Accepts {
+	return func(account, key string) (bool, error) {
+		if account != keys.OwnerAccount(instance) {
+			return false, errNoAgentCheck
+		}
+		dirs, err := paths.Default()
+		if err != nil {
+			return false, err
+		}
+		cfg, err := config.Load(dirs.Config)
+		if err != nil {
+			return false, err
+		}
+		return lcOwnerKeyAccepted(cfg.Port, key)
+	}
+}
+
+// lcOwnerKeyAccepted tells if the server at the port accepts the owner key. It gives an error
+// when the server gives no answer, or an answer that is not 200 or 401.
+func lcOwnerKeyAccepted(port int, key string) (bool, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+"/api/agents", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	c := &http.Client{Timeout: 5 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusUnauthorized:
+		return false, nil
+	}
+	return false, fmt.Errorf("GET /api/agents gave HTTP %d", resp.StatusCode)
+}
+
+// lcConflictText tells why a legacy item stays, and gives the step for the user.
+func lcConflictText(instance, path string, c keys.Conflict) string {
+	owner := keys.OwnerAccount(instance)
+	if c.Account != owner {
+		name := strings.TrimSuffix(strings.TrimPrefix(c.Account, "agent:"), "@"+instance)
+		return fmt.Sprintf("the key file %s has a different key for this account. "+
+			"Step: run mai agent rotate %s. The server then accepts only the new key, and the command removes the keychain item.",
+			path, name)
+	}
+	switch {
+	case c.Err != nil:
+		return fmt.Sprintf("the key file %s has a different owner key, and the check of the server failed: %v. "+
+			"Step: start the server with mai start, and then run mai upgrade again.", path, c.Err)
+	case c.LegacyAccepted && !c.FileAccepted:
+		return fmt.Sprintf("the server accepts the key of the keychain item, and it refuses the owner key of the key file %s. "+
+			"Step: remove the account %s from the key file, and then run mai upgrade again. "+
+			"The move then puts the key of the keychain item in the key file.", path, owner)
+	case !c.LegacyAccepted && !c.FileAccepted:
+		return fmt.Sprintf("the key file %s has a different owner key, and the server refuses the two keys. "+
+			"Step: give the owner key of the key file to the server with mai exec -- mai owner set-key --replace, "+
+			"which reads the key on stdin. Then run mai upgrade again.", path)
+	}
+	return fmt.Sprintf("the key file %s has a different owner key, and the server accepts the two keys. "+
+		"Step: run mai upgrade again.", path)
 }
 
 func runDoctor(args []string) int {
