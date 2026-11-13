@@ -72,6 +72,11 @@ that no pool session is free. With this lease:
 - The notice file has no pool entry. When a heartbeat gives the pool
   session, the bridge writes the notice file again with the pool entry.
 
+Each time that the bridge gets a new lease, it writes the notice file
+immediately. A heartbeat or a tool call can get the new lease. Thus the
+notice file always has the pool session of the current pool lease, or no
+pool entry when the pool lease has no session.
+
 ### Errors of a lease request
 
 When the server does not know a lease, for example after a restart of the
@@ -90,7 +95,10 @@ with the code of the server. When the server gives no code, the code is
 true. The next call or heartbeat sends the lease request again.
 
 A login that gets an HTTP 5xx error, an error with no code, or a network
-error also gives a tool error with `retry_safe` true.
+error also gives a tool error with `retry_safe` true. This is also true when
+the server gives `retry_safe` false, for example with HTTP 502
+`LOGIN_FAILED`. A login that gets an HTTP 4xx error gives the `retry_safe`
+of the server.
 
 ### Logout and stop
 
@@ -103,6 +111,12 @@ The bridge stops when the app closes the stdin of the bridge. On Unix, the
 bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on
 Ctrl+C or when the console closes. Before it stops, it ends each lease and
 removes its notice file.
+
+The server makes a lease before it sends the result of the lease request.
+Thus the bridge does not stop a lease request that it sent. When a logout
+or a stop occurs during a lease request, the bridge waits for the result,
+for a maximum of 30 seconds. Then it ends that lease also. Thus no lease of
+the bridge stays on the server after a logout or a stop.
 
 ## Server CLI
 
