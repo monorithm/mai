@@ -83,12 +83,47 @@ func TestUninstallTellsAboutAKeychainError(t *testing.T) {
 	e := setup(t)
 	e.kc.Err = errors.New("the keychain is locked")
 	var out bytes.Buffer
-	if code := e.uninstaller(&out).Run(context.Background()); code != 0 {
-		t.Fatalf("exit %d:\n%s", code, out.String())
+	if code := e.uninstaller(&out).Run(context.Background()); code != 1 {
+		t.Fatalf("exit %d, want 1:\n%s", code, out.String())
 	}
-	for _, want := range []string{"keychain   dev.mai: not examined: the keychain is locked", "skipped  keychain dev.mai: the examination"} {
+	for _, want := range []string{
+		"keychain   dev.mai: not examined: the keychain is locked",
+		"keychain   dev.mai / owner@mai (if the item exists)",
+		"failure  keychain dev.mai / owner@mai: check failed: the keychain is locked",
+	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output has no %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// hasFails is a legacy keychain whose examination is not successful. Its read and its delete
+// operate.
+type hasFails struct{ *keychain.Memory }
+
+func (hasFails) Has(string) (bool, error) { return false, errors.New("the keychain is locked") }
+
+// When the examination of the keychain is not successful, each account of the instance can
+// have a legacy item. The uninstall deletes the item of each account. It cannot make sure that the items
+// are gone, thus it gives a failure and the exit code 1.
+func TestAFailedExaminationOfTheKeychainRemovesEachLegacyItem(t *testing.T) {
+	e := setup(t)
+	e.kc.Put(keys.OwnerAccount("mai-dev"), "mai1:owner:dev")
+	e.keys = keys.Open(e.dirs.State, hasFails{e.kc})
+	var out bytes.Buffer
+	if code := e.uninstaller(&out).Run(context.Background()); code != 1 {
+		t.Fatalf("exit %d, want 1:\n%s", code, out.String())
+	}
+	if got := strings.Join(e.kc.Accounts(), ","); got != "owner@mai-dev" {
+		t.Fatalf("the legacy items after the uninstall are %s, want only the item of mai-dev", got)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"failure  keychain dev.mai / agent:cursor@mai: check failed: the keychain is locked",
+		"failure  keychain dev.mai / owner@mai: check failed: the keychain is locked",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the output has no %q:\n%s", want, text)
 		}
 	}
 }

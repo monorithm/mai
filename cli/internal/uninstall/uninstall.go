@@ -159,6 +159,13 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 			return nil, fmt.Errorf("read the key file: %w", err)
 		}
 		p.Legacy, p.LegacyErr = u.Keys.LegacyItems(candidates)
+		if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+			// The examination failed, thus each candidate can have an item. The remove
+			// deletes the item of each candidate and does a check of it.
+			for _, a := range candidates {
+				p.Legacy = appendNew(p.Legacy, a)
+			}
+		}
 	}
 	// A file of an app can hold content of the user after mai connect made it, thus it does
 	// not go with the folders of mai.
@@ -201,8 +208,12 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 	for _, k := range p.Keys {
 		fmt.Fprintf(w, "  key        %s (in %s)\n", k, u.Keys.Path())
 	}
+	note := "an item of mai 3.0 or 3.1"
+	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+		note = "if the item exists"
+	}
 	for _, k := range p.Legacy {
-		fmt.Fprintf(w, "  keychain   %s / %s (an item of mai 3.0 or 3.1)\n", keychain.Service, k)
+		fmt.Fprintf(w, "  keychain   %s / %s (%s)\n", keychain.Service, k, note)
 	}
 	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
 		fmt.Fprintf(w, "  keychain   %s: not examined: %v\n", keychain.Service, p.LegacyErr)
@@ -501,10 +512,6 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	for _, k := range p.Legacy {
 		err := u.Keys.DeleteLegacy(k)
 		rs = append(rs, check("keychain "+keychain.Service+" / "+k, err, func() (bool, error) { return u.Keys.HasLegacyItem(k) }))
-	}
-	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
-		rs = append(rs, Result{Item: "keychain " + keychain.Service, State: Skipped,
-			Detail: "the examination of the items of the instance failed: " + p.LegacyErr.Error()})
 	}
 	rest, err := u.Keys.Accounts()
 	if err != nil {
