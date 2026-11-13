@@ -87,11 +87,18 @@ type Plan struct {
 	Images     []manifest.Item
 	AppEntries []manifest.Item
 	AppFiles   []manifest.Item // files of apps that mai connect made
-	Keys       []string        // accounts of the instance in the key file
-	Legacy     []string        // accounts of the instance with a legacy keychain item
-	LegacyErr  error           // the error of the examination of the legacy keychain
-	Paths      []string
-	DataDirs   []string // the data folders of the instance in Paths
+	// KeptEntries and KeptFiles hold the app entries and the files of apps of the instance that
+	// stay, because a different instance has keys or records. An entry names no instance, thus
+	// it serves the instance of config.json at each start of its bridge. Their records get the
+	// instance EntryOwner, thus the uninstall of the last instance removes them.
+	KeptEntries []manifest.Item
+	KeptFiles   []manifest.Item
+	EntryOwner  string
+	Keys        []string // accounts of the instance in the key file
+	Legacy      []string // accounts of the instance with a legacy keychain item
+	LegacyErr   error    // the error of the examination of the legacy keychain
+	Paths       []string
+	DataDirs    []string // the data folders of the instance in Paths
 	// Unowned holds each data folder of a record of mai 3.0 or 3.1 whose instance is not
 	// known. It stays.
 	Unowned []string
@@ -244,6 +251,13 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 		keyOthers = instancesExcept(accountInstances(all), inst)
 	}
 	p.Others = union(keyOthers, instancesExcept(man.Instances(), inst))
+	if len(p.Others) > 0 && len(p.AppEntries)+len(p.AppFiles) > 0 {
+		p.KeptEntries, p.KeptFiles, p.AppEntries, p.AppFiles = p.AppEntries, p.AppFiles, nil, nil
+		p.EntryOwner = p.Others[0]
+		if holds(p.Others, cfg.Instance) {
+			p.EntryOwner = cfg.Instance
+		}
+	}
 	return p, nil
 }
 
@@ -394,6 +408,9 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 	}
 	if len(p.Others) > 0 {
 		what := "the files of the CLI that they use stay"
+		if len(p.KeptEntries) > 0 {
+			what += ", the app entries of mai connect stay"
+		}
 		if u.Binary != nil {
 			what += ", and the binary " + u.Binary.Path + " stays"
 		}
@@ -678,6 +695,14 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}
 		rs = append(rs, Result{Item: item, State: Gone})
 	}
+	for _, it := range p.KeptEntries {
+		rs = append(rs, Result{Item: "app entry " + it.Name + " in " + it.Path, State: Kept,
+			Detail: "it stays, because the instances " + strings.Join(p.Others, ", ") + " have keys or records. " +
+				"The entry names no instance, thus its bridge uses the instance of config.json. To remove it, run mai disconnect " + it.Name})
+	}
+	for _, it := range p.KeptFiles {
+		rs = append(rs, Result{Item: "app file " + it.Path, State: Kept, Detail: "it holds an app entry that stays"})
+	}
 	for _, it := range p.AppFiles {
 		item := "app file " + it.Path
 		if RemoveCreatedAppFile == nil {
@@ -812,15 +837,19 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 	stay := legacyStay(rs)
 	recOthers := instancesExcept(p.Manifest.Instances(), p.Instance)
 	p.Others = union(keyOthers, recOthers)
-	if len(stay) > 0 || len(recOthers) > 0 {
+	entries := append(append([]manifest.Item(nil), p.KeptEntries...), p.KeptFiles...)
+	if len(stay) > 0 || len(recOthers) > 0 || len(entries) > 0 {
 		text := "the manifest with the records of the keychain items"
-		if len(recOthers) > 0 {
+		switch {
+		case len(recOthers) > 0:
 			text = "the manifest with the records of a different instance"
+		case len(entries) > 0:
+			text = "the manifest with the records of the app entries that stay"
 		}
 		// The manifest stays also when the write fails, because it can hold the records of a
 		// different instance.
 		keep = append(keep, keptPath{p.Manifest.Path(), text})
-		if err := keepRecords(p.Manifest, p.Instance, stay); err != nil {
+		if err := keepRecords(p.Manifest, p.Instance, stay, entries, p.EntryOwner); err != nil {
 			rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
 		} else {
 			if len(stay) > 0 {
@@ -832,7 +861,7 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 					p.Manifest.Path(), strings.Join(recOthers, ", "))
 			}
 		}
-		if len(recOthers) > 0 && len(p.Manifest.Of(manifest.AppEntry)) > 0 {
+		if (len(recOthers) > 0 || len(entries) > 0) && len(p.Manifest.Of(manifest.AppEntry)) > 0 {
 			keep = append(keep, keptPath{filepath.Join(u.Dirs.State, entriesFolder), "the records of the app entries of a different instance"})
 		}
 	}
@@ -935,14 +964,23 @@ func legacyStays(rs []Result) bool { return len(legacyStay(rs)) > 0 }
 
 // keepRecords removes each record of the instance from the manifest, except the record of
 // each legacy keychain item of stay. A subsequent uninstall reads the records, and removes the
-// items. The records of the other instances stay.
-func keepRecords(m *manifest.Manifest, instance string, stay []string) error {
+// items. The records of the other instances stay. The record of each item of entries also
+// stays, with the instance owner.
+func keepRecords(m *manifest.Manifest, instance string, stay []string, entries []manifest.Item, owner string) error {
 	want := map[string]bool{}
 	for _, a := range stay {
 		want[a] = true
 	}
+	kept := func(it manifest.Item) bool {
+		for _, e := range entries {
+			if e.Type == it.Type && e.Name == it.Name && e.Path == it.Path && e.Pointer == it.Pointer {
+				return true
+			}
+		}
+		return false
+	}
 	for _, it := range append([]manifest.Item(nil), m.Items...) {
-		if it.Instance != instance || (it.Type == manifest.KeychainKey && want[it.Name]) {
+		if it.Instance != instance || (it.Type == manifest.KeychainKey && want[it.Name]) || kept(it) {
 			continue
 		}
 		if err := m.Remove(it); err != nil {
@@ -951,6 +989,12 @@ func keepRecords(m *manifest.Manifest, instance string, stay []string) error {
 	}
 	for _, a := range stay {
 		if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: a}); err != nil {
+			return err
+		}
+	}
+	for _, it := range entries {
+		it.Instance = owner
+		if err := m.Add(it); err != nil {
 			return err
 		}
 	}

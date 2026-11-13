@@ -83,7 +83,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   key file or records in the manifest, some files of the CLI stay. The key
   file stays, and the manifest stays with the records of the other
   instances. The configuration file of such an instance and the binary also
-  stay. When a keychain item of the instance stays, for example because no
+  stay. The entries that `mai connect` wrote in the files of the apps also
+  stay, because an entry names no instance. Its bridge uses the instance of
+  `config.json`. The uninstall of the last instance removes these entries.
+  When a keychain item of the instance stays, for example because no
   keychain is available, `mai uninstall` gives a step and the exit code 1.
   Then the manifest stays with the record of each such item, and the binary
   also stays. Thus a subsequent `mai uninstall` can remove the items.

@@ -215,3 +215,30 @@ func TestUninstallOfAnInstanceRemovesOrReportsItsDataFolderInAManifestOf31(t *te
 		t.Fatalf("mai uninstall --instance mai-dev keeps its data folder %s and does not report it:\n%s", data, out.String())
 	}
 }
+
+// The entry that mai connect writes is "mai mcp --agent NAME". It names no instance: the bridge
+// uses the instance of config.json. After "mai start --instance mai-dev --port N",
+// config.json names mai-dev, thus the app entry that mai connect wrote for mai now serves
+// mai-dev. "mai uninstall --instance mai" must keep it while mai-dev stays, as it keeps the
+// binary for the bridges of mai-dev.
+func TestUninstallOfAnInstanceKeepsTheAppEntryThatTheInstanceOfConfigUses(t *testing.T) {
+	e := setup(t)
+	addInstance(t, e, "mai-dev")
+	if err := e.keys.Set(keys.AgentAccount("mai-dev", "cursor"), "mai1:cursor:dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai-dev","port":18766}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var removed []manifest.Item
+	RemoveAppEntry = func(it manifest.Item) error { removed = append(removed, it); return nil }
+	t.Cleanup(func() { RemoveAppEntry = nil })
+	var out bytes.Buffer
+	u := e.uninstaller(&out)
+	u.Instance = "mai"
+	_ = u.Run(context.Background())
+	if len(removed) > 0 {
+		t.Fatalf("mai uninstall --instance mai removed the app entry %s in %s, which the bridges of mai-dev, the instance of config.json, use:\n%s",
+			removed[0].Name, removed[0].Path, out.String())
+	}
+}

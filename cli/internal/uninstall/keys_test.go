@@ -43,8 +43,17 @@ func TestUninstallKeepsTheKeysOfADifferentInstance(t *testing.T) {
 	if err != nil || strings.Join(all, ",") != "owner@mai-dev" {
 		t.Fatalf("the key file holds %v, %v", all, err)
 	}
-	if got := names(t, e.dirs.State); got != "keys.json,keys.json.lock" {
+	// The app entry of mai names no instance, thus it stays for the bridges of mai-dev. The
+	// manifest stays with its record, thus the uninstall of mai-dev can remove it.
+	if got := names(t, e.dirs.State); got != "keys.json,keys.json.lock,manifest.json" {
 		t.Fatalf("the state folder holds %s", got)
+	}
+	m, err := manifest.Load(filepath.Join(e.dirs.State, manifest.FileName), "mai-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.OfInstance("mai-dev", manifest.AppEntry); len(got) != 1 || len(m.Items) != 1 {
+		t.Fatalf("the manifest holds %+v", m.Items)
 	}
 	for _, d := range []string{e.dirs.Config, e.dirs.Cache} {
 		if _, err := os.Stat(d); !errors.Is(err, os.ErrNotExist) {
@@ -55,7 +64,8 @@ func TestUninstallKeepsTheKeysOfADifferentInstance(t *testing.T) {
 		t.Fatalf("the legacy items are %v", e.kc.Accounts())
 	}
 	text := out.String()
-	for _, want := range []string{"kept     folder " + e.dirs.State, "it holds the keys of the instances: mai-dev", "gone     key owner@mai"} {
+	for _, want := range []string{"kept     folder " + e.dirs.State, "it holds the keys of the instances: mai-dev", "gone     key owner@mai",
+		"kept     app entry cursor in " + e.app} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the output has no %q:\n%s", want, text)
 		}

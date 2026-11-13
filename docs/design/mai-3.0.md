@@ -720,6 +720,9 @@ with the folder as its mount at `/data`, or `config.json` with that
    image that a different container uses.
 5. The entries that `mai connect` wrote in the files of the apps. If you
    changed an entry, the CLI shows the difference and waits for your decision.
+   An entry names no instance, and its bridge uses the instance of
+   `config.json`. Thus the entries stay while a different instance has keys
+   or records, and the uninstall of the last instance removes them.
 6. The keys of the instance in the key file, and each keychain item of the
    instance from 3.0 and 3.1 (service `dev.mai`).
 7. The configuration folder, the state folder (manifest, notice files, and
