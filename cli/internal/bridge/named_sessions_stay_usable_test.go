@@ -185,6 +185,53 @@ func TestALoginWithAServerErrorGivesARetrySafeToolError(t *testing.T) {
 	h.stop(t)
 }
 
+// coded gives a handler that answers each named lease request with the HTTP status and the
+// error body.
+func coded(status int, body string) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isNamedRequest(r) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(body))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// A login that gets an HTTP 5xx error with a code gives that code with retry_safe true, also
+// when the server gives retry_safe false. The server gives HTTP 502 LOGIN_FAILED with
+// retry_safe false when its mail login of a lease request fails.
+func TestALoginThatGetsAnHTTP5xxErrorGivesRetrySafeTrue(t *testing.T) {
+	h := newWrappedHarness(t, coded(http.StatusBadGateway,
+		`{"error":{"code":"LOGIN_FAILED","message":"The login or the secret is not correct.","retry_safe":false}}`))
+	h.start(context.Background())
+	wantRetrySafe(t, h.call(t, 1, "login", map[string]any{"session": "lane-a"}), "LOGIN_FAILED")
+	h.stop(t)
+}
+
+// A login that gets an HTTP 4xx error with a code gives the retry_safe of the server, or
+// false when the answer has no retry_safe.
+func TestALoginThatGetsAnHTTP4xxErrorGivesTheRetrySafeOfTheServer(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{"error":{"code":"SESSION_BUSY","message":"busy","retry_safe":true}}`, true},
+		{`{"error":{"code":"SESSION_BUSY","message":"busy"}}`, false},
+	} {
+		h := newWrappedHarness(t, coded(http.StatusConflict, tc.body))
+		h.start(context.Background())
+		e := toolErr(t, h.call(t, 1, "login", map[string]any{"session": "lane-a"}))
+		if e["code"] != "SESSION_BUSY" || e["retry_safe"] != tc.want {
+			t.Fatalf("login with the answer %s = %v, want SESSION_BUSY and retry_safe %v", tc.body, e, tc.want)
+		}
+		h.stop(t)
+	}
+}
+
 // While one chat logs out of lane-a, a second chat of the same bridge logs in to lane-a. The
 // bridge holds the only lease of lane-a, thus the login must not get SESSION_BUSY.
 func TestALoginDuringALogoutOfTheSameSessionIsNotBusy(t *testing.T) {

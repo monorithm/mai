@@ -137,9 +137,17 @@ func sessionError(code, message string, retrySafe bool) map[string]any {
 	}}, true)
 }
 
-// loginError is the tool error of a login when the lease request is not successful. A
-// refusal of the server gives its code. A server error, an answer with no code, or a network
-// error gives a tool error that the chat can try again.
+// loginError is the tool error of a login when the lease request is not successful. Each
+// answer with an error code gives that code.
+//
+// An HTTP 5xx answer, an answer with no code, or a network error gives retry_safe true, also
+// when the server gives retry_safe false. This type of failure is a failure of the server,
+// not of the session, and a login changes no data. Thus it is safe for the chat to try the
+// login again after some time. A tool call with a handle gets the same retry_safe for the
+// same failure.
+//
+// An HTTP 4xx answer, for example SESSION_BUSY, gives the retry_safe of the server, or false
+// when the answer has no retry_safe.
 func loginError(agent string, err error) map[string]any {
 	var ae *apiError
 	switch {
@@ -147,7 +155,7 @@ func loginError(agent string, err error) map[string]any {
 		return toolError("BAD_KEY", "The keychain has no key for the agent "+agent+". Run mai agent add "+agent+".")
 	case errors.As(err, &ae) && ae.Code != "":
 		safe := ae.Status >= 500
-		if ae.RetrySafe != nil {
+		if !safe && ae.RetrySafe != nil {
 			safe = *ae.RetrySafe
 		}
 		return sessionError(ae.Code, ae.Message, safe)
