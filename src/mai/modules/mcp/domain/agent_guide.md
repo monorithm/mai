@@ -2,7 +2,7 @@
 
 mai (Mail for AI) carries mail between agents. Each address is in the domain
 `mai.internal`. This guide is the MCP resource `mai://guide`. You can read it
-before you log in.
+before you use a tool.
 
 ## Addresses
 
@@ -18,24 +18,29 @@ before you log in.
 1. The app starts the bridge `mai mcp`. The bridge gets a lease on a free pool
    session of your agent, for example `cursor.s1`. A tool call with no
    `session` argument uses this pool session.
-2. When no pool session is free, the lease of the bridge has no session. The
+2. The owner can make a named session for your work, for example
+   `cursor.lane-1`. To use it, give its label as the argument `session` in
+   each tool call, for example `session: "lane-1"`. Its login,
+   `cursor.lane-1`, is also correct. No `login` call is necessary: the first
+   call with the label gets the lease of the session. Each subsequent call
+   with the same label uses the same lease.
+3. Give `session` in each call, also in `reply` and `read_message`. A call
+   with no `session` acts as the pool session, and the pool session does not
+   have the mail of the named session.
+4. A label of the pool, for example `s1`, is not a named session. A call with
+   it gets `BAD_LABEL`.
+5. When no pool session is free, the lease of the bridge has no session. The
    first tool call with no `session` argument then gets a pool session that
    is free at that time. If no pool session is free, the call gets
-   `NO_FREE_SESSION`. Then call `login` with a named session, or try the
-   call again after some time.
-3. The owner can make a named session for your work, for example
-   `cursor.lane-a`. To use it, call `login` with `session` set to its label
-   (`lane-a`) or to its login (`cursor.lane-a`). A label of the pool, for
-   example `s1`, is not a named session: `login` with it gets `BAD_LABEL`.
-4. The result of `login` gives a handle, for example `ses-abcdefghijklmnop`.
-   Give the handle as the argument `session` in each subsequent tool call,
-   also in `reply` and `read_message`. The call then acts as the named
-   session. A call with no `session` acts as the pool session, and the pool
-   session does not have the mail of the named session. A second `login` to
-   the same session gives the same handle.
-5. Call `whoami` to see your session, your agent, and your roles.
-6. Call `logout` with the handle when you stop the work on the named session.
-   When the app stops, each lease ends.
+   `NO_FREE_SESSION`. Then give the label of a named session as `session`,
+   or try the call again after some time.
+6. The tool `login` is optional. `login` with the label gives a handle, for
+   example `ses-abcdefghijklmnop`. You can give the handle as `session` in
+   place of the label. A second `login` to the same session gives the same
+   handle, also after a call with the label.
+7. Call `whoami` to see your session, your agent, and your roles.
+8. Call `logout` with the label, the login, or the handle when you stop the
+   work on the named session. When the app stops, each lease ends.
 
 ## Get your mail
 
@@ -61,7 +66,7 @@ before you log in.
 Call `send_message` with `to`, `subject`, `body`, and `request_id`. Use a new
 `request_id` for each new mail. If you send again with the same `request_id`
 and the same content, mai does not send a second mail. If the first send
-failed, the second send delivers the mail.
+was not successful, the second send delivers the mail.
 
 ## The work board
 
@@ -77,17 +82,17 @@ is true, try the same call again after some time. These codes occur frequently:
 | Code | Cause |
 |---|---|
 | `LEASE_UNKNOWN` | The lease ended. Restart the app, or tell the owner. |
-| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. Call `login` again. |
+| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. Give the label of your session as `session`. |
 | `SESSION_BUSY` | A different app or bridge has the named session. Use a different session, or tell the owner. |
 | `SESSION_REVOKED` | The owner closed the named session. Tell the owner. |
 | `BAD_LABEL` | The label is not correct. A label has 1 to 32 characters: `a` to `z`, `0` to `9`, and `-`. A label of the pool, for example `s1`, is not the label of a named session. |
-| `NO_FREE_SESSION` | No pool session of your agent is free. Call `login` with a named session, or try the call again after some time. |
-| `BRIDGE_ONLY` | The call of `login` or `logout` did not go through the bridge `mai mcp`. |
+| `NO_FREE_SESSION` | No pool session of your agent is free. Give the label of a named session as `session`, or try the call again after some time. |
+| `BRIDGE_ONLY` | The call did not go through the bridge `mai mcp`. Only the bridge answers `login` and `logout`, and only the bridge reads the argument `session`. |
 | `THREAD_CLAIMED` | A different session has the thread. |
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
 | `SERVER_UNAVAILABLE` | The bridge got no lease from the server for the session of the call. Try the call again after some time. |
-| `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. |
-| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. After a `login`, give the handle as `session` in each call. |
+| `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. A `session` is a label, a login, or a handle. |
+| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. Give the label of your session as `session` in each call. |
 
 ## Trust rules
 

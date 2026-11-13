@@ -239,20 +239,22 @@ class Dispatcher:
             raise ToolError("INVALID_ARGUMENT", path="arguments")
         validate(spec["inputSchema"], args)
         check_one_of(name, args)
-        if name not in schemas.BRIDGE_TOOLS:
-            # The bridge selects the lease of the call from the handle in "session". The tool
-            # never gets the argument: the lease of the call gives the session.
-            args = {key: value for key, value in args.items() if key != "session"}
+        # The bridge "mai mcp" answers login and logout. It also reads the argument session of
+        # each other tool, selects the lease of that session, and removes the argument. A call
+        # with one of them did not go through the bridge. It must not act as the session of
+        # its lease, thus it gets BRIDGE_ONLY.
+        bridge_only = name in schemas.BRIDGE_TOOLS or "session" in args
         state = None
         if transport == "http":
-            if name in schemas.BRIDGE_TOOLS:
-                # A bridge tool needs no session: a lease with no session gets no pool session.
+            if bridge_only:
+                # The call needs no session: a lease with no session gets no pool session.
                 await self._lease_check(headers)
             else:
                 state = await self._lease_state(headers)
-        if name in schemas.BRIDGE_TOOLS:
-            # The bridge "mai mcp" answers login and logout. This call did not go through it.
-            raise ToolError("BRIDGE_ONLY")
+        if bridge_only:
+            raise ToolError(
+                "BRIDGE_ONLY", path=None if name in schemas.BRIDGE_TOOLS else "session"
+            )
         if transport != "http":
             state = await self._stdio_call_state(name, conn)
         if state is not None and not schemas.allowed(spec, getattr(state, "roles", {})):

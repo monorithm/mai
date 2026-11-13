@@ -39,13 +39,15 @@ def test_each_design_board_and_lease_code_has_a_message() -> None:
     assert set(MESSAGES) == DESIGN_CODES | BOARD_CODES | LEASE_CODES
 
 
-def test_no_free_session_tells_the_chat_to_log_in_or_to_try_again() -> None:
+def test_no_free_session_tells_the_chat_to_give_a_named_session_or_to_try_again() -> (
+    None
+):
     assert ToolError("NO_FREE_SESSION").structured() == {
         "error": {
             "code": "NO_FREE_SESSION",
             "message": (
                 "No pool session of the agent is free. "
-                "Call login with a named session, or try again later."
+                "Give the label of a named session as session, or try again later."
             ),
             "path": None,
             "retry_safe": True,

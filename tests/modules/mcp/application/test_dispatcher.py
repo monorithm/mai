@@ -60,7 +60,7 @@ def test_initialize_both_revisions():
         )[1]["result"]
         assert r["protocolVersion"] == rev and r["serverInfo"] == {
             "name": "mai",
-            "version": "3.1.1",
+            "version": "3.2.0",
         }
         assert (
             r["capabilities"]
@@ -70,6 +70,7 @@ def test_initialize_both_revisions():
             }
             and "login" in r["instructions"]
             and "pool session" in r["instructions"]
+            and 'session: "lane-1"' in r["instructions"]
         )
     assert (
         message(d, {"jsonrpc": "2.0", "id": 2, "method": "ping"}, conn, "stdio")[1][
@@ -223,6 +224,74 @@ def test_an_unknown_resource_gives_resource_not_found():
     assert run(go, {})[1]["error"]["code"] == -32602
 
 
+BRIDGE_HANDLE = "ses-" + "abcdefgh" * 2
+
+
+def test_a_call_with_the_argument_session_that_reaches_the_server_gives_bridge_only():
+    seen = []
+
+    async def record(ctx, args):
+        seen.append(dict(args))
+        return {"login": ctx.session_state.login}
+
+    registry = dict(fake_registry(), list_inbox=record, get_board=record)
+    d = Dispatcher(registry, resolver, lease_resolver)
+    # Only the bridge reads the argument session. A call with it that comes to the
+    # server must not act as the session of its lease, for example the pool session.
+    for value in (BRIDGE_HANDLE, "lane-1", "cursor.lane-1", "s1", "ses-" + "a" * 26):
+        for name, args in (
+            ("list_inbox", {"session": value, "limit": 5}),
+            ("get_board", {"session": value, "project": "p"}),
+        ):
+            result = call(d, name, args, lease(HANDLE))
+            assert result["isError"] is True
+            error = result["structuredContent"]["error"]
+            assert error["code"] == "BRIDGE_ONLY" and error["path"] == "session"
+            assert "argument session" in error["message"]
+            stdio = call(d, name, args, conn=McpConnection(), transport="stdio")
+            assert stdio["structuredContent"]["error"]["code"] == "BRIDGE_ONLY"
+    assert seen == []
+    # With no argument session, the tool runs as the session of the lease.
+    assert call(d, "list_inbox", {"limit": 5}, lease(HANDLE))["structuredContent"] == {
+        "login": "cursor.lane-a"
+    }
+    assert seen == [{"limit": 5}]
+
+
+def test_a_call_with_the_argument_session_and_no_lease_gives_lease_required():
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
+
+    async def go():
+        msg = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "whoami", "arguments": {"session": "lane-1"}},
+        }
+        return await d.handle(msg, None, "http", None)
+
+    with pytest.raises(LeaseRequired):
+        run(go)
+
+
+def test_a_session_of_no_valid_form_gives_invalid_argument():
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
+    for bad in (
+        "ses-ABCDEFGHIJKLMNOP",
+        "Lane-1",
+        "lane-1\n",
+        "cursor.lane-1\n",
+        "a.b.c",
+        "",
+        "l" * 33,
+        3,
+        None,
+    ):
+        e = call(d, "list_inbox", {"session": bad}, lease(HANDLE))
+        assert e["structuredContent"]["error"]["code"] == "INVALID_ARGUMENT", bad
+        assert e["structuredContent"]["error"]["path"] == "session", bad
+
+
 def test_a_pattern_does_not_accept_a_line_break_at_the_end():
     d = Dispatcher(fake_registry(), resolver, lease_resolver)
     for name, args, path in (
@@ -236,31 +305,6 @@ def test_a_pattern_does_not_accept_a_line_break_at_the_end():
     ):
         e = call(d, name, args, lease(HANDLE))["structuredContent"]["error"]
         assert e["code"] == "INVALID_ARGUMENT" and e["path"] == path, name
-
-
-BRIDGE_HANDLE = "ses-" + "abcdefgh" * 2
-
-
-def test_the_server_removes_the_session_argument_before_the_tool_runs():
-    seen = []
-
-    async def record(ctx, args):
-        seen.append(dict(args))
-        return {"login": ctx.session_state.login}
-
-    registry = dict(fake_registry(), list_inbox=record, get_board=record)
-    d = Dispatcher(registry, resolver, lease_resolver)
-    result = call(
-        d, "list_inbox", {"session": BRIDGE_HANDLE, "limit": 5}, lease(HANDLE)
-    )
-    assert result["structuredContent"] == {"login": "cursor.lane-a"}
-    # A board tool takes extra fields, and the session argument is not one of them.
-    call(d, "get_board", {"session": BRIDGE_HANDLE, "project": "p"}, lease(HANDLE))
-    assert seen == [{"limit": 5}, {"project": "p"}]
-    for bad in ("ses-" + "a" * 26, "ses-ABCDEFGHIJKLMNOP", "lane-a", 3):
-        e = call(d, "list_inbox", {"session": bad}, lease(HANDLE))
-        assert e["structuredContent"]["error"]["code"] == "INVALID_ARGUMENT"
-        assert e["structuredContent"]["error"]["path"] == "session"
 
 
 def test_login_and_logout_that_reach_the_server_give_bridge_only():
