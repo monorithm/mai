@@ -21,10 +21,14 @@ mai has two command lines with the name `mai`:
 | `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
 | `mai agent add NAME`, `mai agent list`, `mai agent remove NAME` | Manages the agent accounts through the owner API. |
-| `mai session list` | Shows the sessions, their leases, and the app and folder of each lease. |
+| `mai session new AGENT --label L` | Makes the named session `AGENT.L`. Shows only the login. |
+| `mai session new AGENT --count N` | Makes each session of `AGENT.s1` to `AGENT.sN` that does not exist. Shows only the login of each new session. |
+| `mai session list [--agent AGENT] [--json]` | Shows the sessions, the label and the state of each session, the lease, and the app and folder of each lease. |
+| `mai session rotate LOGIN` | Gives the session a new internal secret and ends its lease. |
+| `mai session revoke LOGIN [--yes]` | Closes the session and ends its lease. This change is permanent. Type `revoke` to agree, or use `--yes`. |
 | `mai session end LOGIN` | Ends the lease of a session. |
-| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. |
-| `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge. |
+| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. The bridge, not the server, does the tools `login` and `logout`. |
+| `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge and shows one line for each session with new mail. |
 | `mai ui on`, `mai ui off` | Starts or stops the mail UI. |
 | `mai ui open` | Does a presence check, then opens the UI in the browser and signs you in. |
 | `mai backup`, `mai restore STAMP` | Makes or restores a backup through the owner API. |
@@ -33,6 +37,11 @@ mai has two command lines with the name `mai`:
 
 `APP` is one of `claude`, `cursor`, `copilot`, `codex`, and `antigravity`.
 No command shows a session secret.
+
+A label has 1 to 32 characters: lower-case letters, digits, and `-`. The
+first character is a letter or a digit. The commands `rotate`, `revoke`, and
+`end` also accept the address of a session, for example
+`cursor.lane-a@mai.internal`.
 
 ## Server CLI
 
