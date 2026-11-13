@@ -139,12 +139,31 @@ func (f *File) Get(account string) (string, error) {
 		return "", ErrNotFound
 	}
 	key, same, err := f.move(account)
+	if errors.Is(err, ErrNotFound) {
+		// A different process can have moved the legacy item in the meantime. Then the key
+		// file has its key.
+		return f.inFile(account)
+	}
 	if err == nil && same {
 		// The key is in the key file. When the delete fails, the legacy item stays, and
 		// "mai doctor" and "mai upgrade" tell about it.
 		_ = f.DeleteLegacy(account)
 	}
 	return key, err
+}
+
+// inFile gives the key of the account in the key file. It does not read the legacy keychain.
+// It gives ErrNotFound when the key file has no key for the account.
+func (f *File) inFile(account string) (string, error) {
+	var key string
+	var ok bool
+	if err := f.view(func(d *doc) { key, ok = d.Keys[account] }); err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrNotFound
+	}
+	return key, nil
 }
 
 // move reads the legacy item of the account and writes it to the key file. It does not delete
@@ -212,6 +231,29 @@ func (f *File) Set(account, key string) error {
 		d.Keys[account] = key
 		return true
 	})
+}
+
+// Add writes the key of the account to the key file only when the file has no key for the
+// account. The check and the write occur with one lock. Add gives the key that the file has
+// after the call, and added tells if it is key. Thus Add never replaces a key that a different
+// process wrote.
+func (f *File) Add(account, key string) (stored string, added bool, err error) {
+	if account == "" || key == "" {
+		return "", false, errors.New("keys: an account and a key are necessary")
+	}
+	err = f.update(func(d *doc) bool {
+		if k, ok := d.Keys[account]; ok {
+			stored = k
+			return false
+		}
+		d.Keys[account] = key
+		stored, added = key, true
+		return true
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return stored, added, nil
 }
 
 // Delete removes the key of the account from the key file. It gives ErrNotFound when the key

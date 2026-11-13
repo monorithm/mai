@@ -690,3 +690,51 @@ func TestAHeldLockGivesErrBusy(t *testing.T) {
 		t.Fatalf("get after the unlock: %v", err)
 	}
 }
+
+// moveOnGet is a legacy keychain whose read finds no item, because a different process moved
+// the item to the key file in the meantime.
+type moveOnGet struct {
+	*keychain.Memory
+	dir string
+}
+
+func (m moveOnGet) Get(account string) (string, error) {
+	secret, err := m.Memory.Get(account)
+	if err != nil {
+		return "", err
+	}
+	if err := Open(m.dir, nil).Set(account, secret); err != nil {
+		return "", err
+	}
+	_ = m.Memory.Delete(account)
+	return "", keychain.ErrNotFound
+}
+
+func TestGetGivesTheKeyThatADifferentProcessMoved(t *testing.T) {
+	dir := t.TempDir()
+	legacy := keychain.NewMemory()
+	legacy.Put(OwnerAccount("mai"), ownerKey)
+	f := Open(dir, moveOnGet{Memory: legacy, dir: dir})
+	if got, err := f.Get(OwnerAccount("mai")); err != nil || got != ownerKey {
+		t.Fatalf("get: equal = %v, %v; want the key that the different process moved", got == ownerKey, err)
+	}
+}
+
+func TestAddKeepsTheKeyOfTheKeyFile(t *testing.T) {
+	f := Open(t.TempDir(), nil)
+	account := OwnerAccount("mai")
+	stored, added, err := f.Add(account, ownerKey)
+	if err != nil || !added || stored != ownerKey {
+		t.Fatalf("first add: added %v, equal %v, %v", added, stored == ownerKey, err)
+	}
+	stored, added, err = f.Add(account, "mai1:owner:other")
+	if err != nil || added || stored != ownerKey {
+		t.Fatalf("second add: added %v, equal %v, %v; want the first key", added, stored == ownerKey, err)
+	}
+	if got, _ := f.Get(account); got != ownerKey {
+		t.Fatal("the second add replaced the key")
+	}
+	if _, _, err := f.Add("", ownerKey); err == nil {
+		t.Fatal("an add with no account gave no error")
+	}
+}

@@ -166,13 +166,15 @@ func (s *lcSession) setOwner(ctx context.Context, id string) error {
 	key, err := kf.Get(account)
 	made := false
 	if errors.Is(err, keys.ErrNotFound) {
-		if key, err = lcNewOwnerKey(); err != nil {
+		fresh, err := lcNewOwnerKey()
+		if err != nil {
 			return err
 		}
-		if err := kf.Set(account, key); err != nil {
+		// A different process can write an owner key after the read. Then that key stays, and
+		// the server gets it.
+		if key, made, err = kf.Add(account, fresh); err != nil {
 			return fmt.Errorf("keep the owner key in the key file: %w", err)
 		}
-		made = true
 	} else if err != nil {
 		return fmt.Errorf("read the owner key: %w", err)
 	}
