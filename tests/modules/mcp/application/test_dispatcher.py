@@ -6,7 +6,7 @@ import pytest
 from mai.modules.mcp import Dispatcher, McpConnection
 from mai.modules.mcp.application.dispatcher import LeaseRequired
 
-from ..fakes import HANDLE, SUPER, fake_registry, resolver
+from ..fakes import HANDLE, SUPER, fake_registry, lease_resolver, resolver
 
 
 def run(coro_fn, *args):
@@ -105,7 +105,7 @@ def lease(handle):
 
 
 def test_validation():
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     e = call(d, "list_inbox", {"limit": 500}, lease(HANDLE))["structuredContent"][
         "error"
     ]
@@ -124,7 +124,7 @@ def test_validation():
 
 
 def test_http_lease_rules():
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     assert len(names(d)) == 22
     assert {"login", "logout", "whoami"} <= set(names(d))
     for headers in (
@@ -170,7 +170,7 @@ def test_a_tool_call_during_a_restore_gets_mail_server_down_and_runs_nothing(
 ):
     from mai.platform import supervisor
 
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     monkeypatch.setattr(supervisor, "held", lambda: {"app", "postfix", "dovecot"})
     result = call(d, "whoami", {}, lease(HANDLE))
     assert result["isError"] is True
@@ -234,7 +234,7 @@ def test_the_server_removes_the_session_argument_before_the_tool_runs():
         return {"login": ctx.session_state.login}
 
     registry = dict(fake_registry(), list_inbox=record, get_board=record)
-    d = Dispatcher(registry, resolver, resolver)
+    d = Dispatcher(registry, resolver, lease_resolver)
     result = call(
         d, "list_inbox", {"session": BRIDGE_HANDLE, "limit": 5}, lease(HANDLE)
     )
@@ -249,7 +249,7 @@ def test_the_server_removes_the_session_argument_before_the_tool_runs():
 
 
 def test_login_and_logout_that_reach_the_server_give_bridge_only():
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     for name, args in (
         ("login", {"session": "lane-a"}),
         ("logout", {"session": BRIDGE_HANDLE}),

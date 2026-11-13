@@ -1,3 +1,5 @@
+import sys
+
 from bustan import (
     ApiBearerAuth,
     ApiOperation,
@@ -26,6 +28,9 @@ _STATUS = {
     "SESSION_EXISTS": 409,
     "SESSION_REVOKED": 409,
     "SESSION_BUSY": 409,
+    "INTERNAL": 500,
+    "MAIL_SERVER_DOWN": 503,
+    "STORE_UNAVAILABLE": 503,
 }
 
 
@@ -36,14 +41,24 @@ def bearer(request: HttpRequest) -> str:
     return token.strip() if scheme.lower() == "bearer" else ""
 
 
-def api_error(status: int, code: str, message: str) -> HttpResponse:
-    return HttpResponse.json(
-        {"error": {"code": code, "message": message}}, status_code=status
-    )
+def api_error(
+    status: int, code: str, message: str, retry_safe: bool | None = None
+) -> HttpResponse:
+    error: dict = {"code": code, "message": message}
+    if retry_safe is not None:
+        error["retry_safe"] = retry_safe
+    return HttpResponse.json({"error": error}, status_code=status)
 
 
 def lease_error(exc: LeaseError) -> HttpResponse:
-    return api_error(_STATUS.get(exc.code, 400), exc.code, str(exc))
+    status = exc.status or _STATUS.get(exc.code, 400)
+    return api_error(status, exc.code, str(exc), exc.retry_safe)
+
+
+def internal_error(exc: Exception) -> HttpResponse:
+    """The coded answer of a defect. It shows no internal text."""
+    sys.stderr.write(f"mai: internal error of type {type(exc).__name__}\n")
+    return api_error(500, "INTERNAL", "an internal error occurred", True)
 
 
 async def json_body(request: HttpRequest) -> dict:
@@ -58,7 +73,9 @@ async def json_body(request: HttpRequest) -> dict:
 # The lease API. A bridge sends the agent key to get a lease, then the lease
 # token for each heartbeat and for the end of the lease. The optional field
 # "session" of a lease request names a session of the agent, for example
-# "lane-a" or "cursor.lane-a". With no "session", the lease is on a pool session.
+# "lane-a" or "cursor.lane-a". With no "session", the lease is on a pool
+# session. When no pool session is free, the lease has the session null until
+# its first tool call. Each error answer has a code.
 @Controller("/api/leases")
 @ApiTags("leases")
 class LeasesController:
@@ -69,7 +86,10 @@ class LeasesController:
     @Post("/")
     @ApiBearerAuth()
     @ApiOperation(summary="Get a lease on a named session or a pool session")
-    @ApiResponse(status=201, description="The lease")
+    @ApiResponse(
+        status=201,
+        description="The lease. The session is null when no pool session is free.",
+    )
     @ApiResponse(status=400, description="The request or the label is not valid")
     @ApiResponse(status=401, description="The agent key is not valid")
     @ApiResponse(status=404, description="The agent has no such session")
@@ -77,6 +97,8 @@ class LeasesController:
         status=409,
         description="The session is revoked or busy, or the agent has no free session",
     )
+    @ApiResponse(status=502, description="The mail login failed")
+    @ApiResponse(status=503, description="The mail server or the store does not reply")
     async def acquire(self, request: HttpRequest) -> HttpResponse:
         body = await json_body(request)
         app, folder, pid = body.get("app"), body.get("folder"), body.get("pid")
@@ -98,18 +120,26 @@ class LeasesController:
             )
         except LeaseError as exc:
             return lease_error(exc)
+        except Exception as exc:  # noqa: BLE001 - each error answer has a code
+            return internal_error(exc)
         return HttpResponse.json(lease, status_code=201)
 
     @Post("/current/heartbeat")
     @ApiBearerAuth()
     @ApiOperation(summary="Keep the lease live and get the count of new mail")
-    @ApiResponse(status=200, description="The session and the count of new mail")
+    @ApiResponse(
+        status=200,
+        description="The session and the count of new mail. The count is null when it failed.",
+    )
     @ApiResponse(status=401, description="The lease ended or expired")
+    @ApiResponse(status=503, description="The store does not reply")
     async def heartbeat(self, request: HttpRequest) -> HttpResponse:
         try:
             return HttpResponse.json(await self._leases.heartbeat(bearer(request)))
         except LeaseError as exc:
             return lease_error(exc)
+        except Exception as exc:  # noqa: BLE001 - each error answer has a code
+            return internal_error(exc)
 
     @Delete("/current")
     @ApiBearerAuth()
@@ -121,6 +151,8 @@ class LeasesController:
             await self._leases.end(bearer(request))
         except LeaseError as exc:
             return lease_error(exc)
+        except Exception as exc:  # noqa: BLE001 - each error answer has a code
+            return internal_error(exc)
         return HttpResponse(status_code=204, body=b"")
 
     @Get("/")

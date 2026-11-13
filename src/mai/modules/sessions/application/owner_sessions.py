@@ -1,8 +1,10 @@
 """The owner operations on the sessions: make, list, rotate, and revoke.
 
 A named session, for example cursor.lane-a, gets a lease only when a bridge
-asks for it by name. A pool session has the label s<N>. No answer holds a
-session secret: the server makes each secret and keeps only its hash.
+asks for it by name. A pool session has the label s<N>. Only the pool and an
+owner request with a count make the sessions with these labels: a named
+session never has a label of the pool. No answer holds a session secret: the
+server makes each secret and keeps only its hash.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from mai.modules.credentials import (
     check_label,
 )
 
-from ..domain.lease import MAX_SESSIONS
+from ..domain.lease import MAX_SESSIONS, is_pool_label
 from .lease_service import OPEN_STATES, SESSION_DAYS, LeaseError, LeaseService
 
 log = logging.getLogger("mai.sessions")
@@ -50,11 +52,20 @@ class OwnerSessions:
         self._leases = leases
 
     async def new(self, agent: str, label: object) -> dict:
-        """Make the named session AGENT.LABEL. Returns its login, agent, label, and status."""
+        """Make the named session AGENT.LABEL. Returns its login, agent, label, and status.
+
+        A label of the pool, for example s1, gives BAD_LABEL.
+        """
         try:
             check_label(label)
         except ValueError as exc:
             raise LeaseError("BAD_LABEL", str(exc)) from None
+        if is_pool_label(label):
+            raise LeaseError(
+                "BAD_LABEL",
+                f"{label} is a label of the pool, not of a named session."
+                " Use --count to make the pool sessions.",
+            )
         await self._active_agent(agent)
         return await self._make(agent, str(label))
 
@@ -92,7 +103,12 @@ class OwnerSessions:
 
     async def with_leases(self) -> list[dict]:
         """The sessions, their status, and the app, folder, and process of each live lease."""
-        leases = {lease["session"]: lease for lease in await self._leases.leases()}
+        # A lease with no session has no row: this list has one row for each session.
+        leases = {
+            lease["session"]: lease
+            for lease in await self._leases.leases()
+            if lease["session"] is not None
+        }
         rows = []
         for row in await self._credentials.session_list():
             lease = leases.get(row["login"]) or {}

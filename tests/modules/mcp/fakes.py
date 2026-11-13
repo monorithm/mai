@@ -29,6 +29,13 @@ async def resolver(handle):
     return STATES[handle]
 
 
+async def lease_resolver(token):
+    """A lease token of the fake is a handle of STATES. Each other token is not a valid lease."""
+    if token not in STATES:
+        raise LookupError("no such lease")
+    return STATES[token]
+
+
 def fake_registry():
     def echo(name):
         async def tool(ctx, args):
