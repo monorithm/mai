@@ -69,8 +69,8 @@ next prompt of Claude Code shows the notice of the new mail.
 ## Why the design is like this
 
 The server keeps all session credentials in the container. An app gets a
-session only through a lease, and each new lease starts only after a presence
-check. Thus a program that is not mai cannot get a session. Refer to
+session only through a lease, and each bridge gets its first lease only after a
+presence check. Thus a program that is not mai cannot get a session. Refer to
 [Architecture](../explanation/architecture.md).
 
 ## Remove mai
