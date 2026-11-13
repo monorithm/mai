@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The page `docs/explanation/mai-for-a-new-user.md`. It tells the functions
+  of mai and why mai is safe to a new user who is not technical. The README
+  and the index of the docs link to it.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added
