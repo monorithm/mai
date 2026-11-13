@@ -35,5 +35,23 @@ def test_a_lease_request_for_a_pool_label_gives_bad_label(tmp_path):
         with pytest.raises(LeaseError) as info:
             anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, name)
         assert info.value.code == "BAD_LABEL", name
-        assert "pool" in str(info.value) and "login" in str(info.value)
+        assert "pool" in str(info.value) and "no session" in str(info.value)
     assert anyio.run(parts.leases.leases) == []
+
+
+def test_the_error_of_a_pool_label_tells_that_a_call_with_no_session_uses_the_pool(
+    tmp_path,
+):
+    # A tool call with the session s2 gets this message through the bridge. A chat that
+    # calls no login can use a named session with its label. Thus the message tells the
+    # rule of the argument session, not a rule of login.
+    parts = make_parts(tmp_path)
+    owner = OwnerSessions(parts.credentials, parts.leases)
+    anyio.run(owner.new_pool, "cursor", 2)
+    for name in ("s2", "cursor.s2"):
+        with pytest.raises(LeaseError) as info:
+            anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, name)
+        assert str(info.value) == (
+            "s2 is a label of the pool, not of a named session."
+            " A tool call with no session argument uses the pool."
+        ), name
