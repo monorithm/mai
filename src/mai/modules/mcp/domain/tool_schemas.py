@@ -37,6 +37,10 @@ KIND = {"type": "string", "enum": ["request", "reply", "status", "notice", "sign
 PRIORITY = {"type": "string", "enum": ["low", "normal", "high"]}
 STATUS = {"type": "string", "enum": ["unread", "notified", "seen", "done"]}
 DATE = {"type": "string"}
+# A mail that did not come through mai, for example an imported mail, can have
+# no Date header, a Date header that does not parse, or no From address.
+MAIL_DATE = {"type": ["string", "null"]}
+MAIL_FROM = {"type": ["string", "null"]}
 REQUEST_ID = {"type": "string", "minLength": 1, "maxLength": 128}
 SUBJECT = {"type": "string", "minLength": 1, "maxLength": 200}
 BODY = {"type": "string", "maxLength": 65536}
@@ -52,13 +56,13 @@ MESSAGE_SUMMARY = {
     "properties": {
         "ref": REF,
         "thread_ref": THREAD_REF,
-        "from": {"type": "string"},
+        "from": MAIL_FROM,
         "sender_proved": {"type": "boolean"},
         "to": STR_LIST,
         "subject": {"type": "string"},
         "kind": {"type": "string"},
         "priority": {"type": "string"},
-        "date": DATE,
+        "date": MAIL_DATE,
         "status": {"type": "string"},
         "in_queue": {"type": "boolean"},
         "item": {"type": ["string", "null"]},

@@ -135,6 +135,10 @@ command `mai agent add` adds an agent. The code of the server has no list of age
 | `status` | `unread`, `notified`, `seen`, `done` | `seen` |
 | `date` | UTC, `YYYY-MM-DDTHH:MM:SSZ` | `2026-11-12T09:30:00Z` |
 
+A mail that did not come through mai, for example an imported mail, can have
+no `Date` header or no `From` address. In a summary of such a mail, `date` or
+`from` is `null`.
+
 ## Error codes
 
 A tool error has a `code`. Some errors also have a `path` (the argument that
