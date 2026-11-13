@@ -4,19 +4,24 @@ import argparse
 import asyncio
 import os
 
-from bustan import Application, create_app
+from bustan import Application, RequestLimits, create_app
 
 from .platform.contract import BACKGROUND_ENV
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
+# The longest wait of wait_for_mail (MAX_WAIT, 50 s) and a margin. The default
+# request limit of bustan (30 s) stops a longer wait with HTTP 504 and no code.
+# The time limits of the lease operations are less than this limit.
+REQUEST_TIMEOUT_SECONDS = 75.0
+REQUEST_LIMITS = RequestLimits(timeout_seconds=REQUEST_TIMEOUT_SECONDS)
 
 
 def create_asgi_app() -> Application:
     """Return the application. It is the ASGI callable that uvicorn runs."""
     from .app_module import AppModule
 
-    return create_app(AppModule)
+    return create_app(AppModule, request_limits=REQUEST_LIMITS)
 
 
 def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:

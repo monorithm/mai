@@ -62,19 +62,26 @@ of the CLI version with no registry credential. Then it makes the container
 The server makes and keeps all session credentials. They stay in the
 container. An app gets a session only through a lease. The bridge
 `mai mcp --agent A` sends a lease request with the agent key. The server gives
-a free session of the agent.
+a free pool session of the agent.
 
-The lease token is only in the memory of the bridge. The bridge sends a heartbeat each 30 s. The lease ends 90 s after the
-last heartbeat.
+A chat can call the tool `login` with the label of a named session. The bridge
+then gets a lease for that session and gives the chat a handle. The chat gives
+the handle as the argument `session` in each tool call. The bridge sends the
+call with the lease of the handle. A call with no handle uses the pool lease.
 
-Before the bridge reads the agent key for a new lease, it does a presence
-check: Touch ID, Windows Hello, or the password of the user.
+Each lease token is only in the memory of the bridge. The bridge sends a
+heartbeat for each lease each 30 s. A lease ends 90 s after its last
+heartbeat.
+
+Before the first lease of the bridge, the bridge does a presence check: Touch
+ID, Windows Hello, or the password of the user. A subsequent lease of the
+same bridge gets no new presence check.
 
 ### Hooks
 
 The bridge writes a notice file in the state folder of the CLI. The file holds
-the session name and the count of new mail. `mai hook` reads the file of its
-bridge. The hook never calls the server.
+the name and the count of new mail of each session of the bridge. `mai hook`
+reads the file of its bridge. The hook never calls the server.
 
 ### The manifest
 

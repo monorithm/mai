@@ -2,15 +2,17 @@
 # Start a mai container from an image and test the copy of each mail to the owner:
 # the mailbox copies, the ACL of the owner, the copies rule of the milter, and the
 # envelope record.
-# Usage: scripts/it_copies.sh [IMAGE]   (default mai:wf-copies)
+# Usage: scripts/it_copies.sh [IMAGE]   (default $MAI_IT_IMAGE, else mai:wf-copies)
 # Build the image first: docker build --pull=false -t mai:wf-copies .
+# MAI_IT_NAME, MAI_IT_VOLUME, and MAI_IT_PORT set the names of the container
+# and the volume, and the host port.
 # It removes the container and its volumes at the end. It never pulls an image.
 # The credentials stay in the container: the checks read them there and print no secret.
 set -eu
-image=${1:-mai:wf-copies}
-name=mai-wf-copies-it
-volume=mai-wf-copies-data
-port=18770
+image=${1:-${MAI_IT_IMAGE:-mai:wf-copies}}
+name=${MAI_IT_NAME:-mai-wf-copies-it}
+volume=${MAI_IT_VOLUME:-mai-wf-copies-data}
+port=${MAI_IT_PORT:-18770}
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker volume rm "$volume" "$volume-spool" >/dev/null 2>&1 || true
@@ -33,9 +35,37 @@ until docker exec "$name" mai health >/dev/null 2>&1; do
   sleep 1
 done
 docker exec "$name" mai agent add alpha beta gamma >/dev/null
-docker exec "$name" sh -c '
-  mai session new alpha --label s1 --file /data/alpha.cred >/dev/null
-  mai session new beta --label s1 --file /data/beta.cred >/dev/null'
+# The server CLI shows no session secret. The container tests read the test
+# credentials from files in the container, thus a short program of the server
+# writes them through the credential service. No secret leaves the container.
+docker exec -i "$name" python - <<'EOF'
+import asyncio
+
+from bustan import create_app_context
+
+from mai.app_module import AppModule
+from mai.modules.credentials import CredentialService
+
+# A label of the pool (s1, s2, ...) is only for the pool sessions.
+SESSIONS = (
+    ("alpha", "it-copies", "/data/alpha.cred"),
+    ("beta", "it-copies", "/data/beta.cred"),
+)
+
+
+async def main():
+    context = create_app_context(AppModule)
+    await context.init()
+    try:
+        credentials = context.get(CredentialService)
+        for agent, label, path in SESSIONS:
+            await credentials.session_new(agent, label, file=path)
+    finally:
+        await context.close()
+
+
+asyncio.run(main())
+EOF
 docker exec -i "$name" python - <<'EOF'
 import imaplib
 import re

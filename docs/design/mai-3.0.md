@@ -18,6 +18,13 @@ Decisions of the user, 12 November 2026:
 - `mai uninstall` removes all items that mai made.
 - A mail UI is optional. You turn it on and off.
 
+Decision of the user, 12 November 2026, for release 3.1.0:
+
+- Sessions and the session commands are as in 2.x: the owner makes a named
+  session, for example `cursor.lane-a`, and a chat logs in to it. A session is
+  not for each window of an app. Unlike 2.x, each secret stays in the
+  container (section 6).
+
 A mark [A] shows an assumption that has no test at this time. A mark [E] shows
 an estimate.
 
@@ -253,7 +260,10 @@ MCP entry is `mai mcp --agent A`. It holds no secret.
 | Command | Action |
 |---|---|
 | `mai agent add NAME ...`, `mai agent list`, `mai agent remove NAME` | Manage agent accounts through the owner API |
-| `mai session list` | The sessions, their leases, and the app and folder of each lease |
+| `mai session new AGENT --label L`, `mai session new AGENT --count N` | Make a named session `AGENT.L`, or the sessions `AGENT.s1` to `AGENT.sN`. Print only the login. |
+| `mai session list` | The sessions, their state, their leases, and the app and folder of each lease |
+| `mai session rotate LOGIN` | Make a new internal secret for the session, and end its lease |
+| `mai session revoke LOGIN` | Close the session for good, and end its lease |
 | `mai session end LOGIN` | End the lease of a session. The bridge gets an error at its next call. |
 | `mai approvals` | The approved and refused leases of the last 30 days |
 
@@ -330,14 +340,117 @@ of `cursor.s2`.
 ### No session secret on the host
 
 - The server makes and keeps all session credentials. They stay in the
-  container. There is no `mai session new`, no `session show`, and no
-  credential file.
+  container. There is no `session show` and no credential file.
+- The owner makes named sessions with `mai session new`, as in 2.x. The
+  command prints only the login, for example `cursor.lane-a`.
 - An app gets a session only through a lease. The bridge `mai mcp --agent
-  cursor` sends a lease request to the server. The server gives a free
-  session of the agent, for example `cursor.s2`. If the agent has no free
-  session, the server makes one, up to a limit of the owner (default 8).
-- The bridge cannot select a session. The lease API has no session argument.
-  Thus `cursor.s1` cannot select `cursor.s2`.
+  cursor` sends a lease request to the server. With no name, the server gives
+  a free pool session of the agent, for example `cursor.s2`. It makes the
+  pool sessions `cursor.s1` to `cursor.s8` when necessary. A revoked pool
+  session does not hold a place in the pool. The pool has a maximum of 8 open
+  pool sessions. A new pool session gets the lowest free number, for example
+  `cursor.s9`. When no pool
+  session is free, the server gives a lease with no session (see "A lease
+  with no session"). With a name, the server gives that named session.
+- A label that agrees with `^s[0-9]+$`, for example `s1` or `s01`, is a label
+  of the pool. Only the pool and `mai session new AGENT --count N` make the
+  sessions with these labels. The owner API, the server CLI, and the host CLI
+  refuse `mai session new AGENT --label s1` with `BAD_LABEL`. The message
+  tells the owner to use `--count`. Thus a named session never has a label of
+  the pool. A label with a line break at the end is not valid, thus it cannot
+  go around this check.
+
+### Named sessions in a chat
+
+One bridge can serve many chats, for example all the chats of one Cursor
+window. Thus a chat selects its session, as in 2.x:
+
+1. The chat calls the tool `login` with the label or the login of a session
+   of the agent of the bridge. An example is `login` with `session` `lane-a`.
+2. The bridge sends a lease request for that named session. The server
+   refuses a session of a different agent, a revoked session, and a session
+   that a different bridge holds (`SESSION_BUSY`). It also refuses a label of
+   the pool (`BAD_LABEL`). Thus a `login` never takes a pool session.
+3. The bridge gives the chat a handle `ses-…`. The handle is valid only in
+   that bridge, and it is not a secret of the server: a different program
+   cannot use it.
+4. The chat gives the handle as the argument `session` in each subsequent
+   tool call. The bridge removes the argument and sends the call with the
+   lease of that session.
+5. A tool call with no `session` uses the pool lease of the bridge. When the
+   pool lease has no session, the first such call gets a free pool session,
+   or the tool error `NO_FREE_SESSION`.
+6. The tool `logout` with a handle ends that lease. The stop of the bridge
+   ends each lease of the bridge.
+
+The presence check occurs one time for each bridge process, at its first
+lease. A subsequent login of a chat of the same bridge gets no new prompt,
+because the user approved that bridge.
+
+Thus `cursor.lane-a` cannot read the mail of `cursor.lane-b`: each tool call
+acts as the session of its handle, and only the owner makes sessions.
+
+### A lease with no session
+
+A full pool must not stop a bridge: the chats of the bridge can use `login`
+with named sessions. Thus, when no pool session of the agent is free, the
+server gives a lease with no session:
+
+- The result of the lease request has `"session": null`. Each agent can have
+  16 leases with no session. After that limit, the server gives
+  `NO_FREE_SESSION` (HTTP 409).
+- A heartbeat gives `{"session": null, "new_mail": 0}`.
+- A session is not necessary for the methods that are not tool calls. They
+  operate as usual.
+- At a tool call, the server first tries to give the lease a free pool
+  session. It does the same steps as a pool lease request, with the same
+  lock: a new secret and a mail login. After this step, the tool runs as that
+  session, and each subsequent heartbeat gives that session.
+- When no pool session is free, the tool result is the error
+  `NO_FREE_SESSION` with `retry_safe` true, and HTTP 200. It is not HTTP 401,
+  because a 401 makes the bridge renew its lease.
+- If the owner revokes the selected pool session during this step, the
+  server tries the next free pool session. Thus `NO_FREE_SESSION` occurs only
+  when no pool session is free. A pool lease request does the same.
+- When the owner removes the agent, the lease with no session ends at its
+  next heartbeat or tool call: the server gives HTTP 401 `LEASE_UNKNOWN`. The
+  bridge then sends a new lease request and gets `BAD_KEY`. A lease on a
+  session ends in the same way, because the removal revokes its session.
+- The owner list of the leases shows the lease with `"session": null`. The
+  owner list of the sessions does not show it. The commands `mai session
+  end`, `mai session rotate`, and `mai session revoke` act only on the leases
+  of that session.
+
+### Lease errors
+
+Each error of a lease request has a code, in the JSON form of the other
+errors of the lease API: `{"error": {"code": ..., "message": ...}}`.
+
+| Cause | Status | Code |
+|---|---|---|
+| The mail server or the store does not reply during the mail login | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true |
+| A different tool error of the mail login | 502 | The code of the tool error, for example `LOGIN_FAILED`, with `retry_safe` |
+| A revoke during the lease request, also after the new secret | 409 | `SESSION_REVOKED` |
+| The session does not exist | 404 | `SESSION_UNKNOWN` |
+| The store does not reply during the check of the agent key | 503 | `STORE_UNAVAILABLE`, not `BAD_KEY` |
+| A lease request takes more than its time limit (20 s) | 503 | The code of the part that runs: `MAIL_SERVER_DOWN`, `STORE_UNAVAILABLE`, or `BUSY` when the request waits for a different lease request. `retry_safe` is true. |
+| A heartbeat takes more than its time limit (10 s) | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true. The lease stays. |
+
+Each time limit of the server is less than the request limit of the HTTP
+server (75 s). It is also less than the wait of the bridge: 30 s for a lease
+request and 15 s for a heartbeat. Thus the bridge gets the code of each
+failure. A tool
+call on a lease has the time limit of a lease request for the steps of the
+lease. If the server cannot count the new mail in 5 s, the heartbeat gives
+`"new_mail": null`.
+
+The request limit of the HTTP server (75 s) is more than the longest wait of
+`wait_for_mail` (50 s). Thus a wait with no new mail gives the result
+`timed_out` true, not an HTTP error.
+
+A heartbeat never gives an error with no code. At a tool
+call on a lease with no session, a failure of the mail login gives its tool
+error, for example `MAIL_SERVER_DOWN`.
 
 ### The lease
 
@@ -349,8 +462,9 @@ of `cursor.s2`.
 | Binding | the token is valid only on the HTTP connection that got it [A] |
 | End | `mai session end`, the stop of the bridge, or a restart of the container |
 
-The MCP tools act only as the session of the lease. The tool `login` and the
-argument `session` go away (contract 3.0.0).
+The MCP tools act as the session of the lease that the bridge selects for the
+call. Contract 3.1.0 has the tools `login` and `logout` of the bridge, and
+the optional argument `session` of each tool.
 
 ### The memory of a bridge
 
@@ -365,9 +479,10 @@ different protection of that memory from other programs of the same user:
 
 ### What a session is for each app
 
-A session belongs to one bridge process. Each app has its own rule for the
-start of a bridge. An MCP server gets no ID of a chat, thus two chats that
-share one bridge share one session.
+A pool session belongs to one bridge process. Each app has its own rule for
+the start of a bridge. An MCP server gets no ID of a chat, thus two chats
+that share one bridge share the pool session. A chat that logs in to a named
+session has its own session in each app.
 
 | App | One bridge for each |
 |---|---|

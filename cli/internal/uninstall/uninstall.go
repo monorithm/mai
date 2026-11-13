@@ -189,7 +189,7 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 		fmt.Fprintf(w, "  app file   %s (only when it holds nothing else)\n", it.Path)
 	}
 	for _, k := range p.Keys {
-		fmt.Fprintf(w, "  keychain   %s / %s\n", u.service(), k)
+		fmt.Fprintf(w, "  keychain   %s / %s\n", keychain.ServiceOf(u.Keychain, u.service()), k)
 	}
 	for _, f := range p.Paths {
 		fmt.Fprintf(w, "  folder     %s\n", f)

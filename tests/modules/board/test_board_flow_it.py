@@ -21,7 +21,7 @@ SHA = "b" * 40
 
 def call(name, arguments):
     # The key "session" of the arguments holds the lease token. It goes in the
-    # Authorization header, because the tools of contract 3.0.0 take no session.
+    # Authorization header, because the lease of the call gives the session.
     token = arguments.pop("session")
     body = json.dumps(
         {

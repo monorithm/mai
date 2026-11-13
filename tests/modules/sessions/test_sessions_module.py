@@ -14,5 +14,5 @@ class Root:
 def test_module_builds():
     app = create_test_app(Root)
     tools = app.get(SessionTools)
-    assert set(tools.tools()) == {"logout", "whoami"}
+    assert set(tools.tools()) == {"whoami"}
     assert isinstance(app.get(SessionService), SessionService)

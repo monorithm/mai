@@ -18,6 +18,11 @@ MESSAGES = {
     "STORE_UNAVAILABLE": "The store does not reply.",
     "BUSY": "The server is busy.",
     "INTERNAL": "An internal error occurred.",
+    "BRIDGE_ONLY": "Only the bridge mai mcp answers this tool. Use the MCP entry that mai connect writes.",
+    "NO_FREE_SESSION": (
+        "No pool session of the agent is free. "
+        "Call login with a named session, or try again later."
+    ),
     "INVALID_TRANSITION": "The item cannot go to this state from its current state.",
     "WIP_LIMIT": "The lane has its maximum number of items in progress.",
     "SUPERVISOR_TAKEN": "The project already has a supervisor.",
@@ -29,6 +34,7 @@ MESSAGES = {
 
 RETRY_SAFE = {
     "THREAD_CLAIMED",
+    "NO_FREE_SESSION",
     "MAIL_SERVER_DOWN",
     "STORE_UNAVAILABLE",
     "BUSY",

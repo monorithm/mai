@@ -213,11 +213,45 @@ func (c *Client) ListLeases(ctx context.Context) ([]Lease, error) {
 	return r.Leases, err
 }
 
-// Session is one session in GET /api/sessions.
+// Session is one session in GET /api/sessions. The lease fields are empty when the session
+// has no lease. No field holds a secret.
 type Session struct {
+	Login      string `json:"login"`
+	Agent      string `json:"agent"`
+	Label      string `json:"label"`
+	Status     string `json:"status"`
+	Leased     bool   `json:"leased"`
+	App        string `json:"app"`
+	Folder     string `json:"folder"`
+	PID        int    `json:"pid"`
+	LastSeenAt string `json:"last_seen_at"`
+}
+
+// SessionState is the answer of POST /api/sessions, and of the rotate and the revoke of a
+// session. It holds no secret.
+type SessionState struct {
 	Login  string `json:"login"`
-	Agent  string `json:"agent"`
-	Leased bool   `json:"leased"`
+	Agent  string `json:"agent,omitempty"`
+	Label  string `json:"label,omitempty"`
+	Status string `json:"status"`
+}
+
+// NewSession calls POST /api/sessions with a label and returns the named session
+// AGENT.LABEL. The server gives BAD_LABEL, AGENT_UNKNOWN, or SESSION_EXISTS on an error.
+func (c *Client) NewSession(ctx context.Context, agent, label string) (SessionState, error) {
+	var s SessionState
+	err := c.do(ctx, http.MethodPost, "/api/sessions", true, map[string]any{"agent": agent, "label": label}, &s)
+	return s, err
+}
+
+// NewSessions calls POST /api/sessions with a count. The server makes each session of
+// AGENT.s1 to AGENT.sN that does not exist, and returns only these sessions.
+func (c *Client) NewSessions(ctx context.Context, agent string, count int) ([]SessionState, error) {
+	var r struct {
+		Sessions []SessionState `json:"sessions"`
+	}
+	err := c.do(ctx, http.MethodPost, "/api/sessions", true, map[string]any{"agent": agent, "count": count}, &r)
+	return r.Sessions, err
 }
 
 // ListSessions calls GET /api/sessions.
@@ -227,6 +261,22 @@ func (c *Client) ListSessions(ctx context.Context) ([]Session, error) {
 	}
 	err := c.do(ctx, http.MethodGet, "/api/sessions", true, nil, &r)
 	return r.Sessions, err
+}
+
+// RotateSession calls POST /api/sessions/{login}/rotate. The server makes a new internal
+// secret for the session and ends its lease. The answer holds no secret.
+func (c *Client) RotateSession(ctx context.Context, login string) (SessionState, error) {
+	var s SessionState
+	err := c.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(login)+"/rotate", true, nil, &s)
+	return s, err
+}
+
+// RevokeSession calls POST /api/sessions/{login}/revoke. The server ends the lease of the
+// session and refuses each subsequent lease request with SESSION_REVOKED.
+func (c *Client) RevokeSession(ctx context.Context, login string) (SessionState, error) {
+	var s SessionState
+	err := c.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(login)+"/revoke", true, nil, &s)
+	return s, err
 }
 
 // EndSession calls DELETE /api/sessions/{login}/lease.

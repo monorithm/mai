@@ -6,7 +6,7 @@ import pytest
 from mai.modules.mcp import Dispatcher, McpConnection
 from mai.modules.mcp.application.dispatcher import LeaseRequired
 
-from ..fakes import HANDLE, SUPER, fake_registry, resolver
+from ..fakes import HANDLE, SUPER, fake_registry, lease_resolver, resolver
 
 
 def run(coro_fn, *args):
@@ -60,7 +60,7 @@ def test_initialize_both_revisions():
         )[1]["result"]
         assert r["protocolVersion"] == rev and r["serverInfo"] == {
             "name": "mai",
-            "version": "3.0.0",
+            "version": "3.1.0",
         }
         assert (
             r["capabilities"]
@@ -68,7 +68,8 @@ def test_initialize_both_revisions():
                 "tools": {"listChanged": True},
                 "resources": {"subscribe": False, "listChanged": False},
             }
-            and "lease" in r["instructions"]
+            and "login" in r["instructions"]
+            and "pool session" in r["instructions"]
         )
     assert (
         message(d, {"jsonrpc": "2.0", "id": 2, "method": "ping"}, conn, "stdio")[1][
@@ -104,7 +105,7 @@ def lease(handle):
 
 
 def test_validation():
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     e = call(d, "list_inbox", {"limit": 500}, lease(HANDLE))["structuredContent"][
         "error"
     ]
@@ -123,9 +124,9 @@ def test_validation():
 
 
 def test_http_lease_rules():
-    d = Dispatcher(fake_registry(), resolver, resolver)
-    assert len(names(d)) == 21
-    assert "login" not in names(d)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
+    assert len(names(d)) == 22
+    assert {"login", "logout", "whoami"} <= set(names(d))
     for headers in (
         None,
         {"Authorization": "Bearer lease_unknown"},
@@ -169,7 +170,7 @@ def test_a_tool_call_during_a_restore_gets_mail_server_down_and_runs_nothing(
 ):
     from mai.platform import supervisor
 
-    d = Dispatcher(fake_registry(), resolver, resolver)
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
     monkeypatch.setattr(supervisor, "held", lambda: {"app", "postfix", "dovecot"})
     result = call(d, "whoami", {}, lease(HANDLE))
     assert result["isError"] is True
@@ -220,3 +221,55 @@ def test_an_unknown_resource_gives_resource_not_found():
         "uri": "mai://other"
     }
     assert run(go, {})[1]["error"]["code"] == -32602
+
+
+BRIDGE_HANDLE = "ses-" + "abcdefgh" * 2
+
+
+def test_the_server_removes_the_session_argument_before_the_tool_runs():
+    seen = []
+
+    async def record(ctx, args):
+        seen.append(dict(args))
+        return {"login": ctx.session_state.login}
+
+    registry = dict(fake_registry(), list_inbox=record, get_board=record)
+    d = Dispatcher(registry, resolver, lease_resolver)
+    result = call(
+        d, "list_inbox", {"session": BRIDGE_HANDLE, "limit": 5}, lease(HANDLE)
+    )
+    assert result["structuredContent"] == {"login": "cursor.lane-a"}
+    # A board tool takes extra fields, and the session argument is not one of them.
+    call(d, "get_board", {"session": BRIDGE_HANDLE, "project": "p"}, lease(HANDLE))
+    assert seen == [{"limit": 5}, {"project": "p"}]
+    for bad in ("ses-" + "a" * 26, "ses-ABCDEFGHIJKLMNOP", "lane-a", 3):
+        e = call(d, "list_inbox", {"session": bad}, lease(HANDLE))
+        assert e["structuredContent"]["error"]["code"] == "INVALID_ARGUMENT"
+        assert e["structuredContent"]["error"]["path"] == "session"
+
+
+def test_login_and_logout_that_reach_the_server_give_bridge_only():
+    d = Dispatcher(fake_registry(), resolver, lease_resolver)
+    for name, args in (
+        ("login", {"session": "lane-a"}),
+        ("logout", {"session": BRIDGE_HANDLE}),
+    ):
+        result = call(d, name, args, lease(HANDLE))
+        assert result["isError"] is True
+        assert result["structuredContent"]["error"]["code"] == "BRIDGE_ONLY"
+        stdio = call(d, name, args, conn=McpConnection(), transport="stdio")
+        assert stdio["structuredContent"]["error"]["code"] == "BRIDGE_ONLY"
+
+        async def go(name=name, args=args):
+            msg = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": args},
+            }
+            return await d.handle(msg, None, "http", None)
+
+        with pytest.raises(LeaseRequired):
+            run(go)
+    bad = call(d, "login", {}, lease(HANDLE))
+    assert bad["structuredContent"]["error"]["path"] == "session"

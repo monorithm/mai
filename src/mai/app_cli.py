@@ -40,6 +40,7 @@ def _call(token_path: str, method: str, *args, **kwargs):
 
 
 CRED = "mai.modules.credentials.CredentialService"
+SESSIONS = "mai.modules.sessions.OwnerSessions"
 WATCH = "mai.modules.notices.WatchService"
 OPS = "mai.modules.ops.OpsService"
 HOOK_FORMATS = ("plain", "claude", "cursor", "copilot", "codex", "antigravity")
@@ -116,59 +117,54 @@ def cmd_agent_list(args) -> int:
     return 0
 
 
-def _show_credential(res: dict, file) -> None:
-    print(f"login:      {res['address']}")
-    if file:
-        print(f"credential: written to {file}")
-    else:
-        print(f"credential: {res['credential']}")
-    print(f"expires:    {res['expires_at'] or 'never'}")
+def _session_call(method: str, *args):
+    """Call one method of OwnerSessions. No answer of OwnerSessions holds a session secret.
+
+    An error of the session API gives "mai: CODE: TEXT" and exit code 1.
+    """
+    from mai.modules.sessions import LeaseError
+
+    try:
+        return _call(SESSIONS, method, *args)
+    except LeaseError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from None
 
 
 def cmd_session_new(args) -> int:
-    res = _call(
-        CRED,
-        "session_new",
-        args.agent,
-        args.label,
-        expires_days=args.expires,
-        file=args.file,
-    )
-    if args.credential_only:
-        # Only the credential line: the host shim writes it to a file on the host (--save).
-        print(res["credential"])
+    """Make a named session or the pool sessions. Print only the login of each."""
+    if args.label is not None:
+        made = [_session_call("new", args.agent, args.label)]
     else:
-        _show_credential(res, args.file)
-    if not res.get("acl_set"):
-        print("warning:    doveadm acl set did not run", file=sys.stderr)
+        made = _session_call("new_pool", args.agent, args.count)
+        if not made:
+            print(
+                f"mai: the sessions {args.agent}.s1 to {args.agent}.s{args.count} exist",
+                file=sys.stderr,
+            )
+    for row in made:
+        print(row["login"])
     return 0
 
 
 def cmd_session_list(args) -> int:
-    rows = _call(CRED, "session_list", agent=args.agent)
+    rows = _session_call("records", args.agent)
     if args.json:
         _print_json(rows)
         return 0
-    print(f"{'LOGIN':40} {'STATUS':8} {'EXPIRES':21} LAST LOGIN")
+    print(f"{'LOGIN':40} {'STATUS':8} LAST LOGIN")
     for r in rows:
-        print(
-            f"{r['login']:40} {r['status']:8} {r['expires_at'] or '-':21}"
-            f" {r['last_login_at'] or '-'}"
-        )
+        print(f"{r['login']:40} {r['status']:8} {r['last_login_at'] or '-'}")
     return 0
 
 
 def cmd_session_rotate(args) -> int:
-    res = _call(CRED, "session_rotate", args.login, file=args.file)
-    if args.credential_only:
-        print(res["credential"])
-    else:
-        _show_credential(res, args.file)
+    res = _session_call("rotate", args.login)
+    print(f"rotated:    {res['login']}")
     return 0
 
 
 def cmd_session_revoke(args) -> int:
-    res = _call(CRED, "session_revoke", args.login)
+    res = _session_call("revoke", args.login)
     print(f"revoked:    {res['login']}")
     return 0
 
@@ -297,33 +293,34 @@ def build_parser() -> argparse.ArgumentParser:
     ok.add_argument("--replace", action="store_true", help="replace a key that exists")
     ok.set_defaults(func=cmd_owner_set_key)
 
-    s = sub.add_parser("session", help="manage session credentials")
+    s = sub.add_parser("session", help="manage the sessions of the agents")
     ss = s.add_subparsers(dest="session_command", required=True)
-    n = ss.add_parser("new", help="make a session credential")
+    n = ss.add_parser(
+        "new",
+        help="make the named session AGENT.LABEL, or the sessions AGENT.s1 to AGENT.sN",
+    )
     n.add_argument("agent")
-    n.add_argument("--label", required=True)
-    n.add_argument("--expires", default="7d", help="for example 7d or 12h")
-    n.add_argument("--file", help="write the credential to this file (mode 0600)")
-    n.add_argument(
-        "--credential-only",
-        action="store_true",
-        help="print only the credential line (the host shim uses it for --save)",
+    which = n.add_mutually_exclusive_group(required=True)
+    which.add_argument(
+        "--label", help="the label of a named session, for example lane-a"
+    )
+    which.add_argument(
+        "--count",
+        type=int,
+        help="make each pool session AGENT.s1 to AGENT.sN that does not exist",
     )
     n.set_defaults(func=cmd_session_new)
-    ls = ss.add_parser("list", help="list session logins")
+    ls = ss.add_parser("list", help="list the sessions and their status")
     ls.add_argument("--agent")
     ls.add_argument("--json", action="store_true")
     ls.set_defaults(func=cmd_session_list)
-    r = ss.add_parser("rotate", help="give a session a new secret")
-    r.add_argument("login", type=_strip_domain)
-    r.add_argument("--file")
-    r.add_argument(
-        "--credential-only",
-        action="store_true",
-        help="print only the credential line (the host shim uses it for --save)",
+    r = ss.add_parser(
+        "rotate",
+        help="give a session a new internal secret; its lease ends at its next call",
     )
+    r.add_argument("login", type=_strip_domain)
     r.set_defaults(func=cmd_session_rotate)
-    v = ss.add_parser("revoke", help="revoke a session")
+    v = ss.add_parser("revoke", help="close a session for good")
     v.add_argument("login", type=_strip_domain)
     v.set_defaults(func=cmd_session_revoke)
 

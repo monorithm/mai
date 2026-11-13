@@ -11,6 +11,10 @@ from ..domain.handle_store import HandleStore
 from ..domain.session_state import LEASE, SessionState, handle_sha
 from .session_cache import SessionCache
 
+# The maximum wait for the close of the mail connections of a handle. A mail
+# server that does not reply does not stop the end of a handle.
+CLOSE_LIMIT_SECONDS = 2.0
+
 
 @dataclass(frozen=True)
 class ResolveSessionQuery:
@@ -61,7 +65,10 @@ class ResolveSessionHandler:
     async def forget(self, handle: str) -> None:
         state = self._cache.pop(handle)
         if state is not None:
-            await anyio.to_thread.run_sync(_close, state.mail)
+            with anyio.move_on_after(CLOSE_LIMIT_SECONDS):
+                await anyio.to_thread.run_sync(
+                    _close, state.mail, abandon_on_cancel=True
+                )
 
 
 def _close(mail: object) -> None:

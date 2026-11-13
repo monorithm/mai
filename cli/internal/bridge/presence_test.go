@@ -26,6 +26,30 @@ func TestBridgeAsksForNoLeaseWhenThePresenceCheckFails(t *testing.T) {
 	}
 }
 
+func TestTwoLoginsGetNoNewPresenceCheck(t *testing.T) {
+	t.Setenv("MAI_TEST_PRESENCE", "")
+	h := newHarness(t, memoryWithKey())
+	var checks int
+	h.b.Presence = func(reason string) error {
+		checks++
+		return presence.Check(reason)
+	}
+	h.start(context.Background())
+	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	h.recv(t)
+	// The user approved this bridge. A subsequent prompt fails, thus each login must get no prompt.
+	t.Setenv("MAI_TEST_PRESENCE", "refuse")
+	a := h.login(t, 2, "lane-a")
+	b := h.login(t, 3, "lane-b")
+	if a["login"] != "cursor.lane-a" || b["login"] != "cursor.lane-b" {
+		t.Fatalf("logins = %v and %v", a, b)
+	}
+	h.stop(t)
+	if checks != 1 {
+		t.Fatalf("presence checks = %d, want 1", checks)
+	}
+}
+
 func TestBridgeRunsWithTheFakePresenceCheck(t *testing.T) {
 	t.Setenv("MAI_TEST_PRESENCE", "")
 	h := newHarness(t, memoryWithKey())

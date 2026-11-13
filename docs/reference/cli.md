@@ -21,10 +21,14 @@ mai has two command lines with the name `mai`:
 | `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
 | `mai agent add NAME`, `mai agent list`, `mai agent remove NAME` | Manages the agent accounts through the owner API. |
-| `mai session list` | Shows the sessions, their leases, and the app and folder of each lease. |
+| `mai session new AGENT --label L` | Makes the named session `AGENT.L`. Shows only the login. |
+| `mai session new AGENT --count N` | Makes each session of `AGENT.s1` to `AGENT.sN` that does not exist. Shows only the login of each new session. |
+| `mai session list [--agent AGENT] [--json]` | Shows the sessions, the label and the state of each session, the lease, and the app and folder of each lease. |
+| `mai session rotate LOGIN` | Gives the session a new internal secret and ends its lease. |
+| `mai session revoke LOGIN [--yes]` | Closes the session and ends its lease. This change is permanent. Type `revoke` to agree, or use `--yes`. |
 | `mai session end LOGIN` | Ends the lease of a session. |
-| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. |
-| `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge. |
+| `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. The bridge, not the server, does the tools `login` and `logout`. Refer to [Bridge](#bridge). |
+| `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge and shows one line for each session with new mail. |
 | `mai ui on`, `mai ui off` | Starts or stops the mail UI. |
 | `mai ui open` | Does a presence check, then opens the UI in the browser and signs you in. |
 | `mai backup`, `mai restore STAMP` | Makes or restores a backup through the owner API. |
@@ -33,6 +37,88 @@ mai has two command lines with the name `mai`:
 
 `APP` is one of `claude`, `cursor`, `copilot`, `codex`, and `antigravity`.
 No command shows a session secret.
+
+A label has 1 to 32 characters: lower-case letters, digits, and `-`. The
+first character is a letter or a digit. The commands `rotate`, `revoke`, and
+`end` also accept the address of a session, for example
+`cursor.lane-a@mai.internal`.
+
+A label `s` with only digits after it, for example `s1`, `s9`, or `s01`, is a
+label of the pool. Only the pool and `mai session new AGENT --count N` make
+sessions with these labels. `mai session new AGENT --label s1` gives
+`BAD_LABEL` and exit code 2, and it does not call the server. To make pool
+sessions, use `--count N`.
+
+## Bridge
+
+`mai mcp --agent A` gets the pool lease of the agent when it starts. Then it
+gets one lease for each named session that a chat logs in to with the tool
+`login`. The presence check occurs one time for each bridge process, before
+the first lease. If the user refuses the presence check, the bridge stops.
+
+### Pool lease with no session
+
+When no pool session of the agent is free, the server gives a pool lease
+with no session (`"session": null`). The bridge starts, and its log tells
+that no pool session is free. With this lease:
+
+- `initialize`, `ping`, `tools/list`, the resources, and the prompts
+  operate.
+- `login` gives a handle for a named session. Each call with that handle
+  operates.
+- A tool call with no argument `session` gets the tool error
+  `NO_FREE_SESSION` with `retry_safe` true. When a pool session is free, the
+  server binds it to the lease, and the call operates as that session.
+- The notice file has no pool entry. After each tool call on the pool lease,
+  the bridge sends a heartbeat immediately. When a heartbeat gives the pool
+  session, the bridge writes the notice file again with the pool entry.
+
+Each time that the bridge gets a new lease, it writes the notice file
+immediately. A heartbeat or a tool call can get the new lease. Thus the
+notice file always has the pool session of the current pool lease, or no
+pool entry when the pool lease has no session.
+
+### Errors of a lease request
+
+When the server does not know a lease, for example after a restart of the
+container, the bridge sends a lease request again. There is no new presence
+check. This table gives the result of an error of that lease request.
+
+| Error | Named session | Pool lease |
+|---|---|---|
+| HTTP 4xx with an error code, for example `SESSION_REVOKED`, `SESSION_BUSY`, or `BAD_LABEL` | The handle ends. The call gets the code. A subsequent call with the handle gets `SESSION_UNKNOWN`. | The bridge continues. The call gets the code, for example `NO_FREE_SESSION`. |
+| `BAD_KEY`: the agent key is not valid | The handle ends. | The bridge stops with exit code 1. |
+| HTTP 5xx, an error with no code, or a network error | The handle stays. | The bridge continues. |
+
+When the bridge continues or the handle stays, the call gets a tool error
+with the code of the server. When the server gives no code, the code is
+`SERVER_UNAVAILABLE`. The tool error has the path `session` and `retry_safe`
+true. The next call or heartbeat sends the lease request again.
+
+A login that gets an HTTP 5xx error, an error with no code, or a network
+error also gives a tool error with `retry_safe` true. This is also true when
+the server gives `retry_safe` false, for example with HTTP 502
+`LOGIN_FAILED`. A login that gets an HTTP 4xx error gives the `retry_safe`
+of the server.
+
+### Logout and stop
+
+A logout ends the heartbeat loop and the lease of the session before it
+removes the handle. A login to the same session in the same bridge waits for
+the logout. Thus the login does not get `SESSION_BUSY` from the lease that
+the logout ends.
+
+The bridge stops when the app closes the stdin of the bridge. On Unix, the
+bridge also stops on SIGINT, SIGTERM, or SIGHUP. On Windows, it stops on
+Ctrl+C or when the console closes. Before it stops, it ends each lease and
+removes its notice file. The bridge ends the leases at the same time, and it
+waits a maximum of 10 seconds for the end of each lease.
+
+The server makes a lease before it sends the result of the lease request.
+Thus the bridge does not stop a lease request that it sent. When a logout
+or a stop occurs during a lease request, the bridge waits for the result,
+for a maximum of 30 seconds. Then it ends that lease also. Thus no lease of
+the bridge stays on the server after a logout or a stop.
 
 ## Server CLI
 
@@ -45,10 +131,10 @@ No command shows a session secret.
 | `init` | | Applies the migrations and makes the system accounts `owner` and `board`. |
 | `agent add` | `NAME [NAME ...]` | Makes an agent account for each name. Gives the board account read access to the queue of the agent. |
 | `agent list` | `[--json]` | Shows the agents, their status and the number of live sessions. |
-| `session new` | `AGENT --label LABEL [--expires 7d] [--save PATH] [--credential-only] [--file PATH]` | Makes a session credential. The agent must exist. |
-| `session list` | `[--agent AGENT] [--json]` | Shows the session logins. |
-| `session rotate` | `LOGIN [--file PATH]` | Gives a session a new secret. |
-| `session revoke` | `LOGIN` | Revokes a session. |
+| `session new` | `AGENT --label LABEL`, or `AGENT --count N` | Makes the named session `AGENT.LABEL`, or each pool session `AGENT.s1` to `AGENT.sN` that does not exist. Shows only the login of each session. The agent must exist. |
+| `session list` | `[--agent AGENT] [--json]` | Shows the sessions, their status, and the time of the last login. |
+| `session rotate` | `LOGIN` | Gives a session a new internal secret. The lease of the session ends at its next call. |
+| `session revoke` | `LOGIN` | Closes a session for good. The lease of the session ends at its next call. |
 | `mcp` | | Starts the MCP server on stdio. |
 | `serve-http` | `[--host 0.0.0.0] [--port 8080]` | Starts the MCP server and the UI on HTTP. |
 | `watch` | `--credential-file PATH [--timeout 1500]` | Waits for new mail. The unit of the timeout is seconds. |
@@ -58,16 +144,27 @@ No command shows a session secret.
 | `import-maildir` | `PATH [--add-agents] [--rename-header-prefix OLD=NEW] [--dry-run]` | Imports a maildir of version 0.5.0. |
 | `project seed` | `PROJECT --supervisor AGENT --worker AGENT [--lane NAME] [--goal TEXT] [--min-coverage 80]` | Makes or updates a board project with a supervisor and one worker lane. The default lane name is the worker name. |
 
-## Flags of session new
+## Session commands
 
-| Flag | Where | Function |
-|---|---|---|
-| `--credential-only` | Container | Shows only the credential line. |
-| `--file PATH` | Container | Writes the credential to PATH in the container. The file gets mode 0600. |
-| `--expires` | Container | A number and a unit: `h` (hours) or `d` (days). The default is `7d`. |
+No session command shows a session secret or writes a credential file. The
+server keeps each secret in the container.
 
-Without `--save`, `--credential-only` and `--file`, the command shows the
-login, the credential and the expiry date.
+A label has 1 to 32 characters: lower-case letters, digits and `-`. The first
+character is a letter or a digit. A named session has no expiry. Only a revoke
+closes it.
+
+A label `s` with only digits after it, for example `s1`, is a label of the
+pool. `session new AGENT --label s1` gives `BAD_LABEL`. Use
+`session new AGENT --count N` to make the pool sessions.
+
+A lease request with no session name gets a pool session. The pool gives only
+the sessions with a pool label, and never a named session. A revoked pool
+session does not hold a place. The pool has a maximum of 8 open pool sessions,
+thus a new pool session can be `s9` or more.
+
+When no pool session is free, the lease has no session. A lease request for a pool
+label, for example `s2` or `cursor.s2`, gives `BAD_LABEL`. Thus a login never
+gets a pool session.
 
 ## Agent names
 

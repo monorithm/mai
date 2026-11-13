@@ -51,6 +51,10 @@ class NewSessionHandler:
                 f"unknown agent: {command.agent}; add it first with"
                 f" 'mai agent add {command.agent}'"
             )
+        if agent.status != "active":
+            # The owner removed the agent. Its sessions are revoked, and it
+            # gets no new session until the owner adds it again.
+            raise UnknownAccountError(f"the agent is not active: {command.agent}")
         label = check_label(command.label)
         login = f"{command.agent}.{label}"
         if await self._store.get(login) is not None:

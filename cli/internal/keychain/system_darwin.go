@@ -182,9 +182,9 @@ import (
 // errSecItemNotFound is the status of the Security framework for an item that does not exist.
 const errSecItemNotFound = -25300
 
-// System returns the keychain of the OS. On macOS it is the Security framework. Each item
+// system returns the keychain of the OS. On macOS it is the Security framework. Each item
 // that it writes has an access list that holds only the mai executable.
-func System() Store { return securityStore{} }
+func system() Store { return securityStore{} }
 
 // securityStore is a Store on the Security framework of macOS. When noUI is true, a read
 // that needs a prompt fails and macOS shows no prompt.

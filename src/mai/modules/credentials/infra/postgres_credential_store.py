@@ -160,13 +160,14 @@ class PostgresCredentialStore(CredentialStore):
                         (login,),
                     )
 
-    async def mark_login(self, login: str, now: datetime) -> None:
+    async def mark_login(self, login: str, now: datetime) -> bool:
         async with self._database.transaction() as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE mail_auth.principal SET status = 'active', last_login_at = %s"
-                " WHERE login = %s",
+                " WHERE login = %s AND status IN ('issued','active')",
                 (now, login),
             )
+            return cur.rowcount > 0
 
     async def expire_old(self, now: datetime) -> None:
         async with self._database.transaction() as conn:

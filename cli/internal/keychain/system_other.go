@@ -2,5 +2,5 @@
 
 package keychain
 
-// System returns the keychain of the OS.
-func System() Store { return goKeyring{} }
+// system returns the keychain of the OS.
+func system() Store { return goKeyring{} }

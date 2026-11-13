@@ -1,5 +1,6 @@
-// Package hook gives the output of "mai hook": the count of new mail of the session of the
-// bridge of the app, in the hook format of the app.
+// Package hook gives the output of "mai hook": the count of new mail of each session of the
+// bridge of the app, in the hook format of the app. The output has one line for each
+// session with new mail.
 //
 // The bridge writes a notice file. The hook finds the file through the process chain and
 // never calls the server.
@@ -7,6 +8,7 @@ package hook
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,10 +16,56 @@ import (
 )
 
 // Notice is the content of a notice file. It holds no secret and no mail text.
+//
+// Session and NewMail are the pool session of the bridge. Named has one notice for each
+// named session that a chat logged in to through the bridge, sorted by login. A notice in
+// Named has no Named list.
+//
+// While the pool lease of the bridge has no session, Session is "". The file then has no
+// pool entry: its JSON has only the list named.
 type Notice struct {
-	Session   string `json:"session"`
-	NewMail   int    `json:"new_mail"`
-	UpdatedAt string `json:"updated_at"`
+	Session   string   `json:"session"`
+	NewMail   int      `json:"new_mail"`
+	UpdatedAt string   `json:"updated_at"`
+	Named     []Notice `json:"named,omitempty"`
+}
+
+// MarshalJSON gives only the list named when the notice has no pool session.
+func (n Notice) MarshalJSON() ([]byte, error) {
+	type fields Notice // The same fields with no MarshalJSON, thus no recursion.
+	if n.Session == "" {
+		return json.Marshal(struct {
+			Named []Notice `json:"named,omitempty"`
+		}{n.Named})
+	}
+	return json.Marshal(fields(n))
+}
+
+// hasSession is true when the notice has the pool session or a named session.
+func (n Notice) hasSession() bool {
+	if n.Session != "" {
+		return true
+	}
+	for _, s := range n.Named {
+		if s.Session != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// All gives the pool session first, when there is one, then each named session.
+func (n Notice) All() []Notice {
+	out := make([]Notice, 0, 1+len(n.Named))
+	if n.Session != "" {
+		out = append(out, Notice{Session: n.Session, NewMail: n.NewMail, UpdatedAt: n.UpdatedAt})
+	}
+	for _, s := range n.Named {
+		if s.Session != "" {
+			out = append(out, Notice{Session: s.Session, NewMail: s.NewMail, UpdatedAt: s.UpdatedAt})
+		}
+	}
+	return out
 }
 
 // NoticeDir is the folder of the notice files in the state folder.
@@ -53,8 +101,9 @@ func FindNotice(stateDir, agent string, pids []int) (Notice, bool) {
 	return Notice{}, false
 }
 
-// maxNoticeSize stops the read of a file that is too large to be a notice.
-const maxNoticeSize = 4096
+// maxNoticeSize stops the read of a file that is too large to be a notice. A notice with
+// many named sessions is still much smaller.
+const maxNoticeSize = 64 << 10
 
 func readNotice(path string) (Notice, bool) {
 	f, err := os.Open(path)
@@ -62,13 +111,12 @@ func readNotice(path string) (Notice, bool) {
 		return Notice{}, false
 	}
 	defer f.Close()
-	buf := make([]byte, maxNoticeSize+1)
-	n, _ := f.Read(buf)
-	if n == 0 || n > maxNoticeSize {
+	data, err := io.ReadAll(io.LimitReader(f, maxNoticeSize+1))
+	if err != nil || len(data) == 0 || len(data) > maxNoticeSize {
 		return Notice{}, false
 	}
 	var out Notice
-	if json.Unmarshal(buf[:n], &out) != nil || out.Session == "" {
+	if json.Unmarshal(data, &out) != nil || !out.hasSession() {
 		return Notice{}, false
 	}
 	return out, true
