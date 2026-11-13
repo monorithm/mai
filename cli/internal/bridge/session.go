@@ -82,17 +82,18 @@ func parseToolCall(line []byte) (toolCall, bool) {
 	return c, true
 }
 
-// session gives the argument session. given is false only when the call has no argument
-// session. text is false when the value is not a string, for example null. A value that is
-// not a string is never a handle, a label, or a login. An empty string is also none of them.
-// Thus null and an empty string give INVALID_ARGUMENT, as on the server.
+// session gives the argument session. given is false when the call has no argument
+// session, or when its value is null: some clients send null for each optional argument
+// that the model did not fill. text is false when the value is not a string. A value that
+// is not a string is never a handle, a label, or a login. An empty string is also none of
+// them, thus it gives INVALID_ARGUMENT.
 func (c toolCall) session() (value string, given, text bool) {
 	raw, ok := c.args[argSession]
-	if !ok {
+	if !ok || string(raw) == "null" {
 		return "", false, true
 	}
 	var s string
-	if string(raw) == "null" || json.Unmarshal(raw, &s) != nil {
+	if json.Unmarshal(raw, &s) != nil {
 		return string(raw), true, false
 	}
 	return s, true, true

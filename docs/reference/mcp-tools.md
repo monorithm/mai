@@ -17,8 +17,9 @@ of the bridge `mai mcp` is necessary as the bearer token.
    - A handle that `login` gave, for example `ses-abcdefghijklmnop`.
 
    A different value gives `INVALID_ARGUMENT` with the path `session`, and
-   the call does not run. Examples are an empty string and `null`. A call
-   with no `session` argument uses the pool session.
+   the call does not run. An example is an empty string. A call with no
+   `session` argument, or with `null`, uses the pool session. Some clients
+   send `null` for each optional argument.
 3. With a label or a login, no `login` call is necessary. When the bridge has
    no lease for that session, the first call gets the lease, as a `login`
    does. Each subsequent call with the same label, login, or handle uses the

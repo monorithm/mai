@@ -124,11 +124,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   line breaks at the start and at the end of the value. A `logout` with no
   `session`, an empty string, or `null` gives `INVALID_ARGUMENT` with the
   path `session`. Before, it gave `SESSION_UNKNOWN`.
-- A tool call with an empty string or `null` as `session` gives
-  `INVALID_ARGUMENT` with the path `session`. The server and the input
-  schema use the same rule. Before, the bridge sent such a call with the pool lease.
-  Thus a chat that gave an empty label read the mailbox of the pool
-  session. Only a call with no argument `session` uses the pool lease.
+- A tool call with an empty string as `session` gives `INVALID_ARGUMENT`
+  with the path `session`. Before, the bridge sent such a call with the
+  pool lease. Thus a chat that gave an empty label read the mailbox of the
+  pool session. A call with `null` as `session` is the same as a call with
+  no argument `session`, and it uses the pool lease, as before. Some
+  clients send `null` for each optional argument.
 - `scripts/it_named_sessions.sh` builds mai with no tag and uses only a
   scratch `MAI_HOME`. It does a test of calls with the label `lane-c` and no
   login. At the end, it makes sure that `mai uninstall` removed the keys of the
