@@ -51,6 +51,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The bridge reads the agent key from the key file at each lease request.
   Thus a new key from `mai agent rotate` applies to a bridge that runs. When
   the key file has no key for the agent, the result is `BAD_KEY`, as before.
+  The message gives the step `mai agent rotate NAME` for an agent that exists
+  on the server, and `mai agent add NAME` for a new agent. For an agent that
+  exists, `mai agent add` gives `AGENT_EXISTS`.
 - `mai uninstall` removes the keys of the instance from the key file and each
   keychain item of the instance. When the key file holds the keys of a
   different instance, only the key file and its lock file stay. When a

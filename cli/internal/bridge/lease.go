@@ -155,9 +155,12 @@ func (l *lease) waitRenew() {
 // errNoKey means that the key file has no key for the agent.
 var errNoKey = errors.New("no agent key")
 
-// noKeyMessage is the message of BAD_KEY when the key file has no key for the agent.
+// noKeyMessage is the message of BAD_KEY when the key file has no key for the agent. For an
+// agent that exists on the server, "mai agent add" gives AGENT_EXISTS and writes no key. Thus
+// the message gives the step for each of the two cases.
 func noKeyMessage(agent string) string {
-	return "The key file has no key for the agent " + agent + ". Run mai agent add " + agent + "."
+	return "The key file has no key for the agent " + agent + ". For an agent that exists on the server, run mai agent rotate " +
+		agent + ". For a new agent, run mai agent add " + agent + "."
 }
 
 // isBadKey is true when the agent key is not valid or not in the key file. Then no lease

@@ -427,7 +427,8 @@ func (b *Bridge) Run(ctx context.Context) int {
 	a, err := b.request(ctx, "")
 	if err != nil {
 		if errors.Is(err, errNoKey) {
-			fmt.Fprintf(b.Stderr, "mai mcp: the key file has no key for the agent %s. Run \"mai agent add %s\".\n", b.Agent, b.Agent)
+			fmt.Fprintf(b.Stderr, "mai mcp: the key file has no key for the agent %s. For an agent that exists on the server, "+
+				"run \"mai agent rotate %s\". For a new agent, run \"mai agent add %s\".\n", b.Agent, b.Agent, b.Agent)
 		} else {
 			b.logf("no lease for the agent %s: %v", b.Agent, err)
 		}
