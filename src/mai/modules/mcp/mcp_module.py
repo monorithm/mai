@@ -30,7 +30,7 @@ def _dispatcher(
     registry: dict = {}
     for provider in (session_tools, mail_tools, thread_tools, board_tools):
         registry.update(provider.tools())
-    return Dispatcher(registry, sessions.resolve, leases.state)
+    return Dispatcher(registry, sessions.resolve, leases.state, leases.check)
 
 
 # The MCP module owns the JSON-RPC dispatcher and its two transports. It has no tools of its own: the

@@ -11,7 +11,7 @@ from .domain.credential import (
     address,
     check_label,
 )
-from .domain.errors import AccountStateError, UnknownAccountError
+from .domain.errors import AccountStateError, CredentialError, UnknownAccountError
 from .infra.postgres_agent_key_store import MIGRATIONS as _KEY_MIGRATIONS
 from .infra.postgres_credential_store import MIGRATIONS as _ACCOUNT_MIGRATIONS
 
@@ -24,6 +24,7 @@ __all__ = [
     "MIGRATIONS",
     "AccountStateError",
     "AgentKeys",
+    "CredentialError",
     "CredentialService",
     "CredentialsModule",
     "OwnerToken",

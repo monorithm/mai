@@ -197,3 +197,27 @@ def test_a_session_error_gives_the_code_and_exit_code_1(monkeypatch, capsys):
     assert capsys.readouterr().err == (
         "mai: SESSION_EXISTS: login exists: cursor.lane-a\n"
     )
+
+
+def test_session_new_refuses_a_pool_label_and_tells_of_the_count(
+    monkeypatch, capsys, tmp_path
+):
+    import anyio
+
+    from mai.modules.sessions import OwnerSessions
+    from tests.modules.sessions.test_lease_service import make_parts
+
+    parts = make_parts(tmp_path)
+    owner = OwnerSessions(parts.credentials, parts.leases)
+
+    def call(_token_path, method, *args):
+        return anyio.run(getattr(owner, method), *args)
+
+    monkeypatch.setattr(app_cli, "_call", call)
+    for label in ("s1", "s12"):
+        assert app_cli.main(["session", "new", "cursor", "--label", label]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(f"mai: BAD_LABEL: {label} is a label of the pool")
+        assert "--count" in err
+    assert app_cli.main(["session", "new", "cursor", "--count", "1"]) == 0
+    assert capsys.readouterr().out == "cursor.s1\n"

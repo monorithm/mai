@@ -1,4 +1,9 @@
-"""Runs the milter behind the real Postfix of the mai:dev image."""
+"""Runs the milter behind the real Postfix of the mai image.
+
+MAI_IT_IMAGE sets the image (default mai:dev). The name of the test container
+starts with MAI_IT_CONTAINER (default mai-test), thus two runs with different
+names do not collide.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = Path(__file__).with_name("postfix_it.sh")
+IMAGE = os.environ.get("MAI_IT_IMAGE") or "mai:dev"
+NAME = (os.environ.get("MAI_IT_CONTAINER") or "mai-test") + "-milter"
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MAI_IT"), reason="MAI_IT not set")
 
@@ -22,14 +29,14 @@ def test_real_postfix_enforces_from_header():
             "--rm",
             "--pull=never",
             "--name",
-            "mai-test-milter",
+            NAME,
             "--entrypoint",
             "sh",
             "-v",
             f"{ROOT / 'src'}:/src:ro",
             "-v",
             f"{SCRIPT}:/it.sh:ro",
-            "mai:dev",
+            IMAGE,
             "/it.sh",
         ],
         capture_output=True,

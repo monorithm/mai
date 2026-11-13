@@ -1,14 +1,15 @@
 #!/bin/sh
 # Start a mai container, set the owner key, add an agent, and test the lease
-# API, MCP with a lease, and the named sessions of the owner API and of the
-# server CLI.
-# Usage: scripts/it_leases.sh [IMAGE]   (default mai:wf-leases)
+# API, MCP with a lease, the named sessions of the owner API and of the server
+# CLI, the refusal of a pool label, and a pool lease with no session when the
+# pool is full.
+# Usage: scripts/it_leases.sh [IMAGE]   (default $MAI_IT_IMAGE, else mai:wf-leases)
 # MAI_IT_NAME, MAI_IT_VOLUME, and MAI_IT_PORT set the names of the container
 # and the volume, and the host port.
 # It removes the container and its volumes at the end. It never pulls an image.
 # It never prints a key or the body of an answer.
 set -eu
-image=${1:-mai:wf-leases}
+image=${1:-${MAI_IT_IMAGE:-mai:wf-leases}}
 name=${MAI_IT_NAME:-mai-wf-leases-it}
 volume=${MAI_IT_VOLUME:-mai-wf-leases-data}
 port=${MAI_IT_PORT:-18775}
@@ -274,6 +275,86 @@ owner_call GET /api/sessions
 is_true "[s['status'] for s in d['sessions'] if s['login'] == 'cursor.lane-c'] == ['revoked']" \
   "the server CLI revoke"
 echo "ok: the server CLI session new, list, rotate, and revoke"
+
+# A label of the pool is not the label of a named session.
+owner_call POST /api/sessions '{"agent":"cursor","label":"s1"}'
+expect 400 BAD_LABEL "session new with the pool label s1"
+is_true "'--count' in d['error']['message']" "the message of BAD_LABEL for s1"
+set +e
+refused=$(docker exec "$name" mai session new cursor --label s1 2>&1 >/dev/null)
+code=$?
+set -e
+[ "$code" = 1 ] || fail "the server CLI session new --label s1 gave exit $code, not 1"
+case "$refused" in *BAD_LABEL*--count*) ;; *) fail "the server CLI did not refuse the label s1" ;; esac
+echo "ok: the owner API and the server CLI refuse the label s1"
+for session in s1 cursor.s1; do
+  lease_call "$agent" "{\"app\":\"it\",\"folder\":\"/it/l\",\"pid\":8,\"session\":\"$session\"}"
+  expect 400 BAD_LABEL "a lease request for $session"
+  is_true "'pool' in d['error']['message']" "the message of BAD_LABEL for $session"
+done
+echo "ok: a lease request for s1 or cursor.s1 gives BAD_LABEL"
+# JSON "s1\n" is the label s1 with a line break at the end.
+owner_call POST /api/sessions '{"agent":"cursor","label":"s1\n"}'
+expect 400 BAD_LABEL "session new with the label s1 and a line break"
+lease_call "$agent" '{"app":"it","folder":"/it/l","pid":8,"session":"s1\n"}'
+expect 400 BAD_LABEL "a lease request for s1 with a line break"
+echo "ok: the label s1 with a line break gives BAD_LABEL"
+
+# A full pool: 8 pool leases, then a lease with no session.
+pool_tokens=""
+third=""
+for pid in 11 12 13 14 15 16 17 18; do
+  lease_call "$agent" "{\"app\":\"it\",\"folder\":\"/it/pool\",\"pid\":$pid}"
+  expect 201 "" "pool lease $pid"
+  got=$(printf '%s' "$body" | json 'd["session"]')
+  token=$(printf '%s' "$body" | json 'd["lease"]')
+  pool_tokens="$pool_tokens $token"
+  [ "$got" = cursor.s3 ] && third=$token
+done
+[ -n "$third" ] || fail "no pool lease got cursor.s3"
+echo "ok: 8 pool leases take cursor.s1 to cursor.s8"
+lease_call "$agent" '{"app":"it","folder":"/it/extra","pid":19}'
+expect 201 "" "the 9th pool lease"
+is_true "d['session'] is None and set(d) == {'lease', 'session', 'heartbeat_seconds', 'expires_seconds'}" \
+  "the 9th pool lease has a session"
+extra=$(printf '%s' "$body" | json 'd["lease"]')
+echo "ok: the 9th pool lease gives the session null"
+beat=$(curl -fsS -X POST "$base/api/leases/current/heartbeat" -H "authorization: Bearer $extra")
+[ "$(printf '%s' "$beat" | json 'd == {"session": None, "new_mail": 0}')" = True ] ||
+  fail "the heartbeat of the lease with no session"
+leases=$(curl -fsS "$base/api/leases" -H "authorization: Bearer $owner")
+[ "$(printf '%s' "$leases" | json '[l["pid"] for l in d["leases"] if l["session"] is None]')" = "[19]" ] ||
+  fail "GET /api/leases does not show the lease with no session"
+owner_call GET /api/sessions
+is_true "None not in [s['login'] for s in d['sessions']]" "GET /api/sessions has a row with no session"
+echo "ok: the heartbeat and GET /api/leases give the session null"
+call_mcp -H "authorization: Bearer $extra" -d '{"jsonrpc":"2.0","id":8,"method":"tools/list"}'
+[ "$code" = 200 ] || fail "tools/list on the lease with no session gave HTTP $code"
+is_true "len(d['result']['tools']) == 22" "tools/list on the lease with no session"
+echo "ok: tools/list works on the lease with no session"
+call_mcp -H "authorization: Bearer $extra" \
+  -d '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+[ "$code" = 200 ] || fail "whoami on the lease with no session gave HTTP $code"
+is_true "d['result']['isError'] is True and d['result']['structuredContent']['error']['code'] == 'NO_FREE_SESSION' and d['result']['structuredContent']['error']['retry_safe'] is True" \
+  "whoami with a full pool"
+echo "ok: whoami with a full pool gives NO_FREE_SESSION with HTTP 200"
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$base/api/leases/current" -H "authorization: Bearer $third")
+[ "$code" = 204 ] || fail "the end of the lease of cursor.s3 gave HTTP $code"
+call_mcp -H "authorization: Bearer $extra" \
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
+[ "$code" = 200 ] || fail "whoami after the end of a pool lease gave HTTP $code"
+is_true "d['result']['structuredContent']['login'] == 'cursor.s3'" "whoami after the end of a pool lease"
+beat=$(curl -fsS -X POST "$base/api/leases/current/heartbeat" -H "authorization: Bearer $extra")
+[ "$(printf '%s' "$beat" | json 'd["session"]')" = cursor.s3 ] || fail "the heartbeat after the bind"
+echo "ok: after the end of a pool lease, whoami and the heartbeat give cursor.s3"
+for token in $pool_tokens $extra; do
+  [ "$token" = "$third" ] && continue
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$base/api/leases/current" -H "authorization: Bearer $token")
+  [ "$code" = 204 ] || fail "the end of a pool lease gave HTTP $code"
+done
+leases=$(curl -fsS "$base/api/leases" -H "authorization: Bearer $owner")
+[ "$(printf '%s' "$leases" | json 'len(d["leases"])')" = 0 ] || fail "a lease stays after the end"
+echo "ok: the end of each lease"
 
 printf '%s' "$owner_answers" | python3 -c '
 import re, sys

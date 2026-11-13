@@ -23,6 +23,7 @@ from mai.modules.sessions.application.resolve_session_query import (
     ResolveSessionHandler,
 )
 from mai.modules.sessions.application.session_cache import SessionCache
+from mai.modules.sessions.application.session_service import SessionService
 from mai.modules.sessions.domain.lease import is_token
 from mai.modules.sessions.domain.new_mail_counter import NewMailCounter
 from mai.modules.sessions.infra.in_memory_handle_store import InMemoryHandleStore
@@ -34,9 +35,9 @@ from tests.modules.sessions.test_session_tools import FakeFactory
 
 class FixedCounter(NewMailCounter):
     def __init__(self) -> None:
-        self.value = 3
+        self.value: int | None = 3
 
-    async def count(self, state) -> int:
+    async def count(self, state) -> int | None:
         return self.value
 
 
@@ -47,6 +48,12 @@ class Parts:
     keys: AgentKeys
     lease_store: InMemoryLeaseStore
     key: str
+    # The session service on the same handles as the lease service, for the MCP tools.
+    sessions: SessionService
+    factory: FakeFactory
+    counter: FixedCounter
+    log_in: LogInHandler
+    resolve: ResolveSessionHandler
 
 
 def make_parts(tmp_path) -> Parts:
@@ -62,20 +69,27 @@ def make_parts(tmp_path) -> Parts:
     cache = SessionCache()
     resolve = ResolveSessionHandler(credentials, handles, cache)
     lease_store = InMemoryLeaseStore()
+    factory = FakeFactory()
+    counter = FixedCounter()
+    log_in = LogInHandler(credentials, handles, cast(MailClientFactory, factory), cache)
+    log_out = LogOutHandler(resolve, handles)
     service = LeaseService(
-        lease_store,
-        keys,
-        credentials,
-        LogInHandler(
-            credentials, handles, cast(MailClientFactory, FakeFactory()), cache
-        ),
-        resolve,
-        LogOutHandler(resolve, handles),
-        FixedCounter(),
+        lease_store, keys, credentials, log_in, resolve, log_out, counter
     )
     anyio.run(credentials.init_accounts, False)
     key = anyio.run(keys.add, "cursor")
-    return Parts(service, credentials, keys, lease_store, key)
+    return Parts(
+        leases=service,
+        credentials=credentials,
+        keys=keys,
+        lease_store=lease_store,
+        key=key,
+        sessions=SessionService(log_in, resolve, log_out),
+        factory=factory,
+        counter=counter,
+        log_in=log_in,
+        resolve=resolve,
+    )
 
 
 def make_leases(tmp_path):
@@ -130,16 +144,16 @@ def test_a_lease_expires_90_seconds_after_the_last_heartbeat(tmp_path):
     assert info.value.code == "LEASE_UNKNOWN"
 
 
-def test_bad_key_no_free_session_and_owner_end(tmp_path):
+def test_bad_key_a_full_pool_and_owner_end(tmp_path):
     service, key, _store = make_leases(tmp_path)
     with pytest.raises(LeaseError) as info:
         anyio.run(service.acquire, "mai1:cursor:" + "a" * 52, "x", "/w", 1)
     assert info.value.code == "BAD_KEY"
     for pid in range(8):
         anyio.run(service.acquire, key, "claude", "/w", pid)
-    with pytest.raises(LeaseError) as info:
-        anyio.run(service.acquire, key, "claude", "/w", 9)
-    assert info.value.code == "NO_FREE_SESSION"
+    # A full pool gives a lease with no session.
+    ninth = anyio.run(service.acquire, key, "claude", "/w", 9)
+    assert is_token(ninth["lease"]) and ninth["session"] is None
     assert anyio.run(service.end_session, "cursor.s4") is True
     assert anyio.run(service.end_session, "cursor.s4") is False
     again = anyio.run(service.acquire, key, "claude", "/w", 10)
@@ -204,25 +218,25 @@ def test_a_pool_lease_never_gives_a_named_session(tmp_path):
         for pid in range(8)
     ]
     assert pool == [f"cursor.s{n}" for n in range(1, 9)]
-    with pytest.raises(LeaseError) as info:
-        anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 9)
-    assert info.value.code == "NO_FREE_SESSION"
+    ninth = anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 9)
+    assert ninth["session"] is None
     named = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 10, "lane-a")
     assert named["session"] == "cursor.lane-a"
 
 
-def test_a_named_lease_of_a_pool_label_takes_it_from_the_pool(tmp_path):
+def test_a_lease_request_with_a_pool_label_never_takes_a_pool_session(tmp_path):
     parts = make_parts(tmp_path)
     pool = anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 1)
     assert pool["session"] == "cursor.s1"
     with pytest.raises(LeaseError) as info:
         anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, "s1")
-    assert info.value.code == "SESSION_BUSY"
+    assert info.value.code == "BAD_LABEL"
     anyio.run(parts.leases.end, pool["lease"])
-    named = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 3, "s1")
-    assert named["session"] == "cursor.s1"
+    with pytest.raises(LeaseError) as info:
+        anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 3, "cursor.s1")
+    assert info.value.code == "BAD_LABEL"
     next_pool = anyio.run(parts.leases.acquire, parts.key, "claude", "/w", 4)
-    assert next_pool["session"] == "cursor.s2"
+    assert next_pool["session"] == "cursor.s1"
 
 
 def test_an_expired_lease_frees_its_named_session(tmp_path):

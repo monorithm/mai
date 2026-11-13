@@ -11,7 +11,7 @@ from mai.modules.mcp.api.mcp_controller import McpController
 from mai.modules.mcp.api.mcp_http_policy import McpHttpPolicy
 from mai.modules.mcp.application.wait_lane import WaitLane
 
-from ..fakes import HANDLE, fake_registry, resolver
+from ..fakes import HANDLE, fake_registry, lease_resolver, resolver
 
 HOST = "127.0.0.1:8080"
 LANE = WaitLane(total=1, per_key=1)
@@ -22,7 +22,7 @@ LANE = WaitLane(total=1, per_key=1)
     providers=[
         ValueProvider(
             provide=Dispatcher,
-            use_value=Dispatcher(fake_registry(), resolver, resolver),
+            use_value=Dispatcher(fake_registry(), resolver, lease_resolver),
         ),
         ValueProvider(
             provide=McpHttpPolicy,

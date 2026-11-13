@@ -37,7 +37,13 @@ from .json_rpc import (
 
 ToolFunc = Callable[[Ctx, dict], Awaitable[dict]]
 Resolver = Callable[[str], Awaitable[object]]
+# Maps a lease token to the session state of the lease. A ToolError is a failure that the
+# tool result tells, for example NO_FREE_SESSION. Each other exception means that the lease
+# is not valid.
 LeaseResolver = Callable[[str], Awaitable[object]]
+# Checks a lease token and gives no session state. An exception means that the lease is
+# not valid.
+LeaseChecker = Callable[[str], Awaitable[object]]
 Notify = Callable[[dict], object]
 
 
@@ -67,8 +73,10 @@ class Dispatcher:
     """Maps one JSON-RPC message to a status code and a response body.
 
     registry maps a tool name to an async callable(ctx, args) -> dict. resolver maps a session handle to a
-    session state, or raises ToolError(SESSION_UNKNOWN). The status code is for HTTP. A body of None means
-    no response (a notification).
+    session state, or raises ToolError(SESSION_UNKNOWN). lease_resolver maps the lease of an HTTP call to
+    its session state. lease_checker checks the lease of a call of a bridge tool, which needs no session;
+    with no lease_checker, the dispatcher uses lease_resolver. The status code is for HTTP. A body of None
+    means no response (a notification).
     """
 
     def __init__(
@@ -76,10 +84,12 @@ class Dispatcher:
         registry: Mapping[str, ToolFunc],
         resolver: Resolver,
         lease_resolver: LeaseResolver | None = None,
+        lease_checker: LeaseChecker | None = None,
     ) -> None:
         self._registry = dict(registry)
         self._resolver = resolver
         self._lease_resolver = lease_resolver
+        self._lease_checker = lease_checker
 
     @property
     def registry(self) -> dict[str, ToolFunc]:
@@ -235,7 +245,11 @@ class Dispatcher:
             args = {key: value for key, value in args.items() if key != "session"}
         state = None
         if transport == "http":
-            state = await self._lease_state(headers)
+            if name in schemas.BRIDGE_TOOLS:
+                # A bridge tool needs no session: a lease with no session gets no pool session.
+                await self._lease_check(headers)
+            else:
+                state = await self._lease_state(headers)
         if name in schemas.BRIDGE_TOOLS:
             # The bridge "mai mcp" answers login and logout. This call did not go through it.
             raise ToolError("BRIDGE_ONLY")
@@ -273,11 +287,29 @@ class Dispatcher:
             return None
 
     async def _lease_state(self, headers: Mapping[str, str] | None) -> object:
-        """The session state of the lease of the call. Raises LeaseRequired."""
+        """The session state of the lease of the call.
+
+        A lease that is not valid raises LeaseRequired. A ToolError of the lease resolver goes to
+        the tool result: for example, a lease with no session gets NO_FREE_SESSION when no pool
+        session is free. That result is not HTTP 401, because a 401 makes the bridge renew the lease.
+        """
         token = bearer_of(headers)
         if self._lease_resolver is None or not token:
             raise LeaseRequired()
         try:
             return await self._lease_resolver(token)
+        except ToolError:
+            raise
+        except Exception:  # noqa: BLE001 - each other failure of the lease check gives LEASE_UNKNOWN
+            raise LeaseRequired() from None
+
+    async def _lease_check(self, headers: Mapping[str, str] | None) -> None:
+        """Raise LeaseRequired when the call has no valid lease. It gives no session state."""
+        token = bearer_of(headers)
+        check = self._lease_checker or self._lease_resolver
+        if check is None or not token:
+            raise LeaseRequired()
+        try:
+            await check(token)
         except Exception:  # noqa: BLE001 - each failure of the lease check gives LEASE_UNKNOWN
             raise LeaseRequired() from None

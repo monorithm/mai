@@ -9,7 +9,7 @@ from ..domain.session_state import SessionState
 class ImapNewMailCounter(NewMailCounter):
     """Counts the mail with the same IMAP search as the notices of the watch command."""
 
-    async def count(self, state: SessionState) -> int:
+    async def count(self, state: SessionState) -> int | None:
         # The notices module imports the threads module, which imports this
         # module. A late import prevents the import cycle.
         from mai.modules.notices import SEARCH, mailboxes_of
@@ -28,4 +28,4 @@ class ImapNewMailCounter(NewMailCounter):
         try:
             return await anyio.to_thread.run_sync(run)
         except Exception:  # noqa: BLE001 - a failed count must not end the heartbeat
-            return 0
+            return None
