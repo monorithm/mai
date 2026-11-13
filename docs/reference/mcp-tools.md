@@ -20,6 +20,55 @@ of the bridge `mai mcp` is necessary as the bearer token.
 The bridge answers `login` and `logout` itself. A call of these tools that
 comes to the server gives the error `BRIDGE_ONLY`.
 
+### Pool labels
+
+A label that agrees with `^s[0-9]+$`, for example `s1`, `s9`, or `s01`, is a
+label of the pool. Only the pool and `mai session new AGENT --count N` make
+the sessions with these labels.
+
+- The owner request for a named session with a label of the pool gives
+  `BAD_LABEL`. The message tells the owner to use `--count`.
+- A `login` or a lease request with a label of the pool, for example `s2` or
+  `cursor.s2`, gives `BAD_LABEL`. A chat that calls no `login` uses the pool.
+
+Thus a `login` never takes a pool session, and the pool never gives a named
+session.
+
+### A lease with no session
+
+The pool of an agent has 8 sessions. When no pool session is free, the lease
+request of the bridge gets a lease with no session. In the result, the field
+`session` is `null`. Each agent can have 16 leases with no session. After
+that limit, the lease request gives `NO_FREE_SESSION`.
+
+| Call on a lease with no session | Result |
+|---|---|
+| `initialize`, `ping`, the notifications, `tools/list`, `resources/list`, `resources/read`, and `prompts/*` | The usual result. A session is not necessary for these methods. |
+| A heartbeat | `{"session": null, "new_mail": 0}` |
+| A tool call | The server gives the lease a free pool session, then the tool runs as that session. Each subsequent heartbeat gives that session. |
+| A tool call when no pool session is free | A tool error `NO_FREE_SESSION` with `retry_safe` true, and HTTP 200. The lease stays. |
+
+The owner list of the leases shows a lease with no session with the session
+`null`. The owner list of the sessions has one row for each session, thus it
+does not show that lease. The commands `mai session end`, `mai session
+rotate`, and `mai session revoke` act only on the leases of that session.
+
+### Lease errors
+
+Each error of a lease request has the same JSON form as the other errors of
+the lease API: `{"error": {"code": ..., "message": ...}}`.
+
+| Cause | Status | Code |
+|---|---|---|
+| The mail server or the store does not reply during the mail login of the session | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true |
+| A different failure of the mail login | 502 | The code of the failure, for example `LOGIN_FAILED`, with `retry_safe` |
+| The owner revokes the session during the lease request | 409 | `SESSION_REVOKED` |
+| The session does not exist | 404 | `SESSION_UNKNOWN` |
+| An internal error | 500 | `INTERNAL` |
+
+If the server cannot count the new mail, the heartbeat gives
+`"new_mail": null`. A heartbeat never gives an error with no code.
+
 ## Resources
 
 The server has the capability `resources`. A client can read the resources with no
@@ -75,7 +124,8 @@ has the error).
 | `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. |
 | `SESSION_BUSY` | A different lease holds the named session. |
 | `SESSION_REVOKED` | The owner revoked the named session. |
-| `BAD_LABEL` | The label is not correct. |
+| `BAD_LABEL` | The label is not correct, or it is a label of the pool. |
+| `NO_FREE_SESSION` | No pool session of the agent is free. Call `login` with a named session, or try the call again after some time. |
 | `BRIDGE_ONLY` | A call of `login` or `logout` came to the server, not to the bridge. |
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
 | `FORBIDDEN_ROLE` | The roles of the session do not let the session use the tool. |
