@@ -82,6 +82,7 @@ is true, try the same call again after some time. These codes occur frequently:
 | `BRIDGE_ONLY` | The call of `login` or `logout` did not go through the bridge `mai mcp`. |
 | `THREAD_CLAIMED` | A different session has the thread. |
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
+| `SERVER_UNAVAILABLE` | The bridge got no lease from the server for the session of the call. Try the call again after some time. |
 | `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. |
 
 ## Trust rules

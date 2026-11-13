@@ -145,6 +145,7 @@ has the error).
 | `THREAD_CLAIMED` | A different session has the claim of the thread. |
 | `MAIL_SERVER_DOWN` | Dovecot or Postfix does not operate. |
 | `STORE_UNAVAILABLE` | The database does not operate. |
+| `SERVER_UNAVAILABLE` | Only the bridge gives this code. The lease request of the bridge got a network error, or an error with no code. Try the call again after some time. |
 | `BUSY` | Too many waits are open. |
 | `INTERNAL` | An internal error occurred. |
 | `INVALID_TRANSITION` | The item cannot go to that state. |
