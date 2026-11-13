@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/monorithm/mai/cli/v3/internal/keys"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 // "mai uninstall --instance mai-dev" ends the leases of mai-dev with the owner key of mai-dev.
@@ -141,5 +144,74 @@ func TestTheSizeOfTheMailDataCountsNoDataFolderOfADifferentInstance(t *testing.T
 	// The fake engine gives each volume 2048 bytes: the two volumes of mai-dev.
 	if !strings.Contains(out.String(), "Size of the mail data: 4.0 KiB\n") {
 		t.Errorf("the size of the mail data of mai-dev counts a different folder:\n%s", out.String())
+	}
+}
+
+// manifestOf31WithTwoInstances writes the manifest that mai 3.1 wrote for the instance mai and
+// for mai-dev with a host data folder: the file has the instance mai, and no record has an
+// instance. mai 3.1 wrote the records of mai-dev with "mai start --instance mai-dev
+// --data-dir PATH". It gives the data folder of mai-dev.
+func manifestOf31WithTwoInstances(t *testing.T, e *env) string {
+	t.Helper()
+	data := filepath.Join(t.TempDir(), "mai-dev-data")
+	if err := os.MkdirAll(filepath.Join(data, "pg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "pg", "PG_VERSION"), []byte("16\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.eng.containers = append(e.eng.containers, fakeContainer{ID: "c-dev", Name: "mai-dev", ImageID: "sha256:img3", Labels: managed("mai-dev")})
+	e.eng.volumes[SpoolVolume("mai-dev")] = managed("mai-dev")
+	if err := e.keys.Set(keys.OwnerAccount("mai-dev"), "mai1:owner:mai-dev"); err != nil {
+		t.Fatal(err)
+	}
+	man := `{
+  "instance": "mai",
+  "items": [
+    {"type": "folder", "name": "config", "path": "` + e.dirs.Config + `"},
+    {"type": "folder", "name": "state", "path": "` + e.dirs.State + `"},
+    {"type": "volume", "name": "mai3-data"},
+    {"type": "volume", "name": "mai3-spool"},
+    {"type": "container", "name": "mai", "id": "c1"},
+    {"type": "volume", "name": "mai-dev3-spool"},
+    {"type": "folder", "name": "data", "path": "` + data + `"},
+    {"type": "container", "name": "mai-dev", "id": "c-dev"}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(e.dirs.State, manifest.FileName), []byte(man), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// "mai start --instance mai-dev" of 3.1 also wrote config.json.
+	if err := os.WriteFile(filepath.Join(e.dirs.Config, ConfigFile), []byte(`{"instance":"mai-dev","port":18766,"data_dir":"`+data+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// In a manifest of mai 3.1, "mai uninstall --instance mai" must not remove the data folder of
+// mai-dev, because the container of mai-dev keeps its mail in it.
+func TestUninstallOfAnInstanceKeepsTheDataFolderOfADifferentInstanceInAManifestOf31(t *testing.T) {
+	e := setup(t)
+	data := manifestOf31WithTwoInstances(t, e)
+	var out bytes.Buffer
+	u := e.uninstaller(&out)
+	u.Instance = "mai"
+	_ = u.Run(context.Background())
+	if _, err := os.Stat(filepath.Join(data, "pg", "PG_VERSION")); err != nil {
+		t.Fatalf("mai uninstall --instance mai removed the data folder %s of mai-dev: %v\n%s", data, err, out.String())
+	}
+}
+
+// In a manifest of mai 3.1, "mai uninstall --instance mai-dev" removes the data folder of
+// mai-dev, or reports it as an item that stays.
+func TestUninstallOfAnInstanceRemovesOrReportsItsDataFolderInAManifestOf31(t *testing.T) {
+	e := setup(t)
+	data := manifestOf31WithTwoInstances(t, e)
+	var out bytes.Buffer
+	u := e.uninstaller(&out)
+	u.Instance = "mai-dev"
+	_ = u.Run(context.Background())
+	if _, err := os.Stat(data); err == nil && !strings.Contains(out.String(), data) {
+		t.Fatalf("mai uninstall --instance mai-dev keeps its data folder %s and does not report it:\n%s", data, out.String())
 	}
 }

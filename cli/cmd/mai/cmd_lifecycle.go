@@ -330,7 +330,7 @@ func (s *lcSession) create(ctx context.Context, noPull bool, m *manifest.Manifes
 		if err := os.MkdirAll(sp.DataDir, 0o700); err != nil {
 			return "", err
 		}
-		if err := m.Add(manifest.Item{Type: manifest.Folder, Name: "data", Path: sp.DataDir}); err != nil {
+		if err := m.Add(manifest.Item{Type: manifest.Folder, Name: manifest.DataFolder, Path: sp.DataDir}); err != nil {
 			return "", err
 		}
 	}

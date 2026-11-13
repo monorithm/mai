@@ -701,7 +701,10 @@ manifest holds no secret.
 
 The instances of one state folder use one manifest. A record of 3.0 or 3.1
 has no instance. The CLI gives it the instance of its name, for example the
-container `mai-dev`, or the instance of the file.
+container `mai-dev`, or the instance of the file. The record of a data folder
+is different, because a different instance can own the folder. The container
+with the folder as its mount at `/data`, or `config.json` with that
+`data_dir`, tells its instance. When no instance is known, the folder stays.
 
 ### What `mai uninstall` removes
 

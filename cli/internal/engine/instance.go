@@ -112,6 +112,9 @@ func Overlap(a, b string) bool {
 	return within(a, b) || within(b, a)
 }
 
+// Within tells if the folder path is the folder root, or is in it.
+func Within(root, path string) bool { return within(realPath(root), realPath(path)) }
+
 // realPath gives the clean absolute path, with the symbolic links of the part that exists
 // resolved. On macOS, /var is a link to /private/var, and an engine can give either path.
 func realPath(p string) string {

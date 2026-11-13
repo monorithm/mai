@@ -75,8 +75,15 @@ func (f *fakeEngine) findImage(ref string) int {
 func (f *fakeEngine) ContainerList(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
 	var out client.ContainerListResult
 	for _, c := range f.containers {
+		// Docker Desktop gives the path of its VM for a bind mount in a list, for example
+		// /host_mnt/private/tmp/x. Only the inspect gives the host path.
+		var mounts []container.MountPoint
+		for _, m := range c.mounts() {
+			m.Source = "/host_mnt" + m.Source
+			mounts = append(mounts, m)
+		}
 		out.Items = append(out.Items, container.Summary{ID: c.ID, Names: []string{"/" + c.Name}, ImageID: c.ImageID, Labels: c.Labels,
-			Mounts: c.mounts()})
+			Mounts: mounts})
 	}
 	return out, nil
 }

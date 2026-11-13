@@ -174,6 +174,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the records of the keychain items of these instances. Thus `mai upgrade`,
   `mai doctor`, and `mai uninstall` of such an instance did not find its
   keychain items.
+- The record of a data folder of 3.0 or 3.1 does not get the instance of the
+  file. Its instance is the instance of the container with the folder as its
+  mount at `/data`, or the instance of `config.json` with that `data_dir`.
+  When no instance is known, the folder stays, and `mai uninstall` tells
+  this. `mai uninstall` never removes a folder that a container of a
+  different instance mounts. Before, the uninstall of the instance of the
+  file removed the data folder of a different instance.
 - When the bridge gets no new pool lease, a tool call with no argument
   `session` gets a tool error with no path. Examples are `MAIL_SERVER_DOWN`
   and `NO_FREE_SESSION`. Before, the tool error had the path `session`,

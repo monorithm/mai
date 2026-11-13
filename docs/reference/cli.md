@@ -283,12 +283,16 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
 - Instances in the same state folder use one key file and one manifest. Each
   record of the manifest has its instance. `mai uninstall --instance NAME`
   removes only the items of that instance. A container or a volume goes only
-  when its label `dev.mai.instance` is that instance. While a different
-  instance has keys in the key file or records in the manifest, some files
-  stay. The key file stays, and the manifest stays with the records of the
-  other instances. The configuration file of such an instance and the binary
-  also stay. Then run `mai uninstall --instance NAME` for each of these
-  instances.
+  when its label `dev.mai.instance` is that instance. The record of a data
+  folder of mai 3.0 or 3.1 has no instance. The container with the folder as
+  its mount at `/data`, or `config.json` with that `data_dir`, tells its
+  instance. When no instance is known, the folder stays. The uninstall never
+  removes a folder that a container of a different instance mounts. While a
+  different instance has keys in the key file or records in the manifest,
+  some files stay. The key file stays, and the manifest stays with the
+  records of the other instances. The configuration file of such an instance
+  and the binary also stay. Then run `mai uninstall --instance NAME` for each
+  of these instances.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 

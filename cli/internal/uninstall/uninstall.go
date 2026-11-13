@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/monorithm/mai/cli/v3/internal/engine"
@@ -91,8 +92,14 @@ type Plan struct {
 	LegacyErr  error           // the error of the examination of the legacy keychain
 	Paths      []string
 	DataDirs   []string // the data folders of the instance in Paths
-	Manifest   *manifest.Manifest
-	Config     Config
+	// Unowned holds each data folder of a record of mai 3.0 or 3.1 whose instance is not
+	// known. It stays.
+	Unowned []string
+	// mounted holds each folder of the instance that a container of a different instance
+	// mounts. It stays, and it is not in Paths.
+	mounted  []keptFolder
+	Manifest *manifest.Manifest
+	Config   Config
 	// Others holds each different instance with a key in the key file or a record in the
 	// manifest, sorted. MakePlan sets it, and Remove sets it again after the remove. While
 	// it is not empty, the files of the CLI that the other instances use stay.
@@ -188,15 +195,46 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	// A file of an app can hold content of the user after mai connect made it, thus it does
 	// not go with the folders of mai.
 	p.AppFiles = man.OfInstance(inst, manifest.File)
+	// The record of a data folder of mai 3.0 or 3.1 has no instance. The mounts of the
+	// containers and config.json tell its instance.
+	mounts := u.mounts(context.Background())
+	for _, it := range man.Unassigned() {
+		switch owner := dataOwner(it.Path, cfg, mounts); owner {
+		case inst:
+			man.Assign(it, inst)
+		case "":
+			p.Unowned = appendNew(p.Unowned, it.Path)
+		}
+	}
 	for _, it := range man.OfInstance(inst, manifest.Folder) {
 		p.Paths = appendNew(p.Paths, it.Path)
-		if it.Name == "data" {
+		if it.Name == manifest.DataFolder {
 			p.DataDirs = appendNew(p.DataDirs, it.Path)
 		}
 	}
 	p.Paths = appendNew(p.Paths, u.Dirs.Cache)
 	p.Paths = appendNew(p.Paths, u.Dirs.State)
 	p.Paths = appendNew(p.Paths, u.Dirs.Config)
+	// A folder that a container of a different instance mounts stays, also when a record names
+	// this instance. Thus the plan does not list it, and the size does not count it.
+	var others []engine.Mount
+	for _, m := range mounts {
+		if m.Instance != inst {
+			others = append(others, m)
+		}
+	}
+	var paths, data []string
+	for _, f := range p.Paths {
+		if m, ok := mountHolds(others, f); ok {
+			p.mounted = append(p.mounted, keptFolder{f, mountedText(m)})
+			continue
+		}
+		paths = append(paths, f)
+		if holds(p.DataDirs, f) {
+			data = append(data, f)
+		}
+	}
+	p.Paths, p.DataDirs = paths, data
 	var keyOthers []string
 	if u.Keys != nil {
 		all, err := u.Keys.Accounts()
@@ -207,6 +245,57 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	}
 	p.Others = union(keyOthers, instancesExcept(man.Instances(), inst))
 	return p, nil
+}
+
+// dataOwner gives the instance of a data folder: the instance of the container that mounts the
+// folder at /data, else the instance of config.json when its data_dir is the folder. It gives
+// "" when no instance is known.
+func dataOwner(dir string, cfg Config, mounts []engine.Mount) string {
+	for _, m := range mounts {
+		if m.Target == "/data" && engine.Within(m.Source, dir) && engine.Within(dir, m.Source) {
+			return m.Instance
+		}
+	}
+	if cfg.DataDir != "" && engine.Within(cfg.DataDir, dir) && engine.Within(dir, cfg.DataDir) {
+		return cfg.Instance
+	}
+	return ""
+}
+
+// mounts gives each bind mount of each container with the labels of the CLI and of an
+// instance. The list of the containers can give a different path for the host folder, for
+// example /host_mnt/private/tmp/x on Docker Desktop. Thus the inspect of each container gives
+// the path. When the inspect fails, the path of the list counts. It gives nil when there is no
+// engine, or when the engine cannot list the containers.
+func (u *Uninstaller) mounts(ctx context.Context) []engine.Mount {
+	if u.Engine == nil {
+		return nil
+	}
+	cl, err := u.Engine.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return nil
+	}
+	var out []engine.Mount
+	for _, c := range cl.Items {
+		inst := c.Labels[LabelInstance]
+		if c.Labels[LabelManagedBy] != ManagedByValue || inst == "" {
+			continue
+		}
+		if r, err := u.Engine.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{}); err == nil {
+			out = append(out, engine.HostMounts(r.Container)...)
+			continue
+		}
+		name := c.ID
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		for _, m := range c.Mounts {
+			if m.Type == mount.TypeBind && m.Source != "" {
+				out = append(out, engine.Mount{Instance: inst, Container: name, Source: m.Source, Target: m.Destination})
+			}
+		}
+	}
+	return out
 }
 
 // accountInstances gives the instance of each account.
@@ -293,6 +382,12 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 	}
 	for _, f := range p.Paths {
 		fmt.Fprintf(w, "  folder     %s\n", f)
+	}
+	for _, f := range p.Unowned {
+		fmt.Fprintf(w, "The data folder %s stays. %s.\n", f, unownedText)
+	}
+	for _, k := range p.mounted {
+		fmt.Fprintf(w, "The folder %s stays, because %s.\n", k.path, k.detail)
 	}
 	if u.Binary != nil && len(p.Others) == 0 {
 		fmt.Fprintf(w, "  binary     %s\n", u.Binary.Path)
@@ -611,12 +706,33 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}
 	}
 	rs, keep = u.keepManifest(rs, keep, p, keyOthers)
+	// A folder that a container of a different instance mounts stays, for example its data
+	// folder in a folder of the CLI.
+	var mounted []engine.Mount
+	for _, m := range u.mounts(ctx) {
+		if m.Instance != p.Instance {
+			mounted = append(mounted, m)
+			keep = append(keep, keptPath{m.Source, "the folder " + m.Source + " that the container " + m.Container +
+				" of the instance " + m.Instance + " mounts"})
+		}
+	}
 	paths := make([]string, 0, len(keep))
 	for _, k := range keep {
 		paths = append(paths, k.path)
 	}
+	for _, f := range p.Unowned {
+		rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: unownedText})
+	}
+	for _, k := range p.mounted {
+		rs = append(rs, Result{Item: "folder " + k.path, State: Kept, Detail: k.detail})
+	}
 	for _, f := range p.Paths {
 		if f == "" {
+			continue
+		}
+		// A container can start after the plan, thus the remove examines the mounts again.
+		if m, ok := mountHolds(mounted, f); ok {
+			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: mountedText(m)})
 			continue
 		}
 		if holdsAny(f, paths) {
@@ -637,6 +753,28 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}))
 	}
 	return rs
+}
+
+// unownedText tells why a data folder of a record of mai 3.0 or 3.1 stays.
+const unownedText = "The manifest of mai 3.0 or 3.1 does not tell its instance, and no container and no config.json tell it. " +
+	"Remove it yourself when no instance uses it"
+
+// keptFolder is a folder that stays, with the text that tells why.
+type keptFolder struct{ path, detail string }
+
+// mountedText tells that a container of a different instance mounts a folder.
+func mountedText(m engine.Mount) string {
+	return "the container " + m.Container + " of the instance " + m.Instance + " mounts the folder " + m.Source
+}
+
+// mountHolds gives the mount of mounts whose folder is f or holds f.
+func mountHolds(mounts []engine.Mount, f string) (engine.Mount, bool) {
+	for _, m := range mounts {
+		if engine.Within(m.Source, f) {
+			return m, true
+		}
+	}
+	return engine.Mount{}, false
 }
 
 // keptPath is a file or a folder that stays in a folder of the CLI, with its text for the
@@ -829,18 +967,17 @@ func holdsAny(root string, keep []string) bool {
 	return false
 }
 
-// within tells if path is root or is in the folder root.
-func within(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
+// within tells if path is root or is in the folder root. It resolves the symbolic links,
+// because an engine can give a mount with a different path of the same folder, for example
+// /private/var for /var on macOS.
+func within(root, path string) bool { return engine.Within(root, path) }
 
 // removeExcept removes root and all that it holds, except each path of keep and the folders
 // that hold such a path. It gives true when a path of keep is in root.
 func removeExcept(root string, keep []string) (bool, error) {
 	holds := false
 	for _, k := range keep {
-		if filepath.Clean(k) == filepath.Clean(root) {
+		if within(root, k) && within(k, root) {
 			return true, nil
 		}
 		if within(root, k) {

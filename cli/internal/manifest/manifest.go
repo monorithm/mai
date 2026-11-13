@@ -27,6 +27,9 @@ const (
 	File        = "file"
 )
 
+// DataFolder is the name of the record of the host data folder of an instance, a folder.
+const DataFolder = "data"
+
 // Item is one thing that mai made.
 type Item struct {
 	Type    string `json:"type"`
@@ -40,7 +43,8 @@ type Item struct {
 	Target string   `json:"target,omitempty"`
 	Dirs   []string `json:"dirs,omitempty"`
 	// Instance is the instance of the item. An item of mai 3.0 or 3.1 has no instance. Load
-	// then gives it the instance of its name, or the instance of the file (instanceOf).
+	// then gives it the instance of its name, or the instance of the file (instanceOf). The
+	// data folder of such a record stays with no instance (Unassigned).
 	Instance string `json:"instance,omitempty"`
 }
 
@@ -78,11 +82,42 @@ func Load(path, instance string) (*Manifest, error) {
 		m.Instance = instance
 	}
 	for i := range m.Items {
-		if m.Items[i].Instance == "" {
+		if m.Items[i].Instance == "" && !legacyData(m.Items[i]) {
 			m.Items[i].Instance = instanceOf(m.Items[i], m.Instance)
 		}
 	}
 	return m, nil
+}
+
+// legacyData tells if a record with no instance is of a data folder. The instance of the file
+// of mai 3.0 or 3.1 is the instance of the first command that wrote the file. A data folder can
+// be of a different instance, for example of "mai start --instance mai-dev --data-dir PATH".
+// Thus the record stays with no instance, and the caller finds the instance, for example from
+// the mounts of the containers.
+func legacyData(it Item) bool { return it.Type == Folder && it.Name == DataFolder }
+
+// Unassigned gives each record with no instance: a data folder of mai 3.0 or 3.1.
+func (m *Manifest) Unassigned() []Item {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Item
+	for _, x := range m.Items {
+		if x.Instance == "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// Assign gives the record of the item the instance, in memory. The next save writes it.
+func (m *Manifest) Assign(it Item, instance string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.Items {
+		if same(m.Items[i], it) {
+			m.Items[i].Instance = instance
+		}
+	}
 }
 
 // The ends of the names of the volumes of an instance, after the name of the instance. They

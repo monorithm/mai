@@ -91,3 +91,38 @@ func TestAddRecordsTheInstanceOfEachItem(t *testing.T) {
 		t.Errorf("the instance of the file is %q", c.Instance)
 	}
 }
+
+// The instance of a manifest of mai 3.0 or 3.1 is the instance of the first command that wrote
+// it. The record of a data folder can be of a different instance, thus Load gives it no
+// instance. A new record of a data folder gets the instance of the command.
+func TestTheDataFolderOfA31RecordHasNoInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	raw := `{"instance":"mai","items":[{"type":"folder","name":"data","path":"/d"},{"type":"folder","name":"state","path":"/s"}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(path, "mai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Unassigned(); len(got) != 1 || got[0].Path != "/d" {
+		t.Fatalf("the records with no instance are %+v", got)
+	}
+	if got := m.OfInstance("mai", Folder); len(got) != 1 || got[0].Name != "state" {
+		t.Fatalf("the folders of mai are %+v", got)
+	}
+	m.Assign(Item{Type: Folder, Name: DataFolder, Path: "/d"}, "mai-dev")
+	if got := m.OfInstance("mai-dev", Folder); len(got) != 1 || got[0].Path != "/d" || len(m.Unassigned()) != 0 {
+		t.Fatalf("after Assign, the folders of mai-dev are %+v", got)
+	}
+	n, err := Load(filepath.Join(t.TempDir(), FileName), "mai-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Add(Item{Type: Folder, Name: DataFolder, Path: "/e"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := n.OfInstance("mai-dev", Folder); len(got) != 1 {
+		t.Fatalf("a new data folder record of mai-dev has the instance %+v", n.Items)
+	}
+}
