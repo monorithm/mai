@@ -4,7 +4,7 @@ mai has two command lines with the name `mai`:
 
 - The host CLI, a Go binary on the host. You use only this command.
 - The server CLI in the container. The host CLI runs it. For recovery,
-  `mai exec -- ARGS` runs it after a presence check.
+  `mai exec -- ARGS` runs it.
 
 ## Host CLI
 
@@ -15,12 +15,12 @@ mai has two command lines with the name `mai`:
 | `mai pause`, `mai resume` | Freezes and resumes the container. |
 | `mai status` | Shows the health, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI. |
 | `mai logs [--follow]` | Shows the log of the container. |
-| `mai doctor` | Examines the engine, the port, the free disk space, the keychain, and the presence check. |
-| `mai upgrade` | Pulls the image of the new CLI version and makes the container again. |
-| `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes all items of the manifest. `--legacy` removes a 2.x install. |
+| `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It reads no key and shows no prompt. |
+| `mai upgrade` | Moves the keys of the instance from the keychain of mai 3.0 and 3.1 to the key file. Then pulls the image of the new CLI version and makes the container again. |
+| `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes all items of the manifest, the keys of the instance in the key file, and each keychain item of the instance. `--legacy` removes a 2.x install. |
 | `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
-| `mai agent add NAME`, `mai agent list`, `mai agent remove NAME` | Manages the agent accounts through the owner API. |
+| `mai agent add NAME`, `mai agent list`, `mai agent rotate NAME`, `mai agent remove NAME` | Manages the agent accounts through the owner API. The CLI keeps each agent key in the key file. `rotate` gives the agent a new key. |
 | `mai session new AGENT --label L` | Makes the named session `AGENT.L`. Shows only the login. |
 | `mai session new AGENT --count N` | Makes each session of `AGENT.s1` to `AGENT.sN` that does not exist. Shows only the login of each new session. |
 | `mai session list [--agent AGENT] [--json]` | Shows the sessions, the label and the state of each session, the lease, and the app and folder of each lease. |
@@ -30,9 +30,9 @@ mai has two command lines with the name `mai`:
 | `mai mcp --agent A` | The bridge. An app starts it. It gets a lease and bridges stdio to `/mcp`. The bridge, not the server, does the tools `login` and `logout`. Refer to [Bridge](#bridge). |
 | `mai hook --format F --event E` | Shows the hook output of the app. It reads the notice file of its bridge and shows one line for each session with new mail. |
 | `mai ui on`, `mai ui off` | Starts or stops the mail UI. |
-| `mai ui open` | Does a presence check, then opens the UI in the browser and signs you in. |
+| `mai ui open` | Opens the UI in the browser and signs you in. |
 | `mai backup`, `mai restore STAMP` | Makes or restores a backup through the owner API. |
-| `mai exec -- ARGS` | Runs the server CLI in the container, after a presence check. |
+| `mai exec -- ARGS` | Runs the server CLI in the container. |
 | `mai version` | Shows the version of the CLI. |
 
 `APP` is one of `claude`, `cursor`, `copilot`, `codex`, and `antigravity`.
@@ -53,8 +53,10 @@ sessions, use `--count N`.
 
 `mai mcp --agent A` gets the pool lease of the agent when it starts. Then it
 gets one lease for each named session that a chat logs in to with the tool
-`login`. The presence check occurs one time for each bridge process, before
-the first lease. If the user refuses the presence check, the bridge stops.
+`login`. The bridge reads the agent key from the key file at each lease
+request. Thus a new key from `mai agent rotate` applies at the next lease
+request. When the key file has no key for the agent, the result is
+`BAD_KEY`.
 
 ### Pool lease with no session
 
@@ -81,8 +83,8 @@ pool entry when the pool lease has no session.
 ### Errors of a lease request
 
 When the server does not know a lease, for example after a restart of the
-container, the bridge sends a lease request again. There is no new presence
-check. This table gives the result of an error of that lease request.
+container, the bridge sends a lease request again. This table gives the
+result of an error of that lease request.
 
 | Error | Named session | Pool lease |
 |---|---|---|
@@ -119,6 +121,47 @@ Thus the bridge does not stop a lease request that it sent. When a logout
 or a stop occurs during a lease request, the bridge waits for the result,
 for a maximum of 30 seconds. Then it ends that lease also. Thus no lease of
 the bridge stays on the server after a logout or a stop.
+
+## Key file
+
+The host CLI keeps the owner key and the agent keys of each instance in one
+key file:
+
+| OS | Key file |
+|---|---|
+| macOS | `~/Library/Application Support/mai/state/keys.json` |
+| Linux | `$XDG_STATE_HOME/mai/keys.json`, by default `~/.local/state/mai/keys.json` |
+| Windows | `%LocalAppData%\mai\state\keys.json` |
+
+- The file is JSON. Its accounts are `owner@INSTANCE` and
+  `agent:NAME@INSTANCE`. No command shows a key.
+- The file has the mode 0600, in a folder with the mode 0700. On Unix, the CLI
+  refuses a key file that a group or other users can read. The error gives
+  the command that corrects the mode, for example `chmod 600 PATH`.
+- Each write is atomic: a temporary file in the same folder, an fsync, and a
+  rename. A lock on the file `keys.json.lock` lets one process at a time read
+  or change the key file. Thus two CLIs or bridges at the same time do not
+  lose a key.
+- There is no presence check. A program that can use the Docker socket
+  controls a self-run instance. Thus a keychain and a prompt give no
+  protection from such a program.
+
+### Keys of mai 3.0 and 3.1
+
+mai 3.0 and 3.1 kept the keys in the system keychain, with the service
+`dev.mai` and the same account names.
+
+- When the key file has no key for an account, the CLI reads the keychain item
+  of the account. It writes the key to the key file, and then it deletes the
+  keychain item. On macOS, the read can show one prompt for each item.
+- `mai upgrade` moves all the keys of the instance. When the key file has a key
+  for the account of a keychain item, it deletes the keychain item.
+- `mai doctor` tells about each keychain item of the instance.
+- `mai uninstall` removes the keys of the instance from the key file and each
+  keychain item of the instance. When the key file holds the keys of a
+  different instance, the key file stays.
+- With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
+  keychain item.
 
 ## Server CLI
 

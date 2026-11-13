@@ -17,8 +17,7 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
    mai agent add cursor
    ```
 
-   The CLI keeps the agent key in the system keychain. It does not show the
-   key.
+   The CLI keeps the agent key in its key file. It does not show the key.
 
 2. Connect the app to the agent:
 
@@ -81,8 +80,7 @@ window. To give a chat its own session, do these steps:
 4. To end the session of the chat, tell the agent to call the tool `logout`
    with the handle.
 
-A login gets no new presence prompt, because you approved the bridge at its
-first lease. The handle is valid only in that bridge.
+The handle is valid only in that bridge.
 
 ## Hooks
 

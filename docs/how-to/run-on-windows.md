@@ -62,4 +62,4 @@ socket.
 |---|---|
 | `mai start` cannot find the engine | Start Docker Desktop. Then run `mai doctor`. |
 | A different program uses the port `8765` | Stop the program that uses the port. Then run `mai start` again. |
-| No Windows Hello prompt | Run `mai doctor`. It examines the presence check. |
+| The bridge gives `BAD_KEY` | Run `mai doctor`. It examines the key file. Then run `mai agent add NAME` for an agent with no key. |

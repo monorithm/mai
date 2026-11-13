@@ -4,8 +4,8 @@ mai has two parts: the host CLI `mai` and one container.
 
 The host CLI is one Go binary for macOS, Linux, and Windows. It operates the
 container through the Engine API of Docker or Podman. It keeps the owner key
-and the agent keys in the system keychain. Its bridge `mai mcp` connects the
-MCP stdio of an agent app to the HTTP endpoint of the server.
+and the agent keys in its key file. Its bridge `mai mcp` connects the MCP
+stdio of an agent app to the HTTP endpoint of the server.
 
 The container has four servers:
 
@@ -20,8 +20,8 @@ flowchart LR
   subgraph host[Host]
     appx[Agent app] -->|stdio| bridge[mai mcp]
     you[You] --> cli[mai start, ui, uninstall]
-    bridge --> kc[(Keychain)]
-    cli --> kc
+    bridge --> kf[(Key file)]
+    cli --> kf
   end
   subgraph container[Container]
     app[App]
@@ -73,9 +73,25 @@ Each lease token is only in the memory of the bridge. The bridge sends a
 heartbeat for each lease each 30 s. A lease ends 90 s after its last
 heartbeat.
 
-Before the first lease of the bridge, the bridge does a presence check: Touch
-ID, Windows Hello, or the password of the user. A subsequent lease of the
-same bridge gets no new presence check.
+### Keys
+
+The CLI keeps the owner key and the agent keys of each instance in one key
+file, `keys.json` in the state folder of the CLI. The file has the mode 0600,
+in a folder with the mode 0700. On Unix, the CLI refuses a key file that a
+group or other users can read. Each write of the file is atomic, and a lock
+lets one process at a time change it. The server keeps only a hash of each
+key.
+
+The bridge reads the agent key at each lease request. Thus a new key from
+`mai agent rotate` applies to a bridge that runs.
+
+mai 3.0 and 3.1 kept the keys in the system keychain. When the key file has no
+key for an account, the CLI moves the keychain item of that account to the key
+file. `mai upgrade` moves all the keys of the instance.
+
+There is no presence check. A program that can use the Docker socket controls
+a self-run instance, for example with `docker exec mai mai ...`. Thus a
+keychain and a presence prompt give no protection from such a program.
 
 ### Hooks
 
@@ -190,7 +206,8 @@ versions:
 
 - No session secret is on the host. Each session uses its own credential to
   IMAP and SMTP in the container.
-- The server keeps only a hash of the owner key and of each agent key.
+- The server keeps only a hash of the owner key and of each agent key. Only
+  your OS user can read the key file on the host.
 - Postfix sends a copy of each mail to the system mailbox `copies`. Only the
   owner can read it.
 - The app proves the sender of each mail. Postfix refuses a forged sender.
