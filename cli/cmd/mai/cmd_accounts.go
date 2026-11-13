@@ -153,6 +153,11 @@ const sessionUse = `usage: mai session new AGENT --label LABEL
 // labelRule is the rule of a session label on the server: AGENT.LABEL is the login.
 var labelRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
+// poolLabelRule is the rule of a label of the pool, for example s1. Only the pool and
+// "mai session new AGENT --count N" make a session with such a label. The server refuses
+// it with BAD_LABEL.
+var poolLabelRule = regexp.MustCompile(`^s[0-9]+$`)
+
 // parseAll parses the flags of fs before, between, and after the other arguments, and
 // returns the other arguments in sequence.
 func parseAll(fs *flag.FlagSet, args []string) ([]string, error) {
@@ -191,7 +196,7 @@ func runSession(args []string, in io.Reader, out, errOut io.Writer) int {
 	)
 	switch sub {
 	case "new":
-		fs.StringVar(&label, "label", "", "make the named session AGENT.`LABEL`")
+		fs.StringVar(&label, "label", "", "make the named session AGENT.`LABEL` (a label s<N> is only for the pool)")
 		fs.IntVar(&count, "count", 0, "make the sessions AGENT.s1 to AGENT.s`N` that do not exist")
 	case "list":
 		fs.StringVar(&agent, "agent", "", "show only the sessions of the agent `NAME`")
@@ -224,6 +229,11 @@ func runSession(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		if label != "" && !labelRule.MatchString(label) {
 			fmt.Fprintf(errOut, "mai session new: the label %q does not agree with the rule [a-z0-9][a-z0-9-]{0,31}\n", label)
+			return 2
+		}
+		if poolLabelRule.MatchString(label) {
+			fmt.Fprintf(errOut, "mai session new: BAD_LABEL: the label %q is a label of the pool. "+
+				"To make pool sessions, use mai session new AGENT --count N.\n", label)
 			return 2
 		}
 		if label == "" && count < 1 {
