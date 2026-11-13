@@ -37,7 +37,7 @@ func TestTwoLoginsGetNoNewPresenceCheck(t *testing.T) {
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
 	h.recv(t)
-	// The user approved this bridge. A later prompt fails, thus each login must get no prompt.
+	// The user approved this bridge. A subsequent prompt fails, thus each login must get no prompt.
 	t.Setenv("MAI_TEST_PRESENCE", "refuse")
 	a := h.login(t, 2, "lane-a")
 	b := h.login(t, 3, "lane-b")

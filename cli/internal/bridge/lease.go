@@ -111,7 +111,7 @@ var errNoKey = errors.New("no agent key")
 
 // request sends a lease request for the named session name, or for a pool session when
 // name is "". The presence check occurs only before the first lease request of the
-// process. A later request gets no prompt, because the user approved this bridge.
+// process. A subsequent request gets no prompt, because the user approved this bridge.
 func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) {
 	b.approveMu.Lock()
 	defer b.approveMu.Unlock()
@@ -272,7 +272,7 @@ func (b *Bridge) beat(ctx context.Context, l *lease) error {
 }
 
 // drop removes a named lease that ended on the server and that the bridge cannot renew.
-// A later tool call with its handle gets SESSION_UNKNOWN.
+// A subsequent tool call with its handle gets SESSION_UNKNOWN.
 func (b *Bridge) drop(l *lease, why error) {
 	if b.namedLease(l.handle) == l {
 		b.forget(l.handle)

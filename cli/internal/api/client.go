@@ -272,7 +272,7 @@ func (c *Client) RotateSession(ctx context.Context, login string) (SessionState,
 }
 
 // RevokeSession calls POST /api/sessions/{login}/revoke. The server ends the lease of the
-// session and refuses each later lease request with SESSION_REVOKED.
+// session and refuses each subsequent lease request with SESSION_REVOKED.
 func (c *Client) RevokeSession(ctx context.Context, login string) (SessionState, error) {
 	var s SessionState
 	err := c.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(login)+"/revoke", true, nil, &s)
