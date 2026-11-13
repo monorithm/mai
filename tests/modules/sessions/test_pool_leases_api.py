@@ -41,7 +41,7 @@ def test_a_lease_request_for_a_pool_label_gives_400_bad_label(api):
         assert answer.status_code == 400, name
         error = answer.json()["error"]
         assert error["code"] == "BAD_LABEL"
-        assert "pool" in error["message"] and "login" in error["message"]
+        assert "pool" in error["message"] and "no session" in error["message"]
     # A session of a different agent stays unknown.
     assert lease(client, key, session="codex.s2").json()["error"]["code"] == (
         "SESSION_UNKNOWN"

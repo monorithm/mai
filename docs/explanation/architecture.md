@@ -64,10 +64,12 @@ container. An app gets a session only through a lease. The bridge
 `mai mcp --agent A` sends a lease request with the agent key. The server gives
 a free pool session of the agent.
 
-A chat can call the tool `login` with the label of a named session. The bridge
-then gets a lease for that session and gives the chat a handle. The chat gives
-the handle as the argument `session` in each tool call. The bridge sends the
-call with the lease of the handle. A call with no handle uses the pool lease.
+A chat gives the label of a named session as the argument `session` in each
+tool call, for example `lane-a`. At the first call, the bridge gets a lease for
+that session. The bridge removes the argument and sends each call with the
+lease of that session. A call with no `session` uses the pool lease. The tool
+`login` is optional: it gets the lease and gives the chat a handle. The chat
+can give the handle as `session` in place of the label.
 
 Each lease token is only in the memory of the bridge. The bridge sends a
 heartbeat for each lease each 30 s. A lease ends 90 s after its last

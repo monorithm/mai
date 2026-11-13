@@ -1,6 +1,7 @@
 #!/bin/sh
 # End-to-end test of the named sessions: the host CLI, the bridge, and the hook
-# against a mai image.
+# against a mai image. A chat uses a named session with a login and a handle,
+# or with only the label of the session as the argument session.
 # Usage: scripts/it_named_sessions.sh [IMAGE]   (default mai:wf-ns-e2e)
 # MAI_IT_NAME sets the instance (default mai-wf-ns-e2e), and MAI_IT_PORT sets
 # the host port (default 18990).
@@ -120,6 +121,7 @@ import time
 
 MAI, WORK = sys.argv[1], sys.argv[2]
 HANDLE = re.compile(r"^ses-[a-z2-7]{16}$")
+SESSION_PATTERN = r"^(ses-[a-z2-7]{16}|([a-z0-9][a-z0-9-]{0,47}\.)?[a-z0-9][a-z0-9-]{0,31})$"
 POOL = re.compile(r"^cursor\.s[0-9]+$")
 INIT = {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it", "version": "0"}}
 # Each bridge that the driver starts. At the end, the driver stops each of them.
@@ -269,6 +271,7 @@ def main():
     try:
         one = Bridge("one")
         run(one)
+        run_labels(one)
         two = Bridge("two")
         run_second(one, two)
         run_end(one)
@@ -284,10 +287,11 @@ def main():
 
 def run(one):
     init = one.request("initialize", INIT)
-    check(init["serverInfo"]["version"] == "3.1.1", f"the contract is {init['serverInfo']}")
-    check("call login with the label of your session" in init["instructions"], "the instructions do not tell about login")
+    check(init["serverInfo"]["version"] == "3.2.0", f"the contract is {init['serverInfo']}")
+    check('session: "lane-1"' in init["instructions"], "the instructions do not tell to give the label as session")
+    check("login" in init["instructions"], "the instructions do not tell about login")
     one.notify("notifications/initialized")
-    ok("initialize gives the contract 3.1.1, and the instructions tell about login")
+    ok("initialize gives the contract 3.2.0, and the instructions tell to give the label as session")
 
     guide = one.request("resources/read", {"uri": "mai://guide"})
     check("login" in guide["contents"][0]["text"], "the guide does not tell about login")
@@ -298,11 +302,12 @@ def run(one):
     check(tools["login"]["inputSchema"]["properties"]["session"]["type"] == "string", "login has no session string")
     check(tools["login"]["inputSchema"].get("required") == ["session"], "login does not require session")
     check(tools["logout"]["inputSchema"]["properties"]["session"]["type"] == "string", "logout has no session string")
+    check(tools["logout"]["inputSchema"]["properties"]["session"].get("pattern") == SESSION_PATTERN, "logout does not take a label")
     for name, t in tools.items():
         if name in ("login", "logout"):
             continue
         prop = t["inputSchema"]["properties"].get("session")
-        check(prop is not None and prop.get("type") == "string" and prop.get("pattern") == "^ses-[a-z2-7]{16}$", f"{name} has no session property")
+        check(prop is not None and prop.get("type") == "string" and prop.get("pattern") == SESSION_PATTERN, f"{name} has no session property")
         check("session" not in t["inputSchema"].get("required", []), f"{name} requires session")
     ok(f"tools/list has login, logout, and the optional session property in the other {len(tools) - 2} tools")
 
@@ -378,12 +383,93 @@ def run(one):
     ok("whoami with an unknown handle gives SESSION_UNKNOWN")
 
 
+def session_error(r, what):
+    """The code of a tool error with the path session."""
+    code = error_code(r, what)
+    check(r["structuredContent"]["error"].get("path") == "session", f"{what}: the path of {code} is not session")
+    return code
+
+
+def run_labels(one):
+    """A chat gives only the label of its session in each call, with no login."""
+    w = result(one.call("whoami", session="lane-c"), "whoami lane-c")
+    check(w["login"] == "cursor.lane-c", f"whoami with the label lane-c is {w['login']}")
+    ok("whoami with session lane-c and no login gives cursor.lane-c")
+    wait_until(
+        lambda: leased("cursor.lane-c") and sessions()["cursor.lane-c"]["pid"] == one.proc.pid,
+        "lane-c has no lease of bridge one",
+    )
+    ok("mai session list shows lane-c as leased by bridge one")
+
+    subject = "label e2e " + secrets.token_hex(4)
+    body = "From lane-a to lane-c."
+    result(
+        one.call(
+            "send_message",
+            {"to": ["cursor.lane-c@mai.internal"], "subject": subject, "body": body, "request_id": "it-" + secrets.token_hex(6)},
+            session="lane-a",
+        ),
+        "send_message lane-a",
+    )
+    ok("send_message with session lane-a, the label of the login A, to cursor.lane-c@mai.internal")
+    got = result(one.call("wait_for_mail", {"timeout_sec": 30}, session="lane-c", timeout=60), "wait_for_mail lane-c")
+    check(got["address"].startswith("cursor.lane-c@"), f"wait_for_mail lane-c is for {got['address']}")
+    mail = next((m for m in got["messages"] if m["subject"] == subject), None)
+    check(mail is not None, f"wait_for_mail lane-c gave {len(got['messages'])} messages and not the mail")
+    read = result(one.call("read_message", {"ref": mail["ref"]}, session="lane-c"), "read_message lane-c")
+    check(read["message"]["body"].strip() == body, "read_message lane-c gave a different body")
+    ok("wait_for_mail and read_message with session lane-c give the mail")
+    result(
+        one.call(
+            "reply",
+            {"ref": mail["ref"], "body": "From lane-c to lane-a.", "request_id": "it-" + secrets.token_hex(6)},
+            session="cursor.lane-c",
+        ),
+        "reply cursor.lane-c",
+    )
+    ok("reply with session cursor.lane-c")
+
+    def reply_from_lane_c():
+        inbox = result(one.call("list_inbox", session="lane-a"), "list_inbox lane-a")
+        return any(subject in m["subject"] and "cursor.lane-c" in m["from"] for m in inbox["messages"])
+
+    wait_until(reply_from_lane_c, "lane-a has no reply from cursor.lane-c", timeout=30)
+    ok("list_inbox with session lane-a has the reply from cursor.lane-c")
+
+    h = result(one.call("login", {"session": "lane-c"}), "login lane-c")
+    check(HANDLE.match(h["session"]) and h["login"] == "cursor.lane-c", f"login lane-c gave {h}")
+    w = result(one.call("whoami", session=h["session"]), "whoami with the handle of lane-c")
+    check(w["login"] == "cursor.lane-c", f"whoami with the handle of lane-c is {w['login']}")
+    leases = one.text().count("a chat logged in to the session cursor.lane-c")
+    check(leases == 1, f"bridge one got {leases} leases for lane-c")
+    ok("login lane-c gives the handle of the lease of the calls with the label: bridge one got one lease for lane-c")
+
+    notice = os.path.join(os.environ["MAI_HOME"], "state", "notices", f"{os.getpid()}-cursor.json")
+    wait_until(lambda: os.path.exists(notice) and "cursor.lane-c" in open(notice).read(), "the notice file has no cursor.lane-c", timeout=45)
+    ok("the notice file of bridge one has cursor.lane-c")
+
+    for value, want in (("s1", "BAD_LABEL"), ("cursor.s2", "BAD_LABEL"), ("lane-z", "SESSION_UNKNOWN"), ("Lane-C", "INVALID_ARGUMENT")):
+        code = session_error(one.call("whoami", session=value), f"whoami {value}")
+        check(code == want, f"whoami with the session {value} gave {code}, not {want}")
+    ok("whoami with s1 or cursor.s2 gives BAD_LABEL, with lane-z SESSION_UNKNOWN, and with Lane-C INVALID_ARGUMENT")
+
+    out = result(one.call("logout", {"session": "lane-c"}), "logout lane-c")
+    check(out["session"] == h["session"] and out["login"] == "cursor.lane-c", f"logout lane-c gave {out}")
+    wait_until(lambda: not leased("cursor.lane-c"), "lane-c is leased after the logout")
+    code = session_error(one.call("logout", {"session": "lane-c"}), "a second logout lane-c")
+    check(code == "SESSION_UNKNOWN", f"a second logout lane-c gave {code}")
+    ok("logout with session lane-c ends the lease of lane-c, and a second logout gives SESSION_UNKNOWN")
+
+
 def run_second(one, two):
     two.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "it2", "version": "0"}})
     two.notify("notifications/initialized")
     code = error_code(two.call("login", {"session": "lane-a"}), "login lane-a in bridge two")
     check(code == "SESSION_BUSY", f"login lane-a in bridge two gave {code}")
     ok("a second bridge that logs in to lane-a gets SESSION_BUSY")
+    code = session_error(two.call("whoami", session="lane-a"), "whoami lane-a in bridge two")
+    check(code == "SESSION_BUSY", f"whoami with session lane-a in bridge two gave {code}")
+    ok("a call with session lane-a in a second bridge gets SESSION_BUSY")
     exit_code = two.close()
     check(exit_code == 0, f"bridge two gave exit {exit_code}")
     ok("bridge two stops with exit 0 when its stdin closes")
@@ -468,10 +554,10 @@ def run_pool_full():
 
     full = Bridge("full")
     init = full.request("initialize", INIT)
-    check(init["serverInfo"]["version"] == "3.1.1", f"the contract is {init['serverInfo']}")
+    check(init["serverInfo"]["version"] == "3.2.0", f"the contract is {init['serverInfo']}")
     full.notify("notifications/initialized")
     wait_until(lambda: "no free pool session" in full.text(), "the log of the bridge does not tell that no pool session is free")
-    ok("a ninth bridge starts with a pool lease with no session, and initialize gives the contract 3.1.1")
+    ok("a ninth bridge starts with a pool lease with no session, and initialize gives the contract 3.2.0")
     tools = {t["name"] for t in full.request("tools/list")["tools"]}
     check({"login", "logout", "whoami"} <= tools, f"tools/list gave {sorted(tools)}")
     ok("tools/list works on the pool lease with no session")
@@ -488,7 +574,12 @@ def run_pool_full():
     for name in ("s2", "cursor.s2"):
         code = error_code(full.call("login", {"session": name}), f"login {name}")
         check(code == "BAD_LABEL", f"login {name} gave {code}")
-    ok("login s2 and login cursor.s2 give BAD_LABEL: a login never takes a pool session")
+        code = session_error(full.call("whoami", session=name), f"whoami {name}")
+        check(code == "BAD_LABEL", f"whoami with the session {name} gave {code}")
+    ok("login and whoami with s2 or cursor.s2 give BAD_LABEL: a named session is never a pool session")
+    w = result(full.call("whoami", session="lane-c"), "whoami lane-c in the bridge with no pool session")
+    check(w["login"] == "cursor.lane-c", f"whoami with the label lane-c is {w['login']}")
+    ok("whoami with the label lane-c uses the lease of the login in the bridge with no pool session")
 
     last = pool[-1]
     exit_code = last.close()

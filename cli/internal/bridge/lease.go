@@ -17,7 +17,7 @@ import (
 )
 
 // lease is one lease of the bridge: the pool lease, or the lease of a named session that a
-// chat logged in to. The token is only in this memory.
+// chat logged in to or gave as the argument session. The token is only in this memory.
 //
 // The pool lease can have no session. The server gives such a lease when no pool session of
 // the agent is free. A tools/call on it can bind a free pool session to it. The bridge then
@@ -191,7 +191,7 @@ func endsLease(l *lease, err error) bool {
 
 // msgNoFreeSession is the message of NO_FREE_SESSION. It is the same as the message of the
 // server.
-const msgNoFreeSession = "No pool session of the agent is free. Call login with a named session, or try again later."
+const msgNoFreeSession = "No pool session of the agent is free. Give the label of a named session as session, or try again later."
 
 // unavailable gives the code and the message of a failed lease request that does not end
 // the lease l. The code is the code of the server, or SERVER_UNAVAILABLE when the answer
@@ -209,7 +209,7 @@ func unavailable(l *lease, err error) (string, string) {
 
 // logNoPool tells that the agent has no free pool session.
 func (b *Bridge) logNoPool() {
-	b.logf("the agent %s has no free pool session. A chat can call login with a named session. "+
+	b.logf("the agent %s has no free pool session. A chat can give the label of a named session as session. "+
 		"A call with no session gets NO_FREE_SESSION until a pool session is free.", b.Agent)
 }
 
