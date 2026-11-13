@@ -28,7 +28,6 @@ def failing(code):
         ("MAIL_SERVER_DOWN", 503, True),
         ("STORE_UNAVAILABLE", 503, True),
         ("LOGIN_FAILED", 502, False),
-        ("CREDENTIAL_REVOKED", 502, False),
     ],
 )
 def test_a_mail_login_failure_of_a_lease_request_gives_its_code(
@@ -51,6 +50,19 @@ def test_a_mail_login_failure_of_a_lease_request_gives_its_code(
     named = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 2, "lane-a")
     pool = anyio.run(parts.leases.acquire, parts.key, "cursor", "/w", 3)
     assert (named["session"], pool["session"]) == ("cursor.lane-a", "cursor.s1")
+
+
+def test_a_mail_login_that_gives_credential_revoked_gives_session_revoked(
+    tmp_path, monkeypatch
+):
+    parts = make_parts(tmp_path)
+    anyio.run(parts.credentials.session_new, "cursor", "lane-a")
+    monkeypatch.setattr(parts.log_in, "execute", failing("CREDENTIAL_REVOKED"))
+    for name in ("lane-a", None):
+        error = lease_error(parts.leases.acquire, parts.key, "cursor", "/w", 1, name)
+        # The lease API gives SESSION_REVOKED with its usual status 409.
+        assert (error.code, error.status) == ("SESSION_REVOKED", None)
+    assert anyio.run(parts.leases.leases) == []
 
 
 def test_a_revoke_before_the_rotate_gives_session_revoked(tmp_path, monkeypatch):

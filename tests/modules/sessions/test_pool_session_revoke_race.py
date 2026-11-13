@@ -58,19 +58,19 @@ def test_a_bind_takes_a_different_free_pool_session_when_a_revoke_wins_the_race(
     assert beat["session"] == "cursor.s5"
 
 
-def test_a_bind_gives_no_free_session_when_the_revoke_closes_the_only_free_session(
+def test_a_bind_takes_a_new_pool_session_when_the_revoke_closes_the_only_free_session(
     tmp_path, monkeypatch
 ):
     parts = make_parts(tmp_path)
     pool, extra = full_pool(parts)
     anyio.run(parts.leases.end, pool[3]["lease"])
     revoked = revoke_first_rotate(parts, monkeypatch)
-    with pytest.raises(ToolError) as info:
-        anyio.run(parts.leases.state, extra["lease"])
-    assert info.value.code == "NO_FREE_SESSION"
+    state = anyio.run(parts.leases.state, extra["lease"])
     assert revoked == ["cursor.s4"]
+    # The revoked session cursor.s4 gives its place in the pool to cursor.s9.
+    assert state.login == "cursor.s9"
     beat = anyio.run(parts.leases.heartbeat, extra["lease"])
-    assert beat == {"session": None, "new_mail": 0}
+    assert beat["session"] == "cursor.s9"
 
 
 def test_a_pool_lease_request_takes_a_different_free_pool_session_when_a_revoke_wins_the_race(

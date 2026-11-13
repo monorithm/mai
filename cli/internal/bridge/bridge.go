@@ -241,6 +241,11 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 		}
 		return nil
 	}
+	if isCall && l.handle == "" && l.session() == "" {
+		// The call can bind a pool session to the pool lease. The heartbeat gives that
+		// session, thus the notice file gets the pool entry at once.
+		l.beatSoon()
+	}
 	if !hasID || len(answer) == 0 {
 		return nil
 	}

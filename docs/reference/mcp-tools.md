@@ -39,7 +39,13 @@ session.
 
 ### A lease with no session
 
-The pool of an agent has 8 sessions. When no pool session is free, the lease
+The pool of an agent has 8 sessions. A revoked pool session never gets a lease again, thus it does not hold a
+place in the pool. When the
+pool has less than 8 open pool sessions, the server can make a new pool
+session. The new pool session gets the lowest free number, for example
+`cursor.s9` after a revoke of `cursor.s3`.
+
+When no pool session is free, the lease
 request of the bridge gets a lease with no session. In the result, the field
 `session` is `null`. Each agent can have 16 leases with no session. After
 that limit, the lease request gives `NO_FREE_SESSION`.
@@ -72,9 +78,16 @@ the lease API: `{"error": {"code": ..., "message": ...}}`.
 | A different failure of the mail login | 502 | The code of the failure, for example `LOGIN_FAILED`, with `retry_safe` |
 | The owner revokes the session during the lease request | 409 | `SESSION_REVOKED` |
 | The session does not exist | 404 | `SESSION_UNKNOWN` |
+| A lease request takes more than its time limit (20 s) | 503 | The code of the part that runs: `MAIL_SERVER_DOWN`, `STORE_UNAVAILABLE`, or `BUSY` when the request waits for a different lease request. `retry_safe` is true. |
+| A heartbeat takes more than its time limit (10 s) | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true. The lease stays. |
 | An internal error | 500 | `INTERNAL` |
 
-If the server cannot count the new mail, the heartbeat gives
+Each time limit of the server is less than the request limit of the HTTP
+server (30 s). It is also less than the wait of the bridge: 30 s for a lease
+request and 15 s for a heartbeat. Thus the bridge gets the code of each
+failure. A tool
+call on a lease has the time limit of a lease request for the steps of the
+lease. If the server cannot count the new mail in 5 s, the heartbeat gives
 `"new_mail": null`. A heartbeat never gives an error with no code.
 
 ## Resources
@@ -146,7 +159,7 @@ has the error).
 | `MAIL_SERVER_DOWN` | Dovecot or Postfix does not operate. |
 | `STORE_UNAVAILABLE` | The database does not operate. |
 | `SERVER_UNAVAILABLE` | Only the bridge gives this code. The lease request of the bridge got a network error, or an error with no code. Try the call again after some time. |
-| `BUSY` | Too many waits are open. |
+| `BUSY` | Too many waits are open, or a lease operation waited too long for a different lease operation. |
 | `INTERNAL` | An internal error occurred. |
 | `INVALID_TRANSITION` | The item cannot go to that state. |
 | `WIP_LIMIT` | The number of items in progress is at the limit. |

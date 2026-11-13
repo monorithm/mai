@@ -1,20 +1,25 @@
 """Gives, keeps, and ends the leases of the sessions.
 
 An app sends the agent key and gets a lease. With no session name, the lease
-is on a free pool session of the agent: the server makes the sessions
-<agent>.s1 to <agent>.s8 when necessary. When no pool session is free, the
-lease starts with no session. The first tool call of that lease then gets a
+is on a free pool session of the agent: the server makes the pool sessions
+when necessary, up to 8 open pool sessions. A revoked pool session does not
+hold a place in the pool. When no pool session is free, the lease starts with
+no session. The first tool call of that lease then gets a
 pool session that is free at that time. A lease with no session ends when the
 owner removes its agent. With a session name, the lease is on that named
 session of the agent. A named session never has a label of the pool. For each
 lease on a session, the server gives the session a new random secret, logs in
 to the mail server with it, and keeps the secret only in the memory of the
-login.
+login. Each lease operation has a time limit, thus each failure has a code.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import itertools
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import anyio
 from bustan import Injectable
@@ -38,6 +43,7 @@ from ..domain.lease import (
     is_pool_label,
     is_token,
     new_token,
+    pool_number,
     session_login,
     token_hash,
 )
@@ -52,8 +58,62 @@ from .resolve_session_query import ResolveSessionHandler, ResolveSessionQuery
 SESSION_DAYS = 36500
 # The states of a session that can get a lease.
 OPEN_STATES = ("issued", "active")
-# The tool errors of the mail login that tell that a server part does not reply.
-UNAVAILABLE = ("MAIL_SERVER_DOWN", "STORE_UNAVAILABLE")
+# The tool errors that tell that a server part does not reply, or that the
+# server is busy. The lease API gives them with 503, and a lease stays.
+UNAVAILABLE = ("MAIL_SERVER_DOWN", "STORE_UNAVAILABLE", "BUSY")
+# The time limits of the lease operations, in seconds. Each limit is less than
+# the request limit of the HTTP server (30 s). The limit of a lease request is
+# less than the wait of the bridge for a lease request (30 s). The limit of a
+# heartbeat is less than the wait of the bridge for a heartbeat (15 s). Thus
+# each failure gets a coded answer, and the bridge gets the answer.
+REQUEST_LIMIT_SECONDS = 20.0
+HEARTBEAT_LIMIT_SECONDS = 10.0
+# The part of the heartbeat limit for the count of new mail.
+COUNT_LIMIT_SECONDS = 5.0
+# The time limit of a logout that ends a lease. The logout does not stop the
+# end of the lease.
+LOGOUT_LIMIT_SECONDS = 3.0
+# The codes of the parts of a lease operation that run, the last one first.
+_PARTS: ContextVar[list[str] | None] = ContextVar("lease_parts", default=None)
+
+
+@contextmanager
+def _time_limit(seconds: float) -> Generator[None]:
+    """Raise ToolError when the operation in the block takes more than SECONDS.
+
+    The code of the ToolError tells the part of the server that ran at that
+    time: BUSY while the operation waits for a different lease operation,
+    MAIL_SERVER_DOWN during a call to the mail server, else STORE_UNAVAILABLE.
+    """
+    parts = ["STORE_UNAVAILABLE"]
+    token = _PARTS.set(parts)
+    try:
+        with anyio.fail_after(seconds):
+            yield
+    except TimeoutError:
+        raise ToolError(parts[-1]) from None
+    finally:
+        _PARTS.reset(token)
+
+
+@contextmanager
+def _part(code: str) -> Generator[None]:
+    """Give CODE to a time limit that occurs during the block."""
+    parts = _PARTS.get()
+    if parts is None:
+        yield
+        return
+    parts.append(code)
+    try:
+        yield
+    except anyio.get_cancelled_exc_class():
+        # The time limit reads the code after this block, thus it stays.
+        raise
+    except BaseException:
+        parts.pop()
+        raise
+    else:
+        parts.pop()
 
 
 class LeaseError(Exception):
@@ -114,6 +174,9 @@ class LeaseService:
         self._counter = counter
         self._lock = anyio.Lock()
         self.now = lambda: dt.datetime.now(dt.UTC)
+        self.request_seconds = REQUEST_LIMIT_SECONDS
+        self.heartbeat_seconds = HEARTBEAT_LIMIT_SECONDS
+        self.count_seconds = COUNT_LIMIT_SECONDS
 
     async def acquire(
         self,
@@ -128,39 +191,14 @@ class LeaseService:
         With no SESSION, the lease is on a free pool session. When no pool
         session is free, the lease has no session, and "session" is None.
         SESSION is the label or the login of a named session of the agent, for
-        example "lane-a" or "cursor.lane-a".
+        example "lane-a" or "cursor.lane-a". The request has a time limit:
+        then the error is MAIL_SERVER_DOWN, STORE_UNAVAILABLE, or BUSY.
         """
-        agent = await self._agent(agent_key)
-        async with self._lock:
-            await self._expire()
-            try:
-                login, handle = None, None
-                if session is None:
-                    opened = await self._open_pool_session(agent, app)
-                    if opened is None:
-                        await self._check_unbound_limit(agent)
-                    else:
-                        login, handle = opened[0], opened[1].handle
-                else:
-                    login = await self._named_session(agent, session)
-                    handle = (await self._open(login, app)).handle
-            except ToolError as exc:
-                raise LeaseError.of_tool_error(exc) from None
-            token = new_token()
-            now = self.now()
-            await self._store.put(
-                Lease(
-                    token_hash=token_hash(token),
-                    session=login,
-                    agent=agent,
-                    app=app,
-                    folder=folder,
-                    pid=pid,
-                    handle=handle,
-                    started_at=now,
-                    last_seen_at=now,
-                )
-            )
+        try:
+            with _time_limit(self.request_seconds):
+                token, login = await self._acquire(agent_key, app, folder, pid, session)
+        except ToolError as exc:
+            raise LeaseError.of_tool_error(exc) from None
         return {
             "lease": token,
             "session": login,
@@ -168,25 +206,71 @@ class LeaseService:
             "expires_seconds": EXPIRES_SECONDS,
         }
 
+    async def _acquire(
+        self, agent_key: object, app: str, folder: str, pid: int, session: str | None
+    ) -> tuple[str, str | None]:
+        """The token and the session of a new lease. A failure raises LeaseError or ToolError."""
+        agent = await self._agent(agent_key)
+        with _part("BUSY"):
+            await self._lock.acquire()
+        try:
+            await self._expire()
+            login, handle = None, None
+            if session is None:
+                opened = await self._open_pool_session(agent, app)
+                if opened is None:
+                    await self._check_unbound_limit(agent)
+                else:
+                    login, handle = opened[0], opened[1].handle
+            else:
+                login = await self._named_session(agent, session)
+                handle = (await self._open(login, app)).handle
+            token = new_token()
+            now = self.now()
+            lease = Lease(
+                token_hash=token_hash(token),
+                session=login,
+                agent=agent,
+                app=app,
+                folder=folder,
+                pid=pid,
+                handle=handle,
+                started_at=now,
+                last_seen_at=now,
+            )
+            try:
+                await self._store.put(lease)
+            except BaseException:
+                # The lease does not start. Its mail login must also end.
+                if handle is not None:
+                    await self._log_out_handle(handle)
+                raise
+        finally:
+            self._lock.release()
+        return token, login
+
     async def heartbeat(self, token: object) -> dict:
         """Keep the lease of TOKEN live. Returns the session and the count of new mail.
 
         A lease with no session gives the session None and the count 0. When
-        the count fails, the count is None. A lease with no session ends when
-        the owner removes its agent.
+        the count fails or takes too long, the count is None. A lease with no
+        session ends when the owner removes its agent. The heartbeat has a
+        time limit: then the error is STORE_UNAVAILABLE or MAIL_SERVER_DOWN,
+        and the lease stays.
         """
-        lease = await self._live(token)
-        lease = await self._store.seen(lease.token_hash, self.now())
-        if lease is None:
-            raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
         try:
-            if lease.session is None:
-                await self._check_agent(lease)
-                return {"session": None, "new_mail": 0}
-            state = await self._state(lease)
+            with _time_limit(self.heartbeat_seconds):
+                lease = await self._live(token)
+                lease = await self._store.seen(lease.token_hash, self.now())
+                if lease is None:
+                    raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
+                if lease.session is None:
+                    await self._check_agent(lease)
+                    return {"session": None, "new_mail": 0}
+                state = await self._state(lease)
+                return {"session": lease.session, "new_mail": await self._count(state)}
         except ToolError as exc:
             raise LeaseError.of_tool_error(exc) from None
-        return {"session": lease.session, "new_mail": await self._count(state)}
 
     async def end(self, token: object) -> None:
         """End the lease of TOKEN."""
@@ -202,12 +286,14 @@ class LeaseService:
 
         A lease with no session first gets a free pool session. A failure that
         the tool result tells raises ToolError, for example NO_FREE_SESSION or
-        MAIL_SERVER_DOWN. A lease that is not live raises LeaseError.
+        MAIL_SERVER_DOWN. A lease that is not live raises LeaseError. The call
+        has the time limit of a lease request.
         """
-        lease = await self._live(token)
-        if lease.session is None:
-            lease = await self._bind(lease)
-        return await self._state(lease)
+        with _time_limit(self.request_seconds):
+            lease = await self._live(token)
+            if lease.session is None:
+                lease = await self._bind(lease)
+            return await self._state(lease)
 
     async def leases(self) -> list[dict]:
         await self._expire()
@@ -248,7 +334,9 @@ class LeaseService:
         ToolError(NO_FREE_SESSION). When the owner removed the agent, the
         lease ends and the call raises LeaseError(LEASE_UNKNOWN).
         """
-        async with self._lock:
+        with _part("BUSY"):
+            await self._lock.acquire()
+        try:
             await self._expire()
             current = await self._store.get(lease.token_hash)
             if current is None:
@@ -265,12 +353,19 @@ class LeaseService:
             if opened is None:
                 raise ToolError("NO_FREE_SESSION")
             login, state = opened
-            bound = await self._store.bind(current.token_hash, login, state.handle)
+            try:
+                bound = await self._store.bind(current.token_hash, login, state.handle)
+            except BaseException:
+                # The bind does not occur. Its mail login must also end.
+                await self._log_out_handle(state.handle)
+                raise
             if bound is None:
                 # The lease ended during the mail login.
                 await self._log_out_handle(state.handle)
                 raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
             return bound
+        finally:
+            self._lock.release()
 
     async def _check_agent(self, lease: Lease) -> None:
         """End LEASE and raise LeaseError(LEASE_UNKNOWN) when the owner removed its agent.
@@ -317,26 +412,37 @@ class LeaseService:
                 tried.add(login)
 
     async def _pool_session(self, agent: str, tried: set[str]) -> str | None:
-        """The login of a free pool session of AGENT that is not in TRIED, or None."""
-        await self._credential_call(self._credentials.agent_add(agent))
+        """The login of a free pool session of AGENT that is not in TRIED, or None.
+
+        A revoke is final, thus a closed pool session does not hold a place in
+        the pool. The pool has a maximum of MAX_SESSIONS open pool sessions. A
+        free open pool session comes first, in the order of its number. Else,
+        when the pool has less than MAX_SESSIONS open pool sessions, the call
+        makes the pool session with the lowest number that is not in use.
+        """
         taken = {
             lease.session
             for lease in await self._store.all()
             if lease.session is not None
         }
         rows = await self._credential_call(self._credentials.session_list(agent))
-        known = {row["login"]: row for row in rows}
-        for number in range(1, MAX_SESSIONS + 1):
-            login = session_login(agent, number)
-            if login in taken or login in tried:
+        used: set[int] = set()
+        open_pool: list[tuple[int, str]] = []
+        for row in rows:
+            number = pool_number(row.get("label"))
+            if number is None:
                 continue
-            row = known.get(login)
-            if row is None:
-                await self._new_pool_session(agent, number)
-                return login
+            used.add(number)
             if row.get("status") in OPEN_STATES:
+                open_pool.append((number, row["login"]))
+        for _number, login in sorted(open_pool):
+            if login not in taken and login not in tried:
                 return login
-        return None
+        if len(open_pool) >= MAX_SESSIONS:
+            return None
+        number = next(n for n in itertools.count(1) if n not in used)
+        await self._new_pool_session(agent, number)
+        return session_login(agent, number)
 
     async def _is_open(self, agent: str, login: str) -> bool:
         """True when the session list of AGENT tells that LOGIN can get a lease."""
@@ -346,10 +452,17 @@ class LeaseService:
         )
 
     async def _new_pool_session(self, agent: str, number: int) -> None:
+        """Make the pool session sNUMBER of AGENT.
+
+        The agent account and the queue rights of the session come from
+        doveadm, thus a time limit here is MAIL_SERVER_DOWN.
+        """
         try:
-            await self._credentials.session_new(
-                agent, f"s{number}", expires_days=SESSION_DAYS
-            )
+            with _part("MAIL_SERVER_DOWN"):
+                await self._credentials.agent_add(agent)
+                await self._credentials.session_new(
+                    agent, f"s{number}", expires_days=SESSION_DAYS
+                )
         except AccountStateError:
             # An owner request with a count made the same session at the same time.
             pass
@@ -397,9 +510,10 @@ class LeaseService:
     async def _open(self, login: str, app: str) -> SessionState:
         """Give the session LOGIN a new secret, and log in to the mail server with it.
 
-        A session that a revoke closed gives LeaseError(SESSION_REVOKED). A
-        session that does not exist gives LeaseError(SESSION_UNKNOWN). A
-        failure of the mail login raises its ToolError.
+        A session that a revoke closed gives LeaseError(SESSION_REVOKED), also
+        when the revoke comes after the new secret. A session that does not
+        exist gives LeaseError(SESSION_UNKNOWN). Each other failure of the
+        mail login raises its ToolError.
         """
         try:
             issued = await self._credentials.session_rotate(login)
@@ -411,9 +525,17 @@ class LeaseService:
             raise
         except Exception:  # noqa: BLE001 - any failure of the store has one code
             raise ToolError("STORE_UNAVAILABLE") from None
-        return await self._log_in.execute(
-            LogInCommand(credential=issued["credential"], client=app or None)
-        )
+        try:
+            with _part("MAIL_SERVER_DOWN"):
+                return await self._log_in.execute(
+                    LogInCommand(credential=issued["credential"], client=app or None)
+                )
+        except ToolError as exc:
+            if exc.code == "CREDENTIAL_REVOKED":
+                raise LeaseError(
+                    "SESSION_REVOKED", f"the session is closed: {login}"
+                ) from None
+            raise
 
     @staticmethod
     async def _credential_call(awaitable):
@@ -425,8 +547,10 @@ class LeaseService:
             raise ToolError("STORE_UNAVAILABLE") from None
 
     async def _count(self, state: SessionState) -> int | None:
+        """The count of new mail of STATE, or None when it fails or takes too long."""
         try:
-            return await self._counter.count(state)
+            with anyio.fail_after(self.count_seconds):
+                return await self._counter.count(state)
         except Exception:  # noqa: BLE001 - a failed count must not end the heartbeat
             return None
 
@@ -462,10 +586,16 @@ class LeaseService:
             await self._log_out_handle(removed.handle)
 
     async def _log_out_handle(self, handle: str) -> None:
-        try:
-            await self._log_out.execute(LogOutCommand(handle))
-        except ToolError:
-            pass
+        """End the mail login of HANDLE.
+
+        The logout runs also when the time limit of the operation occurred.
+        A failure or its own time limit stops only the logout.
+        """
+        with anyio.move_on_after(LOGOUT_LIMIT_SECONDS, shield=True):
+            try:
+                await self._log_out.execute(LogOutCommand(handle))
+            except ToolError:
+                pass
 
     async def _expire(self) -> None:
         now = self.now()

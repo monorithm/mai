@@ -69,7 +69,8 @@ that no pool session is free. With this lease:
 - A tool call with no argument `session` gets the tool error
   `NO_FREE_SESSION` with `retry_safe` true. When a pool session is free, the
   server binds it to the lease, and the call operates as that session.
-- The notice file has no pool entry. When a heartbeat gives the pool
+- The notice file has no pool entry. After each tool call on the pool lease,
+  the bridge sends a heartbeat immediately. When a heartbeat gives the pool
   session, the bridge writes the notice file again with the pool entry.
 
 Each time that the bridge gets a new lease, it writes the notice file
@@ -156,8 +157,11 @@ pool. `session new AGENT --label s1` gives `BAD_LABEL`. Use
 `session new AGENT --count N` to make the pool sessions.
 
 A lease request with no session name gets a pool session. The pool gives only
-the sessions with a label `s1` to `s8`, and never a named session. When no
-pool session is free, the lease has no session. A lease request for a pool
+the sessions with a pool label, and never a named session. A revoked pool
+session does not hold a place. The pool has a maximum of 8 open pool sessions,
+thus a new pool session can be `s9` or more.
+
+When no pool session is free, the lease has no session. A lease request for a pool
 label, for example `s2` or `cursor.s2`, gives `BAD_LABEL`. Thus a login never
 gets a pool session.
 

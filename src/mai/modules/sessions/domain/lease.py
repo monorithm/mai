@@ -55,6 +55,11 @@ def is_pool_label(label: object) -> bool:
     return isinstance(label, str) and bool(_POOL_LABEL_RE.fullmatch(label))
 
 
+def pool_number(label: object) -> int | None:
+    """The number of the pool label LABEL, for example 2 for s2, or None for a different label."""
+    return int(str(label)[1:]) if is_pool_label(label) else None
+
+
 def iso(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 

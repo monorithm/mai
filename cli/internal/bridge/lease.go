@@ -20,13 +20,14 @@ import (
 // chat logged in to. The token is only in this memory.
 //
 // The pool lease can have no session. The server gives such a lease when no pool session of
-// the agent is free. A tools/call on it can bind a free pool session to it. A subsequent
-// heartbeat then gives that session.
+// the agent is free. A tools/call on it can bind a free pool session to it. The bridge then
+// sends a heartbeat at once, and the answer gives that session.
 type lease struct {
 	handle string             // The handle of the chat, or "" for the pool lease.
 	ctx    context.Context    // The context of the heartbeat loop.
 	cancel context.CancelFunc // Stops the heartbeat loop of the lease.
 	done   chan struct{}      // Closes at the end of the heartbeat loop.
+	soon   chan struct{}      // A value here makes the heartbeat loop send a heartbeat at once.
 
 	mu        sync.Mutex
 	token     string
@@ -209,7 +210,8 @@ func (b *Bridge) logNoPool() {
 
 // leaseRequestTimeout is the longest time that the bridge waits for the answer of a lease
 // request. The server logs in to the mail server before it answers, thus the answer can
-// take some seconds.
+// take some seconds. The time limit of a lease request on the server (20 s) is less than
+// this wait, thus the bridge gets the code of each failure.
 const leaseRequestTimeout = 30 * time.Second
 
 // request sends a lease request for the named session name, or for a pool session when
@@ -316,7 +318,8 @@ func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 // Then call startBeats.
 func (b *Bridge) newLease(handle string, a leaseAnswer) *lease {
 	ctx, cancel := context.WithCancel(b.beatCtx)
-	l := &lease{handle: handle, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	l := &lease{handle: handle, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+		soon: make(chan struct{}, 1)}
 	l.set(a)
 	return l
 }
@@ -350,14 +353,24 @@ func (b *Bridge) heartbeatLoop(ctx context.Context, l *lease) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-l.soon:
 		case <-time.After(l.wait()):
 		}
+	}
+}
+
+// beatSoon makes the heartbeat loop of l send a heartbeat at once. It does not wait.
+func (l *lease) beatSoon() {
+	select {
+	case l.soon <- struct{}{}:
+	default:
 	}
 }
 
 // heartbeat sends one heartbeat with the token.
 func (b *Bridge) heartbeat(ctx context.Context, token string) (beatAnswer, error) {
 	var out beatAnswer
+	// The time limit of a heartbeat on the server (10 s) is less than this wait.
 	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	err := b.callJSON(hctx, http.MethodPost, "/api/leases/current/heartbeat", token, []byte("{}"), &out)

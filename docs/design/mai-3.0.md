@@ -346,7 +346,10 @@ of `cursor.s2`.
 - An app gets a session only through a lease. The bridge `mai mcp --agent
   cursor` sends a lease request to the server. With no name, the server gives
   a free pool session of the agent, for example `cursor.s2`. It makes the
-  pool sessions `cursor.s1` to `cursor.s8` when necessary. When no pool
+  pool sessions `cursor.s1` to `cursor.s8` when necessary. A revoked pool
+  session does not hold a place in the pool. The pool has a maximum of 8 open
+  pool sessions. A new pool session gets the lowest free number, for example
+  `cursor.s9`. When no pool
   session is free, the server gives a lease with no session (see "A lease
   with no session"). With a name, the server gives that named session.
 - A label that agrees with `^s[0-9]+$`, for example `s1` or `s01`, is a label
@@ -427,12 +430,21 @@ errors of the lease API: `{"error": {"code": ..., "message": ...}}`.
 |---|---|---|
 | The mail server or the store does not reply during the mail login | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true |
 | A different tool error of the mail login | 502 | The code of the tool error, for example `LOGIN_FAILED`, with `retry_safe` |
-| A revoke between the status check and the new secret | 409 | `SESSION_REVOKED` |
+| A revoke during the lease request, also after the new secret | 409 | `SESSION_REVOKED` |
 | The session does not exist | 404 | `SESSION_UNKNOWN` |
 | The store does not reply during the check of the agent key | 503 | `STORE_UNAVAILABLE`, not `BAD_KEY` |
+| A lease request takes more than its time limit (20 s) | 503 | The code of the part that runs: `MAIL_SERVER_DOWN`, `STORE_UNAVAILABLE`, or `BUSY` when the request waits for a different lease request. `retry_safe` is true. |
+| A heartbeat takes more than its time limit (10 s) | 503 | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE`, with `retry_safe` true. The lease stays. |
 
-If the server cannot count the new mail, the heartbeat gives
-`"new_mail": null`. A heartbeat never gives an error with no code. At a tool
+Each time limit of the server is less than the request limit of the HTTP
+server (30 s). It is also less than the wait of the bridge: 30 s for a lease
+request and 15 s for a heartbeat. Thus the bridge gets the code of each
+failure. A tool
+call on a lease has the time limit of a lease request for the steps of the
+lease. If the server cannot count the new mail in 5 s, the heartbeat gives
+`"new_mail": null`.
+
+A heartbeat never gives an error with no code. At a tool
 call on a lease with no session, a failure of the mail login gives its tool
 error, for example `MAIL_SERVER_DOWN`.
 

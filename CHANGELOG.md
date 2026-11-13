@@ -140,6 +140,32 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tool call gets the new lease.
 - A login that gets an HTTP 5xx error gives `retry_safe` true, the same as a
   tool call with a handle.
+- A revoked pool session does not hold a place in the pool. The pool has a
+  maximum of 8 open pool sessions, and a new pool session gets the lowest
+  free number, for example `cursor.s9`. Before, an agent that the owner
+  removed and added again got no pool session, because its revoked sessions
+  `s1` to `s8` filled the pool.
+- Each lease request, tool call, and heartbeat has a time limit. The limit is
+  20 s for a lease request and for the lease steps of a tool call. It is 10 s
+  for a heartbeat. Before, a mail server or a store that did not reply gave
+  HTTP 504 with no code after 30 s. The error has the code of the part that
+  ran:
+  `MAIL_SERVER_DOWN`, `STORE_UNAVAILABLE`, or `BUSY`, with HTTP 503 and
+  `retry_safe` true. Each limit is less than the waits of the bridge, thus the
+  bridge gets the code.
+- A count of new mail that takes more than 5 s gives `"new_mail": null`. A
+  tool call that holds the session does not stop the heartbeat.
+- A revoke that comes after the new secret of a session, before its mail
+  login, gives `SESSION_REVOKED`. A pool lease request or a bind then tries
+  the next free pool session. Before, the result was `CREDENTIAL_REVOKED` with
+  `retry_safe` false.
+- After a tool call on a pool lease with no session, the bridge sends a
+  heartbeat immediately. Thus the notice file gets the pool entry of a bind
+  before the next heartbeat.
+- A 552 reply of Postfix to the data gives `BODY_TOO_LARGE`. Before, the app
+  connected again and sent the mail a second time.
+- A pool lease request runs doveadm only when it makes a pool session. A
+  doveadm command stops after 10 s.
 
 ## [3.0.1] - 2026-11-12
 

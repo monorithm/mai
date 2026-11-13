@@ -1,5 +1,6 @@
 import datetime as dt
 import inspect
+import threading
 from dataclasses import dataclass
 
 import anyio
@@ -61,6 +62,10 @@ class LogInHandler:
         except ToolError:
             await anyio.to_thread.run_sync(_close, mail)
             raise
+        except BaseException:
+            # A time limit of the caller stopped the login: close the connections.
+            _close_later(mail)
+            raise
         state = SessionState(
             login=login,
             agent=agent,
@@ -80,8 +85,30 @@ class LogInHandler:
         session = self._mail.open(login, secret)
         if inspect.isawaitable(session):
             session = await session
+        # A time limit of the caller can stop the wait for the connection. The
+        # thread then closes the connection when it is open.
+        guard = threading.Lock()
+        flags = {"stopped": False, "done": False}
+
+        def connect() -> None:
+            try:
+                session.connect()
+            finally:
+                with guard:
+                    flags["done"] = True
+                    late = flags["stopped"]
+                if late:
+                    _close(session)
+
         try:
-            await anyio.to_thread.run_sync(session.connect)
+            await anyio.to_thread.run_sync(connect, abandon_on_cancel=True)
+        except anyio.get_cancelled_exc_class():
+            with guard:
+                flags["stopped"] = True
+                done = flags["done"]
+            if done:
+                _close_later(session)
+            raise
         except ToolError:
             raise
         except Exception as exc:  # noqa: BLE001 - the mail library raises many kinds
@@ -99,6 +126,11 @@ class LogInHandler:
             raise
         except Exception:  # noqa: BLE001 - any failure maps to one contract code
             raise ToolError("STORE_UNAVAILABLE") from None
+
+
+def _close_later(mail: object) -> None:
+    """Close MAIL in a different thread, thus the caller does not wait."""
+    threading.Thread(target=_close, args=(mail,), daemon=True).start()
 
 
 def _close(mail: object) -> None:
