@@ -754,6 +754,18 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			Detail: "it stays, because the instances " + strings.Join(p.Others, ", ") + " have keys or records. " +
 				p.entryText() + " To remove it, run mai disconnect " + it.Name})
 	}
+	// The entries of a different instance stay. An entry names no instance, thus its bridge
+	// uses the instance of config.json. When config.json goes, the line of each such entry
+	// gives the step that makes its instance the instance of config.json.
+	if !holds(p.Others, p.Config.Instance) {
+		for _, it := range p.Manifest.Of(manifest.AppEntry) {
+			if it.Instance == "" || it.Instance == p.Instance {
+				continue
+			}
+			rs = append(rs, Result{Item: "app entry " + it.Name + " in " + it.Path, State: Kept,
+				Detail: "it is an entry of the instance " + it.Instance + ". " + configGoneText(it.Instance)})
+		}
+	}
 	for _, it := range p.KeptFiles {
 		rs = append(rs, Result{Item: "app file " + it.Path, State: Kept, Detail: "it holds an app entry that stays"})
 	}
@@ -1113,9 +1125,15 @@ func (p *Plan) entryText() string {
 	if holds(p.Others, p.Config.Instance) {
 		return "The entry names no instance, thus its bridge uses the instance of config.json, which is " + p.Config.Instance + "."
 	}
+	return configGoneText(p.EntryOwner)
+}
+
+// configGoneText tells that config.json goes, thus the bridge of an app entry that stays then
+// uses the default instance. It gives the step that makes owner the instance of config.json.
+func configGoneText(owner string) string {
 	return "The entry names no instance, thus its bridge uses the instance of config.json. config.json goes, thus its bridge then uses " +
-		"the default instance " + DefaultInstance + " on the default port. Run mai start --instance " + p.EntryOwner + " to make " +
-		p.EntryOwner + " the instance of config.json, with the port of its container."
+		"the default instance " + DefaultInstance + " on the default port. Run mai start --instance " + owner + " to make " +
+		owner + " the instance of config.json, with the port of its container."
 }
 
 // again gives the command that does the uninstall of the instance again. A command with no
