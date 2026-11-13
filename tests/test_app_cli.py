@@ -115,3 +115,85 @@ def test_project_seed_has_no_default_agents():
         ["project", "seed", "p", "--supervisor", "architect", "--worker", "engineer"]
     )
     assert (args.supervisor, args.worker, args.lane) == ("architect", "engineer", None)
+
+
+def test_session_new_prints_only_the_login(calls, capsys):
+    recorded, results = calls
+    results["new"] = lambda agent, label: {
+        "login": f"{agent}.{label}",
+        "agent": agent,
+        "label": label,
+        "status": "active",
+    }
+    assert app_cli.main(["session", "new", "cursor", "--label", "lane-a"]) == 0
+    assert recorded == [("OwnerSessions", "new", ("cursor", "lane-a"), {})]
+    assert capsys.readouterr().out == "cursor.lane-a\n"
+
+
+def test_session_new_with_a_count_prints_each_login_that_it_made(calls, capsys):
+    recorded, results = calls
+    results["new_pool"] = lambda agent, count: [
+        {"login": f"{agent}.s{n}", "status": "active"} for n in (2, 3)
+    ]
+    assert app_cli.main(["session", "new", "cursor", "--count", "3"]) == 0
+    assert recorded == [("OwnerSessions", "new_pool", ("cursor", 3), {})]
+    assert capsys.readouterr().out == "cursor.s2\ncursor.s3\n"
+    results["new_pool"] = lambda agent, count: []
+    assert app_cli.main(["session", "new", "cursor", "--count", "3"]) == 0
+    out = capsys.readouterr()
+    assert out.out == "" and "cursor.s1 to cursor.s3 exist" in out.err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["session", "new", "cursor"],
+        ["session", "new", "cursor", "--label", "a", "--count", "2"],
+        ["session", "new", "cursor", "--label", "a", "--file", "/data/a.cred"],
+        ["session", "new", "cursor", "--label", "a", "--credential-only"],
+        ["session", "rotate", "cursor.a", "--file", "/data/a.cred"],
+    ],
+)
+def test_session_new_takes_a_label_or_a_count_and_writes_no_credential(argv):
+    with pytest.raises(SystemExit):
+        app_cli.build_parser().parse_args(argv)
+
+
+def test_session_list_rotate_and_revoke_show_no_secret(calls, capsys):
+    recorded, results = calls
+    results["records"] = lambda agent: [
+        {
+            "login": "cursor.lane-a",
+            "agent": "cursor",
+            "label": "lane-a",
+            "status": "active",
+            "last_login_at": None,
+        }
+    ]
+    results["rotate"] = lambda login: {"login": login, "status": "active"}
+    results["revoke"] = lambda login: {"login": login, "status": "revoked"}
+    assert app_cli.main(["session", "list", "--agent", "cursor"]) == 0
+    assert app_cli.main(["session", "rotate", "cursor.lane-a@mai.internal"]) == 0
+    assert app_cli.main(["session", "revoke", "cursor.lane-a"]) == 0
+    assert [(c[1], c[2]) for c in recorded] == [
+        ("records", ("cursor",)),
+        ("rotate", ("cursor.lane-a",)),
+        ("revoke", ("cursor.lane-a",)),
+    ]
+    out = capsys.readouterr().out
+    assert "cursor.lane-a" in out and "active" in out
+    assert "rotated:    cursor.lane-a" in out and "revoked:    cursor.lane-a" in out
+    assert "mai1:" not in out and "credential" not in out
+
+
+def test_a_session_error_gives_the_code_and_exit_code_1(monkeypatch, capsys):
+    from mai.modules.sessions import LeaseError
+
+    def refuse(*_args, **_kwargs):
+        raise LeaseError("SESSION_EXISTS", "login exists: cursor.lane-a")
+
+    monkeypatch.setattr(app_cli, "_call", refuse)
+    assert app_cli.main(["session", "new", "cursor", "--label", "lane-a"]) == 1
+    assert capsys.readouterr().err == (
+        "mai: SESSION_EXISTS: login exists: cursor.lane-a\n"
+    )
