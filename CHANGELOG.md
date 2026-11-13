@@ -6,6 +6,264 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-13
+
+### Added
+
+- The key file of the host CLI. The file `keys.json` in the state folder holds
+  the owner key and the agent keys of each instance, with the account names of
+  the keychain. The file has the mode 0600, in a folder with the mode 0700.
+  Each write is atomic, and a lock lets one process at a time read or change
+  the file. Thus two CLIs or bridges at the same time do not lose a key. On
+  Unix, the CLI refuses a key file that a group or other users can read, and
+  the error gives the `chmod` command.
+- The move of the keys of 3.0 and 3.1. When the key file has no key for an
+  account, the CLI reads the keychain item of the service `dev.mai`. It writes
+  the key to the key file, and then it deletes the keychain item.
+  `mai upgrade` moves all the keys of the instance. When no keychain is
+  available and the manifest records a keychain item for the account, the
+  command gives an error with a step. Thus `mai start` makes no new owner key
+  in place of the key of the keychain item. A keychain item stays when the key
+  file has a different key for its account, or when the CLI cannot delete
+  the item. Then `mai upgrade` gives a step and the exit code 1. For the owner
+  key, `mai upgrade` does a test of the two keys on the server. When the
+  server accepts only the key of the key file, `mai upgrade` deletes the
+  keychain item. When the server accepts only the key of the keychain item,
+  `mai upgrade` writes that key to the key file and deletes the keychain
+  item. `mai agent add` and `mai agent rotate` also delete the keychain item
+  of the agent, because the server then accepts only the new key.
+- After `mai upgrade`, start each app that runs `mai mcp` again, or start
+  its MCP server again. `mai upgrade` also gives this step when it deletes
+  the keychain item of an agent. It also gives the step when the manifest
+  records the keychain item of an agent, and the item is gone. For example,
+  a bridge of 3.2 moves its agent key to the key file at its first lease
+  request. A bridge of 3.0 or 3.1 that runs reads the agent key from the
+  keychain item at each lease request. When the item is gone, the bridge
+  stops with `BAD_KEY` and the step `Run mai agent add NAME`. Do not do that
+  step, because `mai agent add` gives `AGENT_EXISTS` for an agent that
+  exists. Start the app again.
+- `mai doctor` examines the key file and tells about each keychain item of the
+  instance. It shows no key. On macOS, it reads no key and shows no prompt.
+  When no keychain is available and the manifest records keychain items of
+  the instance, `mai doctor` gives a warning with a step.
+- MCP contract 3.2.0: the argument `session` of each tool other than `login`
+  and `logout` takes the label of a named session, for example `lane-1`. It
+  also takes the login of the session, for example `cursor.lane-1`, or a
+  handle, as before. A chat that gives the label in each call does not call
+  `login`. The tool `logout` also takes a label or a login.
+- The bridge `mai mcp` gets the lease of a named session at the first call
+  with its label or its login. Each subsequent call with the same label,
+  login, or handle uses the same lease. Calls at the same time for the same
+  session make one lease request, and each of these calls gets the result of
+  that request. The same rule applies to the new lease after a restart of the
+  server, for a named session and for the pool lease. A `login` to that
+  session gives the handle of the same lease.
+  When the lease request is not successful, the call gets the tool error of
+  `login` with the path `session`. Examples are `BAD_LABEL` for a label of
+  the pool, and `SESSION_BUSY`. A value that is not a label, a login, or a
+  handle gives `INVALID_ARGUMENT`. A call with a label acts only as that
+  session. A server of 3.0 does not know named sessions, and it gives a
+  lease of a pool session. The bridge then ends that lease, and the call
+  gets `SERVER_UNAVAILABLE` with `retry_safe` false and the step
+  `mai upgrade`.
+- The code `KEY_FILE_ERROR` of the bridge. The bridge gives it when it cannot
+  read the agent key from the key file or from its keychain item. A tool call
+  or a `login` then gets this code with `retry_safe` false. The message gives
+  the step, for example the `chmod` command. A call with the argument
+  `session` gets the path `session`, and a call with no `session` gets no
+  path. When a different process holds the lock of the key file for more than
+  10 seconds, the code is `BUSY` with `retry_safe` true. Before, these errors
+  gave `SERVER_UNAVAILABLE` with `retry_safe` true.
+
+### Changed
+
+- The bridge reads the agent key from the key file at each lease request.
+  Thus a new key from `mai agent rotate` applies to a bridge that runs. When
+  the key file has no key for the agent, the result is `BAD_KEY`, as before.
+  The message gives the step `mai agent rotate NAME` for an agent that exists
+  on the server, and `mai agent add NAME` for a new agent. For an agent that
+  exists, `mai agent add` gives `AGENT_EXISTS`. When the server refuses the
+  agent key of the key file, the code is also `BAD_KEY`, and the message gives
+  the same steps. The tool error, the stop of the bridge, and the log of the
+  bridge give these steps.
+- `mai uninstall` removes the keys of the instance from the key file and each
+  keychain item of the instance. While a different instance has keys in the
+  key file or records in the manifest, some files of the CLI stay. The key
+  file stays, and the manifest stays with the records of the other
+  instances. The configuration file of such an instance and the binary also
+  stay. The entries that `mai connect` wrote in the files of the apps also
+  stay, because an entry names no instance. Its bridge uses the instance of
+  `config.json`. When `config.json` goes with the instance, the report gives
+  a line for each entry that stays, also for an entry of a different
+  instance. That line gives the step `mai start --instance NAME`. It makes
+  NAME the instance of `config.json`, with the port of its container. The
+  uninstall of the last instance removes these entries.
+  It removes the key file only when the file holds no key. It holds the lock
+  of the file for the check and the remove. Thus a key that a bridge of
+  a different instance writes during the uninstall stays.
+  When a keychain item of the instance stays, for example because no
+  keychain is available, `mai uninstall` gives a step and the exit code 1.
+  Then the manifest stays with the record of each such item, and the binary
+  also stays. Thus a subsequent `mai uninstall` can remove the items. Each
+  step gives `mai uninstall --instance NAME`, unless the instance is `mai`
+  and `config.json` names it. Thus the step does not act on the instance of
+  a `config.json` that stays for a different instance.
+- With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
+  keychain item.
+- On macOS, cgo is necessary only for the Security framework, which reads and
+  removes the keychain items of 3.0 and 3.1.
+- A tool call that comes to the server with the argument `session` gives
+  `BRIDGE_ONLY` with the path `session`, and the tool does not run. In 3.1,
+  the server removed the argument, and the call acted as the session of its
+  lease, for example a pool session.
+- The instructions of `initialize` and the guide `mai://guide` tell a chat to
+  give the label of its session as `session` in each call. The message of
+  `NO_FREE_SESSION` also tells this rule. The error table of the guide also
+  lists the codes `BAD_KEY` and `KEY_FILE_ERROR` of the bridge.
+- `login` uses the value of `session` as it is, with the rule of a tool
+  call. A value that is not a label or a login gives `BAD_LABEL` with the
+  path `session`, and no lease request. An example is a label with a space
+  or a line break at the end. Before, `login` removed the spaces and the
+  line breaks at the start and at the end of the value. A `logout` with no
+  `session`, an empty string, or `null` gives `INVALID_ARGUMENT` with the
+  path `session`. Before, it gave `SESSION_UNKNOWN`.
+- A tool call with an empty string as `session` gives `INVALID_ARGUMENT`
+  with the path `session`. Before, the bridge sent such a call with the
+  pool lease. Thus a chat that gave an empty label read the mailbox of the
+  pool session. A call with `null` as `session` is the same as a call with
+  no argument `session`, and it uses the pool lease, as before. Some
+  clients send `null` for each optional argument.
+- `scripts/it_named_sessions.sh` builds mai with no tag and uses only a
+  scratch `MAI_HOME`. It does a test of calls with the label `lane-c` and no
+  login. At the end, it makes sure that `mai uninstall` removed the keys of the
+  instance from the key file.
+- `scripts/it_leases.sh` does a test of `BRIDGE_ONLY` with the path `session`
+  for a handle, a label, and a login.
+
+### Removed
+
+- The presence check before the first lease of each bridge, `mai ui open`,
+  and `mai exec`: Touch ID, Windows Hello, and polkit. On a self-run instance,
+  a program that can use the Docker socket controls mai. Thus the keychain and
+  the prompts gave friction and no protection.
+- The command `mai approvals`, its file `approvals.json`, and the field
+  `approval` of `config.json`.
+- The build tag `presencefake`, the variable `MAI_TEST_KEYCHAIN_SERVICE`, the
+  polkit action `dev.mai.lease`, and the CI step
+  `go test -tags presencefake ./...`.
+
+### Fixed
+
+- `mai uninstall --instance NAME` ends the leases on the port of the
+  container of that instance. When the container does not run, the
+  uninstall sends no key and tells this in a line. Then the remove of the
+  container ends the leases. Before, the uninstall sent the owner key of the
+  instance to the port of `config.json`, which can be the server of a
+  different instance. The size of the mail data also counts only the
+  volumes and the data folders of the instance.
+- `mai status --instance NAME` and `mai doctor --instance NAME` use the port
+  of the container of that instance. Before, they used the port of the
+  instance of `config.json`. Thus `mai status` showed the port and the
+  version of a different server, and it sent the owner key of the instance
+  to that server.
+- `mai doctor` reports a problem when the port of `config.json` is not the
+  host port of the container of its instance, with the step `mai start`.
+  It tells that mai uses the port only when the container of the instance
+  runs with that port. Before, it reported no problem when the
+  server of a different instance used the port. Then the commands and the
+  bridges of the instance sent its keys to that server.
+- `mai upgrade --instance NAME` does the check of the owner keys on the port
+  of the container of that instance. When that port is not known, it does no
+  check. The port is known only while the container runs and is not paused.
+  This rule also applies to the instance of `config.json`. Before, the
+  upgrade sent the two owner keys to the port of a stopped container, where
+  a different program can listen. For the same cause, `mai status` shows the
+  line `server` only while the container runs. The new container gets the port and the data folder of the
+  container that it replaces. The upgrade examines them before it stops that
+  container. Before, the upgrade used the values of the instance of
+  `config.json`. Thus it sent the owner keys of the instance to a different
+  server. It also removed the container of the instance, and then it stopped
+  because a different server used the port. When `config.json` names a different instance, each step
+  names `--instance NAME`, and the upgrade does not change `config.json`.
+- `mai start --instance NAME` uses the port and the data folder of that
+  instance, also when `config.json` names a different instance. Before, the
+  start took the port and the data folder of the instance of `config.json`.
+  Thus two containers could use one data folder. Then `config.json` named
+  the new instance with the port of the other instance. Thus the subsequent
+  commands sent the keys of the new instance to the other server. The start
+  also refuses a data folder that a container of a different instance
+  mounts, and `config.json` changes only after a successful start.
+- When the container of the instance of `config.json` exists, `mai start`
+  and `mai upgrade` use its port and its data folder. `mai start` with a
+  different `--port` or `--data-dir` tells that the flag has no effect, and
+  `config.json` gets the values of the container. Before, the start wrote
+  the flag to `config.json`, but the container kept its port and its data.
+  Thus the subsequent commands sent the keys of the instance to the port of
+  a different server. `mai upgrade` also made the new container with the
+  data folder of `config.json` in place of the volume of the container that
+  it replaced.
+- The bridge ends each lease and removes its notice file when the app exits
+  during a call, for example during `wait_for_mail`. Before, the write of
+  the result to the closed stdout or stderr stopped the bridge with the
+  signal SIGPIPE. Thus the server kept each lease of the bridge until the
+  lease expired, and a new bridge got `SESSION_BUSY` for the same named
+  session. The bridge also stops when a write to its stdout is not
+  successful. The bridge does not wait for the result of a call that
+  nothing can read. On Unix, when stdin ends and the app is gone, the bridge
+  stops each call in flight immediately. The app is gone when its process
+  ended, or when it closed the read end of the stdout of the bridge. Else
+  the bridge waits a maximum of 10 seconds for the results of the calls in
+  flight.
+  Before, the bridge kept each lease until the end of a long call, for
+  example 50 seconds for `wait_for_mail`.
+- `mai uninstall --instance NAME` removes only the items of that instance.
+  Each record of the manifest has its instance. The CLI gives each record of
+  3.0 and 3.1 the instance of its name, or the instance of the file. A
+  container or a volume goes only when its label `dev.mai.instance` is the
+  instance. An image that a container of a different instance uses stays,
+  and its record goes to that instance. Thus the uninstall of the last
+  instance removes the image. The state folder can have no keys and no
+  records of that instance, for example for a container of a CLI with a
+  different `MAI_HOME`. Then the image stays with no record, and the report
+  tells this. A record of 3.0 or 3.1 of an app entry or of a
+  file of an app has no instance. The entry also names no instance. Each
+  uninstall keeps such an entry while a different instance stays, and tells
+  it. The uninstall of the last instance removes it. Before, the uninstall
+  of one instance also removed some items of the other instances in the
+  same state folder. These items were the
+  container, the volumes, the images, and the app entries. It also removed
+  the records of the keychain items of these instances. Thus `mai upgrade`,
+  `mai doctor`, and `mai uninstall` of such an instance did not find its
+  keychain items.
+- The record of a data folder of 3.0 or 3.1 does not get the instance of the
+  file. Its instance is the instance of the container with the folder as its
+  mount at `/data`, or the instance of `config.json` with that `data_dir`.
+  When no instance is known, the folder stays, and `mai uninstall` tells
+  this. `mai uninstall` never removes a folder that a container of a
+  different instance mounts. The recorded data folder of a different
+  instance also stays when no container has it as a mount. The remove of a folder
+  of the CLI keeps each data folder that stays in it. Before, the remove of
+  the configuration folder deleted such a folder, also when the report told
+  that it stayed. Before, the uninstall of the instance of the
+  file removed the data folder of a different instance.
+- When the bridge gets no new pool lease, a tool call with no argument
+  `session` gets a tool error with no path. Examples are `MAIL_SERVER_DOWN`
+  and `NO_FREE_SESSION`. Before, the tool error had the path `session`,
+  although the call had no such argument. The server gives `NO_FREE_SESSION`
+  with no path for the same call.
+- The server refuses a value with a line break at the end for an argument
+  with a pattern. Examples are a `ref`, a `thread_ref`, and an address. Before,
+  the validator of the server used the Python rule for `$`, which also matches
+  before a line break at the end. A strict MCP client uses the ECMA-262 rule,
+  and it refused such a value.
+- Each output schema compiles in the strict mode of ajv. In 3.1.1, each
+  alternative of the 12 output schemas with the keyword `required` had only
+  `required`, and the properties were only in the parent schema. Ajv with
+  `strict: true` refused these schemas. Thus an MCP client with such a
+  validator could not list the tools. With this change, each alternative
+  also has the properties of the fields in its keyword `required`. The
+  schemas accept and refuse the same results as before.
+
 ## [3.1.1] - 2026-11-13
 
 ### Fixed

@@ -1,8 +1,10 @@
 """The 22 tools of the mai contract: input schemas, output schemas, annotations, groups, and roles.
 
 The bridge "mai mcp" answers the tools login and logout itself. Each other tool
-has the optional argument "session": the handle that login gave. The bridge
-sends the call with the lease of that handle.
+has the optional argument "session": the label or the login of a named session,
+or the handle that login gave. The bridge removes the argument and sends the
+call with the lease of that session. A call that comes to the server with the
+argument gives BRIDGE_ONLY.
 """
 
 ALL = "all"
@@ -19,12 +21,30 @@ REF = {"type": "string", "pattern": r"^ref-[0-9a-f]{16}$"}
 THREAD_REF = {"type": "string", "pattern": r"^thr-[0-9a-f]{16}$"}
 ITEM_REF = {"type": "string", "pattern": r"^itm-[a-zA-Z2-7]{12}$"}
 SESSION = {"type": "string", "pattern": r"^ses-[a-z2-7]{16}$"}
+# The forms of a session in the argument session. A label agrees with the label
+# rule of the server (check_label), and an agent name with the agent name rule
+# (check_agent_name), thus a login is AGENT.LABEL. The pattern also accepts a
+# label of the pool, for example s1: the bridge refuses it with BAD_LABEL, as
+# login does. A handle also has the form of a label. The bridge reads each value
+# with the form of a handle as a handle.
+HANDLE_FORM = r"ses-[a-z2-7]{16}"
+LABEL_FORM = r"[a-z0-9][a-z0-9-]{0,31}"
+AGENT_FORM = r"[a-z0-9][a-z0-9-]{0,47}"
+SESSION_REF = {
+    "type": "string",
+    "pattern": rf"^({HANDLE_FORM}|({AGENT_FORM}\.)?{LABEL_FORM})$",
+}
 SESSION_ARG = dict(
-    SESSION,
+    SESSION_REF,
     description=(
-        "The handle that login gave. After a login, give it in each call, also"
-        " in reply and read_message. With no handle, the call uses the pool"
-        " session of the app, which does not have the mail of the named session."
+        "The named session of the call: its label, for example lane-1, or its"
+        " login, for example cursor.lane-1. Give it in each call, also in reply"
+        " and read_message. No login call is necessary: the first call with the"
+        " label gets the lease of the session, and each subsequent call with the"
+        " same label uses that lease. The handle that login gave is also"
+        " correct. A label of the pool, for example s1, gives BAD_LABEL. With no"
+        " session, the call uses the pool session of the app, which does not"
+        " have the mail of the named session."
     ),
 )
 SESSION_NAME = {
@@ -124,13 +144,20 @@ def with_error(outputs):
     """OUTPUTS that also accept the structured content of a tool error.
 
     The required fields of a result become one of two alternatives: the
-    fields of a successful result, or the field error.
+    fields of a successful result, or the field error. Each alternative also
+    has the properties of its required fields. A validator in strict mode, for
+    example ajv with strict true, refuses a required field that is not in the
+    properties of the same schema object.
     """
     schema = {k: v for k, v in outputs.items() if k != "required"}
-    schema["properties"] = dict(outputs.get("properties", {}), error=TOOL_ERROR)
+    props = dict(outputs.get("properties", {}), error=TOOL_ERROR)
+    schema["properties"] = props
     required = outputs.get("required")
     if required:
-        schema["anyOf"] = [{"required": list(required)}, {"required": ["error"]}]
+        schema["anyOf"] = [
+            {"properties": {k: props[k] for k in required}, "required": list(required)},
+            {"properties": {"error": TOOL_ERROR}, "required": ["error"]},
+        ]
     return schema
 
 
@@ -178,7 +205,8 @@ def tool(
 TOOLS = [
     tool(
         "login",
-        "Log in to a named session of your agent. Give the handle of the result as session in each tool call.",
+        "Log in to a named session of your agent and get its handle. This is optional:"
+        " you can give the label of the session as session in each tool call.",
         "session",
         ALL,
         obj({"session": SESSION_NAME}, ["session"]),
@@ -194,11 +222,19 @@ TOOLS = [
     ),
     tool(
         "logout",
-        "End the lease of the handle that login gave.",
+        "End the lease of a named session in the bridge.",
         "session",
         ALL,
         obj(
-            {"session": dict(SESSION, description="The handle that login gave.")},
+            {
+                "session": dict(
+                    SESSION_REF,
+                    description=(
+                        "The label, the login, or the handle of the named session,"
+                        " for example lane-1."
+                    ),
+                )
+            },
             ["session"],
         ),
         out({"session": SESSION, "ended": {"type": "boolean"}}),

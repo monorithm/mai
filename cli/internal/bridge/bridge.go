@@ -1,10 +1,13 @@
 // Package bridge is "mai mcp": it gets a lease for an agent and bridges the MCP stdio of an
 // app to POST /mcp of the server.
 //
-// The bridge holds the pool lease of the agent, and one lease for each named session that
-// a chat logged in to with the tool login. The chat gives the handle of the login as the
-// argument session of each tool call. The bridge removes the argument and sends the call
-// with the lease of that handle. A tool call with no argument session uses the pool lease.
+// The bridge holds the pool lease of the agent, and one lease for each named session of its
+// chats. A chat gives the label or the login of its session as the argument session of each
+// tool call, for example lane-1. The first call with the label gets the lease of that
+// session, as the tool login does. The tool login is optional: it gets the lease and gives
+// a handle, which a chat can give as session in place of the label. The bridge removes the
+// argument and sends the call with the lease of that session. A tool call with no argument
+// session uses the pool lease.
 //
 // When a lease ends on the server, the bridge asks for a new lease. Only a refusal of the
 // server (an HTTP 4xx answer with an error code) ends a named session in the bridge. A
@@ -27,8 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"time"
 )
 
 // Exit codes of Run.
@@ -44,13 +46,17 @@ const maxLine = 64 << 20
 // long wait of one chat thus does not stop the tool calls of a different chat.
 const maxInFlight = 32
 
+// KeySource gives the key of an account. The key file of the CLI (keys.File) is one.
+type KeySource interface {
+	Get(account string) (string, error)
+}
+
 // Bridge holds the state of one bridge process. Set the exported fields, then call Run.
 type Bridge struct {
 	Agent    string
 	Instance string
-	Endpoint string // The base URL of the server, for example http://127.0.0.1:8765.
-	Store    keychain.Store
-	Presence func(reason string) error
+	Endpoint string    // The base URL of the server, for example http://127.0.0.1:8765.
+	Keys     KeySource // The bridge reads the agent key at each lease request.
 	Client   *http.Client
 	StateDir string
 	App      string // The app at the top of the process chain.
@@ -60,22 +66,31 @@ type Bridge struct {
 	Stdin    io.Reader
 	Stdout   io.Writer
 	Stderr   io.Writer
+	// AppGone tells if the app is gone, for example because its process ended, or because it
+	// closed the read end of the standard output. After the end of the standard input, the
+	// bridge then stops the requests in flight at once, because nothing can read their
+	// answers. nil means that the bridge cannot tell. Then it waits a maximum of drainTimeout
+	// for these answers.
+	AppGone func() bool
 
-	// approveMu lets one lease request occur at a time. approved is true after the
-	// presence check of this process.
-	approveMu sync.Mutex
-	approved  bool
+	// requestMu lets one lease request occur at a time.
+	requestMu sync.Mutex
 
-	// mu guards pool, named, and byLogin.
+	// mu guards pool, named, byLogin, and opens.
 	mu      sync.Mutex
 	pool    *lease
-	named   map[string]*lease // handle -> lease
-	byLogin map[string]string // login -> handle
+	named   map[string]*lease   // handle -> lease
+	byLogin map[string]string   // login -> handle
+	opens   map[string]*opening // login -> the open that runs
 
 	loginMu     sync.Mutex
 	noticeMu    sync.Mutex
 	noticesGone bool
 	outMu       sync.Mutex
+	// outGone closes when a write to Stdout fails. Then the app has no read end of the
+	// standard output, for example because it exited, and the bridge stops.
+	outGone chan struct{}
+	outOnce sync.Once
 
 	beatCtx context.Context
 	beats   sync.WaitGroup
@@ -124,16 +139,6 @@ func (b *Bridge) logf(format string, args ...any) {
 	}
 }
 
-// Reason is the text of the presence prompt for the first lease of the bridge.
-func (b *Bridge) Reason() string {
-	app := b.App
-	if app == "" {
-		app = "unknown"
-	}
-	return fmt.Sprintf("mai: approve a session for the agent %s. App: %s. Folder: %s. Process: %d.",
-		b.Agent, app, b.Folder, b.PID)
-}
-
 // callJSON sends one API call with a bearer token and decodes a 2xx answer into out.
 func (b *Bridge) callJSON(ctx context.Context, method, path, bearer string, body []byte, out any) error {
 	var rd io.Reader
@@ -170,7 +175,9 @@ func (b *Bridge) callJSON(ctx context.Context, method, path, bearer string, body
 func (b *Bridge) writeLine(line []byte) {
 	b.outMu.Lock()
 	defer b.outMu.Unlock()
-	_, _ = b.Stdout.Write(append(line, '\n'))
+	if _, err := b.Stdout.Write(append(line, '\n')); err != nil && b.outGone != nil {
+		b.outOnce.Do(func() { close(b.outGone) })
+	}
 }
 
 func (b *Bridge) writeError(id json.RawMessage, code int, message string) {
@@ -213,7 +220,7 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 		b.writeError(nil, -32700, "parse error")
 		return nil
 	}
-	l, line, isCall, ok := b.route(ctx, id, hasID, line)
+	l, line, isCall, name, ok := b.route(ctx, id, hasID, line)
 	if !ok {
 		return nil
 	}
@@ -233,15 +240,43 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	answer, err := b.post(ctx, token, line)
 	if isLeaseUnknown(err) {
 		b.logf("the server does not know the lease of %s; the bridge asks for a new lease", l.describe())
-		if rerr := b.renew(ctx, l, token); rerr != nil {
+		rerr := b.renew(ctx, l, token)
+		if errors.Is(rerr, errEnded) && name != "" {
+			// The bridge ended the lease during the call, for example at a logout of the
+			// session. The server did not do the call. A call with the label or the login
+			// of a session gets a new lease for it, as the first call does.
+			next, fail := b.open(ctx, name)
+			if fail != nil {
+				b.writeResult(id, fail)
+				return nil
+			}
+			l, rerr = next, nil
+		}
+		if rerr != nil {
 			return b.renewFailed(id, hasID, isCall, l, rerr)
 		}
 		answer, err = b.post(ctx, l.current(), line)
+		if isLeaseUnknown(err) && l.isEnded() && name != "" {
+			// The bridge ended the new lease before the call came to the server, for example at
+			// a logout during a renew that the heartbeat did. The server did not do the call.
+			// Get a new lease for the label or the login, as above.
+			next, fail := b.open(ctx, name)
+			if fail != nil {
+				b.writeResult(id, fail)
+				return nil
+			}
+			l = next
+			answer, err = b.post(ctx, l.current(), line)
+		}
+		if isLeaseUnknown(err) && l.isEnded() {
+			// The bridge ended the lease, thus a call with the handle gets SESSION_UNKNOWN.
+			return b.renewFailed(id, hasID, isCall, l, errEnded)
+		}
 		if isLeaseUnknown(err) {
 			// The server ended the new lease immediately. The lease stays in the bridge, thus
 			// the next call or heartbeat gets a new lease.
 			if hasID {
-				b.answerFailure(id, isCall, "SERVER_UNAVAILABLE",
+				b.answerFailure(id, isCall, l, "SERVER_UNAVAILABLE",
 					"The server ended the new lease of "+l.describe()+" immediately. Try again later.", true)
 			}
 			return nil
@@ -265,19 +300,28 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 // renewFailed answers a call when the lease of its session ended and the renew failed.
 //
 // Only an agent key that is not valid stops the bridge. A named session that the server
-// refused (isRefusal) goes, and the call gets the code of the server. For each other
+// refused (isRefusal) goes, and the call gets the code of the server. A named session whose
+// new lease is of a different session (wrongSessionError) also goes. For each other
 // failure, the lease stays in the bridge, and the call gets a tool error with retry_safe
 // true. The next call or heartbeat tries again.
 func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, err error) error {
+	var ws *wrongSessionError
 	switch {
 	case errors.Is(err, errEnded):
 		if hasID {
-			b.answerFailure(id, isCall, "SESSION_UNKNOWN", msgUnknownHandle, false)
+			b.answerFailure(id, isCall, l, "SESSION_UNKNOWN", msgEnded, false)
 		}
 		return nil
 	case l.handle == "" && isBadKey(err):
 		b.writeError(id, -32001, stopText(b.Agent, err))
+		b.logf("stop: %s", leaseErrorText(b.Agent, err))
 		return errStop
+	case l.handle != "" && errors.As(err, &ws):
+		b.drop(l, err)
+		if hasID {
+			b.answerFailure(id, isCall, l, "SERVER_UNAVAILABLE", ws.message(), false)
+		}
+		return nil
 	case l.handle != "" && isRefusal(err):
 		b.drop(l, err)
 		if hasID {
@@ -287,35 +331,52 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 		return nil
 	}
 	b.logf("the new lease for %s failed: %v. The next call or heartbeat tries again.", l.describe(), err)
-	if hasID {
-		code, msg := unavailable(l, err)
-		b.answerFailure(id, isCall, code, msg, true)
+	if !hasID {
+		return nil
 	}
+	if code, msg, safe, ok := keyFailure(b.Agent, err); ok {
+		b.answerFailure(id, isCall, l, code, msg, safe)
+		return nil
+	}
+	code, msg := unavailable(l, err)
+	b.answerFailure(id, isCall, l, code, msg, true)
 	return nil
 }
 
-// answerFailure answers a request with an error: a tool call gets a tool error, and a
-// different request gets a JSON-RPC error.
-func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, code, message string, retrySafe bool) {
-	if isCall {
+// answerFailure answers a request on the lease l with an error: a tool call gets a tool
+// error, and a different request gets a JSON-RPC error. A tool call on a named lease has the
+// argument session, thus its tool error has the path session. A tool call on the pool lease
+// has no argument session, thus its tool error has no path.
+func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, l *lease, code, message string, retrySafe bool) {
+	switch {
+	case !isCall:
+		b.writeError(id, -32603, "mai: "+code+": "+message)
+	case l.handle == "":
+		b.writeResult(id, failure(code, message, nil, retrySafe))
+	default:
 		b.writeResult(id, sessionError(code, message, retrySafe))
-		return
 	}
-	b.writeError(id, -32603, "mai: "+code+": "+message)
 }
 
-// refusal gives the code and the message of a refused lease request.
+// refusal gives the code and the message of a refused lease request. The message of BAD_KEY
+// gives the step for the user.
 func refusal(agent string, err error) (string, string) {
 	var ae *apiError
-	if errors.As(err, &ae) {
+	switch {
+	case isRefusedKey(err):
+		return "BAD_KEY", refusedKeyMessage(agent)
+	case errors.As(err, &ae):
 		return ae.Code, ae.Message
 	}
-	return "BAD_KEY", "The keychain has no key for the agent " + agent + ". Run mai agent add " + agent + "."
+	return "BAD_KEY", noKeyMessage(agent)
 }
 
 // stopText is the text of the error that stops the bridge, when the agent key is not valid.
 func stopText(agent string, err error) string {
 	code, msg := refusal(agent, err)
+	if !strings.HasSuffix(msg, ".") {
+		msg += "."
+	}
 	return "mai: the lease ended, and the agent key is not valid: " + code + ": " + msg + " The bridge stops."
 }
 
@@ -400,8 +461,11 @@ func sseData(data []byte) [][]byte {
 	return out
 }
 
-// Run gets the pool lease, bridges stdin to /mcp until stdin ends or ctx ends, and then
-// ends each lease of the bridge. Cancel ctx on SIGINT, SIGTERM, or SIGHUP.
+// Run gets the pool lease, bridges stdin to /mcp until stdin ends, a write to stdout fails,
+// or ctx ends, and then ends each lease of the bridge. After the end of stdin, each request in
+// flight gets its answer, for a maximum of drainTimeout, unless the app is gone (drain). Cancel
+// ctx on SIGINT, SIGTERM, or SIGHUP. A failed write to stdout or stderr must not stop the
+// process, thus ignore SIGPIPE.
 //
 // The pool lease can have no session, when no pool session of the agent is free. The bridge
 // then serves the requests that use no session and the named sessions. When the start
@@ -418,12 +482,14 @@ func (b *Bridge) Run(ctx context.Context) int {
 	b.named, b.byLogin = map[string]*lease{}, map[string]string{}
 	b.mu.Unlock()
 	b.fatal = make(chan error, 1)
+	b.outGone = make(chan struct{})
 	a, err := b.request(ctx, "")
 	if err != nil {
 		if errors.Is(err, errNoKey) {
-			fmt.Fprintf(b.Stderr, "mai mcp: the keychain has no key for the agent %s. Run \"mai agent add %s\".\n", b.Agent, b.Agent)
+			fmt.Fprintf(b.Stderr, "mai mcp: the key file has no key for the agent %s. For an agent that exists on the server, "+
+				"run \"mai agent rotate %s\". For a new agent, run \"mai agent add %s\".\n", b.Agent, b.Agent, b.Agent)
 		} else {
-			b.logf("no lease for the agent %s: %v", b.Agent, err)
+			b.logf("no lease for the agent %s: %s", b.Agent, leaseErrorText(b.Agent, err))
 		}
 		return ExitError
 	}
@@ -477,20 +543,16 @@ func (b *Bridge) Run(ctx context.Context) int {
 			return ExitOK
 		case err := <-b.fatal:
 			b.writeError(nil, -32001, stopText(b.Agent, err))
-			b.logf("stop: %v", err)
+			b.logf("stop: %s", leaseErrorText(b.Agent, err))
 			return ExitError
 		case <-stop:
 			return ExitError
+		case <-b.outGone:
+			b.logf("a write to the app failed, thus the app closed the standard output of the bridge. The bridge stops.")
+			return ExitOK
 		case line, ok := <-lines:
 			if !ok {
-				// The app closed stdin. Each request that started gets its answer first.
-				inflight.Wait()
-				select {
-				case <-stop:
-					return ExitError
-				default:
-					return ExitOK
-				}
+				return b.drain(ctx, &inflight, stop)
 			}
 			select {
 			case slots <- struct{}{}:
@@ -508,6 +570,60 @@ func (b *Bridge) Run(ctx context.Context) int {
 					}
 				}
 			}()
+		}
+	}
+}
+
+// drainTimeout is the longest time that the bridge waits for the answers of the requests in
+// flight after the end of the standard input. The tests change it.
+var drainTimeout = 10 * time.Second
+
+// drainPoll is the time between two examinations of the app (AppGone) during that wait.
+const drainPoll = 100 * time.Millisecond
+
+// drain waits for the answers of the requests in flight after the app closed the standard
+// input. When the app is gone, nothing can read an answer. Thus drain then returns at once,
+// and the deferred cancel of Run stops each request in flight. Then Run ends each lease and
+// removes the notice file. drain also returns after drainTimeout, at a failed write to the
+// app, and at the end of ctx.
+func (b *Bridge) drain(ctx context.Context, inflight *sync.WaitGroup, stop <-chan struct{}) int {
+	done := make(chan struct{})
+	go func() {
+		inflight.Wait()
+		close(done)
+	}()
+	tick := time.NewTicker(drainPoll)
+	defer tick.Stop()
+	limit := time.NewTimer(drainTimeout)
+	defer limit.Stop()
+	for {
+		if b.AppGone != nil && b.AppGone() {
+			b.logf("the app closed the standard input, and the app is gone. The bridge stops the requests in flight.")
+			return ExitOK
+		}
+		select {
+		case <-done:
+			select {
+			case <-stop:
+				return ExitError
+			default:
+				return ExitOK
+			}
+		case <-stop:
+			return ExitError
+		case err := <-b.fatal:
+			b.writeError(nil, -32001, stopText(b.Agent, err))
+			b.logf("stop: %s", leaseErrorText(b.Agent, err))
+			return ExitError
+		case <-b.outGone:
+			b.logf("a write to the app failed, thus the app closed the standard output of the bridge. The bridge stops.")
+			return ExitOK
+		case <-ctx.Done():
+			return ExitOK
+		case <-limit.C:
+			b.logf("the app closed the standard input, and a request got no answer in %s. The bridge stops the requests in flight.", drainTimeout)
+			return ExitOK
+		case <-tick.C:
 		}
 	}
 }

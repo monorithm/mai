@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -13,11 +12,11 @@ import (
 	"time"
 
 	"github.com/monorithm/mai/cli/v3/internal/hook"
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 )
 
 // lease is one lease of the bridge: the pool lease, or the lease of a named session that a
-// chat logged in to. The token is only in this memory.
+// chat logged in to or gave as the argument session. The token is only in this memory.
 //
 // The pool lease can have no session. The server gives such a lease when no pool session of
 // the agent is free. A tools/call on it can bind a free pool session to it. The bridge then
@@ -36,8 +35,19 @@ type lease struct {
 	newMail   int
 	updatedAt string
 	ended     bool
+	renewing  *renewal // The renew that runs, or nil. Hold mu.
 
 	renewMu sync.Mutex
+}
+
+// renewal is a renew of a lease that runs. The other calls that need a renew of the same
+// lease wait for done, and then get err.
+type renewal struct {
+	done chan struct{}
+	err  error
+	// stopped is true when the context of the renew ended before the lease request. The
+	// result is then not a result of the server.
+	stopped bool
 }
 
 // leaseAnswer is the answer of POST /api/leases. Session is "" when the answer has
@@ -152,10 +162,68 @@ func (l *lease) waitRenew() {
 	defer l.renewMu.Unlock()
 }
 
-// errNoKey means that the keychain has no key for the agent.
+// errNoKey means that the key file has no key for the agent.
 var errNoKey = errors.New("no agent key")
 
-// isBadKey is true when the agent key is not valid or not in the keychain. Then no lease
+// noKeyMessage is the message of BAD_KEY when the key file has no key for the agent. For an
+// agent that exists on the server, "mai agent add" gives AGENT_EXISTS and writes no key. Thus
+// the message gives the step for each of the two cases.
+func noKeyMessage(agent string) string {
+	return "The key file has no key for the agent " + agent + ". For an agent that exists on the server, run mai agent rotate " +
+		agent + ". For a new agent, run mai agent add " + agent + "."
+}
+
+// refusedKeyMessage is the message of BAD_KEY when the server refuses the agent key of the key
+// file, for example after a rotate of the key with a different key file. The message of the
+// server has no step, thus the bridge gives the step for each of the two cases.
+func refusedKeyMessage(agent string) string {
+	return "The server refuses the key of the agent " + agent + " in the key file. For an agent that exists on the server, run mai agent rotate " +
+		agent + ". For a new agent, run mai agent add " + agent + "."
+}
+
+// isRefusedKey is true when the server refused the agent key with BAD_KEY.
+func isRefusedKey(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.Code == "BAD_KEY"
+}
+
+// leaseErrorText gives the text of a failed lease request for a log line. For BAD_KEY of the
+// server and for an agent key that the key file does not have, the text gives the steps.
+func leaseErrorText(agent string, err error) string {
+	switch {
+	case isRefusedKey(err):
+		return "BAD_KEY: " + refusedKeyMessage(agent)
+	case errors.Is(err, errNoKey):
+		return "BAD_KEY: " + noKeyMessage(agent)
+	}
+	return err.Error()
+}
+
+// keyError is a failed read of the agent key: an error of the key file, of its lock, or of
+// the legacy keychain item. It is an error of the host, not of the server.
+type keyError struct{ err error }
+
+func (e *keyError) Error() string { return "the read of the agent key failed: " + e.err.Error() }
+
+func (e *keyError) Unwrap() error { return e.err }
+
+// keyFailure gives the code, the message, and retry_safe of a keyError. ok is false for a
+// different error. A key file that is busy gives BUSY with retry_safe true. Each other error
+// gives KEY_FILE_ERROR with retry_safe false, because the next try fails in the same way
+// until the user does the step in the message, for example the chmod command.
+func keyFailure(agent string, err error) (code, message string, retrySafe, ok bool) {
+	var ke *keyError
+	if !errors.As(err, &ke) {
+		return "", "", false, false
+	}
+	message = "The bridge cannot read the key of the agent " + agent + ": " + strings.TrimPrefix(ke.err.Error(), "keys: ")
+	if errors.Is(err, keys.ErrBusy) {
+		return "BUSY", message, true, true
+	}
+	return "KEY_FILE_ERROR", message, false, true
+}
+
+// isBadKey is true when the agent key is not valid or not in the key file. Then no lease
 // request can succeed.
 func isBadKey(err error) bool {
 	var ae *apiError
@@ -172,7 +240,7 @@ func isRefusal(err error) bool {
 
 // endsLease is true when the error of a renew ends l. These errors end l:
 //   - The bridge ended l.
-//   - The server refused the named session of l.
+//   - The server refused the named session of l, or gave a lease of a different session.
 //   - The agent key of the pool lease is not valid.
 func endsLease(l *lease, err error) bool {
 	if errors.Is(err, errEnded) {
@@ -181,12 +249,35 @@ func endsLease(l *lease, err error) bool {
 	if l.handle == "" {
 		return isBadKey(err)
 	}
-	return isRefusal(err)
+	var ws *wrongSessionError
+	return isRefusal(err) || errors.As(err, &ws)
+}
+
+// wrongSessionError means that the server gave a lease of a different session, or of no
+// session, for a lease request of a named session. A server that does not know named
+// sessions, for example a server of mai 3.0, reads no session in a lease request and gives a
+// lease on a pool session. The bridge never uses such a lease for the named session, else a
+// call with the label of a session acts as a different session.
+type wrongSessionError struct{ want, got string }
+
+func (e *wrongSessionError) Error() string {
+	got := "no session"
+	if e.got != "" {
+		got = "the session " + e.got
+	}
+	return "the server gave a lease of " + got + " for the session " + e.want
+}
+
+// message is the message of the tool error. It gives the step for the owner.
+func (e *wrongSessionError) message() string {
+	return "The server gave a lease of a different session for the session " + e.want +
+		". Thus the server does not know named sessions, for example a server of mai 3.0. The bridge ended that lease, and the call did not run. " +
+		"Tell the owner to run mai upgrade, which makes the container with the image of the CLI."
 }
 
 // msgNoFreeSession is the message of NO_FREE_SESSION. It is the same as the message of the
 // server.
-const msgNoFreeSession = "No pool session of the agent is free. Call login with a named session, or try again later."
+const msgNoFreeSession = "No pool session of the agent is free. Give the label of a named session as session, or try again later."
 
 // unavailable gives the code and the message of a failed lease request that does not end
 // the lease l. The code is the code of the server, or SERVER_UNAVAILABLE when the answer
@@ -197,14 +288,18 @@ func unavailable(l *lease, err error) (string, string) {
 		if ae.Code == "NO_FREE_SESSION" {
 			return ae.Code, msgNoFreeSession
 		}
-		return ae.Code, "The bridge got no lease for " + l.describe() + ": " + ae.Message + ". Try again later."
+		return ae.Code, "The bridge got no lease for " + l.describe() + ": " + noStop(ae.Message) + ". Try again later."
 	}
-	return "SERVER_UNAVAILABLE", "The bridge got no lease for " + l.describe() + ": " + err.Error() + ". Try again later."
+	return "SERVER_UNAVAILABLE", "The bridge got no lease for " + l.describe() + ": " + noStop(err.Error()) + ". Try again later."
 }
+
+// noStop removes the full stop at the end of a text. Each message of the server ends with a
+// full stop, and the bridge adds its own sentence after it.
+func noStop(s string) string { return strings.TrimSuffix(strings.TrimSpace(s), ".") }
 
 // logNoPool tells that the agent has no free pool session.
 func (b *Bridge) logNoPool() {
-	b.logf("the agent %s has no free pool session. A chat can call login with a named session. "+
+	b.logf("the agent %s has no free pool session. A chat can give the label of a named session as session. "+
 		"A call with no session gets NO_FREE_SESSION until a pool session is free.", b.Agent)
 }
 
@@ -215,8 +310,8 @@ func (b *Bridge) logNoPool() {
 const leaseRequestTimeout = 30 * time.Second
 
 // request sends a lease request for the named session name, or for a pool session when
-// name is "". The presence check occurs only before the first lease request of the
-// process. A subsequent request gets no prompt, because the user approved this bridge.
+// name is "". It reads the agent key from the key file for each request. Thus a new key of
+// "mai agent rotate" applies at the next lease request, with no restart of the bridge.
 //
 // When ctx ends before the request starts, request sends no request. When ctx ends after the
 // request starts, the request continues until the answer or leaseRequestTimeout. The server
@@ -224,23 +319,17 @@ const leaseRequestTimeout = 30 * time.Second
 // that the server made, and can end it: a logout or a stop of the bridge leaves no lease on
 // the server.
 func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) {
-	b.approveMu.Lock()
-	defer b.approveMu.Unlock()
-	if !b.approved {
-		if b.Presence == nil {
-			return leaseAnswer{}, errors.New("no presence check")
-		}
-		if err := b.Presence(b.Reason()); err != nil {
-			return leaseAnswer{}, fmt.Errorf("the presence check failed: %w", err)
-		}
-		b.approved = true
+	b.requestMu.Lock()
+	defer b.requestMu.Unlock()
+	if b.Keys == nil {
+		return leaseAnswer{}, errNoKey
 	}
-	key, err := b.Store.Get(keychain.Service, keychain.AgentAccount(b.Instance, b.Agent))
-	if errors.Is(err, keychain.ErrNotFound) {
+	key, err := b.Keys.Get(keys.AgentAccount(b.Instance, b.Agent))
+	if errors.Is(err, keys.ErrNotFound) {
 		return leaseAnswer{}, errNoKey
 	}
 	if err != nil {
-		return leaseAnswer{}, fmt.Errorf("the keychain read failed: %w", err)
+		return leaseAnswer{}, &keyError{err: err}
 	}
 	in := map[string]any{"app": b.App, "folder": b.Folder, "pid": b.PID}
 	if name != "" {
@@ -264,7 +353,12 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 
 // renew gets a new lease for l when old is still the token of l: the same named session,
 // or a new pool lease for the pool lease. When a different call renewed l before, renew
-// does nothing. There is no new presence check.
+// does nothing.
+//
+// Calls at the same time that need a renew of l share one renew. Each of them gets the result
+// of its lease request: nil for the new lease, or the same error. Thus a server that does not
+// reply does not make each call wait for the lease request of each call before it. A call
+// after the end of that renew sends a new lease request.
 //
 // When the request is not successful, l keeps its token. Thus the next call or heartbeat
 // gets LEASE_UNKNOWN again and tries again. The pool lease then has no session.
@@ -272,8 +366,43 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 // When the request is successful, renew writes the notice file. Thus the notice has the
 // session of the new lease immediately, also when a tool call (not a heartbeat) renewed l.
 func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
-	l.renewMu.Lock()
-	defer l.renewMu.Unlock()
+	for {
+		l.mu.Lock()
+		switch {
+		case l.ended:
+			l.mu.Unlock()
+			return errEnded
+		case l.token != old:
+			l.mu.Unlock()
+			return nil
+		}
+		if r := l.renewing; r != nil {
+			l.mu.Unlock()
+			<-r.done
+			if r.stopped && ctx.Err() == nil {
+				// The renew stopped before its lease request, for example at the end of the
+				// heartbeat loop. This call tries again.
+				continue
+			}
+			return r.err
+		}
+		r := &renewal{done: make(chan struct{})}
+		l.renewing = r
+		l.mu.Unlock()
+		l.renewMu.Lock()
+		r.err = b.renewOnce(ctx, l, old)
+		r.stopped = r.err != nil && ctx.Err() != nil && errors.Is(r.err, ctx.Err())
+		l.mu.Lock()
+		l.renewing = nil
+		l.mu.Unlock()
+		l.renewMu.Unlock()
+		close(r.done)
+		return r.err
+	}
+}
+
+// renewOnce does the steps of renew for one lease request. Hold l.renewMu.
+func (b *Bridge) renewOnce(ctx context.Context, l *lease, old string) error {
 	if l.isEnded() {
 		return errEnded
 	}
@@ -291,19 +420,16 @@ func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 		}
 		return err
 	}
-	before := l.session()
+	if l.handle != "" && a.Session != name {
+		// A named lease is only of its session. The bridge ends the new lease, and the
+		// caller drops l (endsLease).
+		b.deleteLease(a.Lease)
+		return &wrongSessionError{want: name, got: a.Session}
+	}
 	if !l.setIfLive(a) {
 		// The chat logged out during the request. End the new lease immediately.
 		b.deleteLease(a.Lease)
 		return errEnded
-	}
-	if l.handle != "" && a.Session != "" && a.Session != before {
-		b.mu.Lock()
-		if b.byLogin[before] == l.handle {
-			delete(b.byLogin, before)
-		}
-		b.byLogin[a.Session] = l.handle
-		b.mu.Unlock()
 	}
 	if l.handle == "" && a.Session == "" {
 		b.logNoPool()
@@ -454,7 +580,7 @@ func (b *Bridge) drop(l *lease, why error) {
 	}
 	l.finish()
 	l.cancel()
-	b.logf("the session %s ended: %v", l.session(), why)
+	b.logf("the session %s ended: %s", l.session(), leaseErrorText(b.Agent, why))
 	b.writeNotice()
 }
 

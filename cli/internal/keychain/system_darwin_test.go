@@ -6,71 +6,77 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
 
-// testService is the only service that the tests write. The tests remove each item.
-const testService = "dev.mai.test.keychain"
+// testService is the only service that the tests use. It is never Service, thus the tests
+// never touch an item of mai.
+const testService = "dev.mai.test.legacy"
 
-// liveStore returns a store on the real keychain that never shows a prompt. The test
-// stops when the default keychain is locked, because a write then shows a prompt.
+// liveStore returns a store of testService on the real keychain that never shows a prompt,
+// and a new account. These tests use the keychain of the user, and macOS can show a dialog
+// for them. Thus they run only when MAI_TEST_LIVE_KEYCHAIN is 1. The test stops when the
+// default keychain is locked.
 func liveStore(t *testing.T) (securityStore, string) {
 	t.Helper()
-	if os.Getenv("MAI_TEST_NO_KEYCHAIN") != "" {
-		t.Skip("MAI_TEST_NO_KEYCHAIN is set")
+	if os.Getenv("MAI_TEST_LIVE_KEYCHAIN") != "1" {
+		t.Skip("set MAI_TEST_LIVE_KEYCHAIN=1 to run the test on the keychain of the user")
+	}
+	if testService == Service {
+		t.Fatal("the test service is the service of mai")
 	}
 	if !defaultUnlocked() {
 		t.Skip("the default keychain is locked")
 	}
 	account := fmt.Sprintf("test-%d-%d", os.Getpid(), time.Now().UnixNano())
-	s := securityStore{noUI: true}
+	s := securityStore{service: testService, noUI: true}
 	t.Cleanup(func() {
-		if err := s.Delete(testService, account); err != nil && !errors.Is(err, ErrNotFound) {
+		if err := s.Delete(account); err != nil && !errors.Is(err, ErrNotFound) {
 			t.Errorf("cleanup delete: %v", err)
 		}
 	})
 	return s, account
 }
 
-func TestSecurityStoreRoundTrip(t *testing.T) {
+// putItem adds an item of testService that each program can read, as a legacy item that
+// macOS shows no prompt for. The package has no write, thus the tool security adds it.
+func putItem(t *testing.T, account, secret string) {
+	t.Helper()
+	cmd := exec.Command("/usr/bin/security", "add-generic-password", "-A", "-s", testService, "-a", account, "-w", secret)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("security add-generic-password: %v: %s", err, out)
+	}
+}
+
+func TestSecurityStoreReadsHasAndDeletesAnItem(t *testing.T) {
 	s, account := liveStore(t)
-
-	if _, err := s.Get(testService, account); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get before set: err = %v, want ErrNotFound", err)
+	if _, err := s.Get(account); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get before the item: err = %v, want ErrNotFound", err)
 	}
-
-	first := "mai1:owner:first-secret-value"
-	if err := s.Set(testService, account, first); err != nil {
-		t.Fatalf("set: %v", err)
+	if ok, err := s.Has(account); err != nil || ok {
+		t.Fatalf("has before the item = %v, %v", ok, err)
 	}
-	got, err := s.Get(testService, account)
+	const secret = "mai1:owner:legacy-test-value"
+	putItem(t, account, secret)
+	if ok, err := s.Has(account); err != nil || !ok {
+		t.Fatalf("has = %v, %v", ok, err)
+	}
+	got, err := s.Get(account)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got != first {
-		t.Fatalf("get returned a different value")
+	if got != secret {
+		t.Fatal("get gave a different value")
 	}
-
-	second := "mai1:owner:second-secret-value"
-	if err := s.Set(testService, account, second); err != nil {
-		t.Fatalf("overwrite: %v", err)
-	}
-	got, err = s.Get(testService, account)
-	if err != nil {
-		t.Fatalf("get after overwrite: %v", err)
-	}
-	if got != second {
-		t.Fatalf("get after overwrite returned a different value")
-	}
-
-	if err := s.Delete(testService, account); err != nil {
+	if err := s.Delete(account); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := s.Get(testService, account); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get after delete: err = %v, want ErrNotFound", err)
+	if ok, err := s.Has(account); err != nil || ok {
+		t.Fatalf("has after the delete = %v, %v", ok, err)
 	}
-	if err := s.Delete(testService, account); !errors.Is(err, ErrNotFound) {
+	if err := s.Delete(account); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete: err = %v, want ErrNotFound", err)
 	}
 }
@@ -78,52 +84,35 @@ func TestSecurityStoreRoundTrip(t *testing.T) {
 func TestSecurityStoreAccountsAreSeparate(t *testing.T) {
 	s, account := liveStore(t)
 	other := account + "-other"
-	t.Cleanup(func() { _ = s.Delete(testService, other) })
-
-	if err := s.Set(testService, account, "value-a"); err != nil {
-		t.Fatalf("set a: %v", err)
+	t.Cleanup(func() { _ = s.Delete(other) })
+	putItem(t, account, "value-a")
+	if ok, err := s.Has(other); err != nil || ok {
+		t.Fatalf("has of a different account = %v, %v", ok, err)
 	}
-	if err := s.Set(testService, other, "value-b"); err != nil {
-		t.Fatalf("set b: %v", err)
+	if err := s.Delete(other); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete of a different account: %v", err)
 	}
-	a, err := s.Get(testService, account)
-	if err != nil || a != "value-a" {
-		t.Fatalf("get a: err = %v, equal = %v", err, a == "value-a")
-	}
-	b, err := s.Get(testService, other)
-	if err != nil || b != "value-b" {
-		t.Fatalf("get b: err = %v, equal = %v", err, b == "value-b")
+	if got, err := s.Get(account); err != nil || got != "value-a" {
+		t.Fatalf("get after a delete of a different account: err = %v, equal = %v", err, got == "value-a")
 	}
 }
 
-func TestSecurityStoreAccessListHoldsOnlyThisProgram(t *testing.T) {
-	s, account := liveStore(t)
-	if got := decryptApps(testService, account); got != -1 {
-		t.Fatalf("access list before set = %d, want -1", got)
+func TestStatusErrorGivesTheErrorsOfThePackage(t *testing.T) {
+	if err := statusError("get", errSecItemNotFound); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("not found: %v", err)
 	}
-	if err := s.Set(testService, account, "value-acl"); err != nil {
-		t.Fatalf("set: %v", err)
+	if err := statusError("get", errSecNoDefaultKeychain); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("no default keychain: %v", err)
 	}
-	if got := decryptApps(testService, account); got != 1 {
-		t.Fatalf("applications that can decrypt = %d, want 1", got)
-	}
-	if err := s.Set(testService, account, "value-acl-2"); err != nil {
-		t.Fatalf("overwrite: %v", err)
-	}
-	if got := decryptApps(testService, account); got != 1 {
-		t.Fatalf("applications that can decrypt after overwrite = %d, want 1", got)
-	}
-}
-
-func TestStatusErrorHasNoSecret(t *testing.T) {
 	err := statusError("get", -25293)
-	if err == nil || err.Error() == "" {
-		t.Fatal("statusError returned no text")
+	if err == nil || err.Error() == "" || errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a different status: %v", err)
 	}
 }
 
-func TestSystemIsSecurityStore(t *testing.T) {
-	if _, ok := System().(securityStore); !ok {
-		t.Fatalf("System() = %T, want securityStore", System())
+func TestSystemIsSecurityStoreOfService(t *testing.T) {
+	s, ok := System().(securityStore)
+	if !ok || s.service != Service || s.noUI {
+		t.Fatalf("System() = %#v, want securityStore of %s", System(), Service)
 	}
 }

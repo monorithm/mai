@@ -25,6 +25,14 @@ Decision of the user, 12 November 2026, for release 3.1.0:
   not for each window of an app. Unlike 2.x, each secret stays in the
   container (section 6).
 
+Decision of the user, 13 November 2026, for release 3.2.0:
+
+- The CLI keeps the owner key and the agent keys of each instance in one key
+  file with mode 0600, not in the keychain. There is no presence check. On a
+  self-run instance, a program that can use the Docker socket controls mai
+  (`docker exec mai mai ...`). Thus the keychain and the presence prompts add
+  friction and no protection (section 7).
+
 A mark [A] shows an assumption that has no test at this time. A mark [E] shows
 an estimate.
 
@@ -37,15 +45,13 @@ an estimate.
   makes the container. It uses the Engine API, not the `docker` command.
 - **No session secret is on the host.** Session credentials stay in the
   container. An app gets a session through a lease. A lease is a random token
-  in the memory of one bridge process. It is not in a file or in the
-  keychain.
-- **You approve each new lease.** When an app starts the bridge `mai mcp`,
-  the OS shows a prompt for Touch ID, Windows Hello, or your password. A
-  program that starts `mai mcp` by itself makes the same prompt, and you can
-  refuse it.
+  in the memory of one bridge process. It is not in a file.
+- **The keys are in one key file.** The owner key and the agent keys of each
+  instance are in the key file of the CLI, with mode 0600. There is no
+  presence prompt (decision of 3.2.0).
 - **Two limits stay, and section 7 gives them.** A program of your OS user
-  that can use the Docker socket controls the container. On Linux, the
-  keychain gives no wall between programs of one user.
+  can read the key file. A program of your OS user that can use the Docker
+  socket controls the container.
 - **The owner gets a copy of each mail.** Postfix sends a copy of each mail to
   the system mailbox `copies`. Only the owner can read it.
 - **The mail UI is optional.** `mai ui on` turns it on, `mai ui open` signs
@@ -124,7 +130,10 @@ secret on stdin. The item belongs to the tool `security` of Apple. Thus each
 program of the same user can read the item with `security`, and macOS shows
 no prompt. Because of this finding, 3.0 keeps no session secret in the
 keychain. The CLI reads its two keys through the Security framework, with an
-access list that holds only the signed `mai` binary (section 7).
+access list that holds only the signed `mai` binary.
+
+In 3.2.0, the CLI keeps the keys in its key file. It uses the keychain only to
+move the items of 3.0 and 3.1 to the key file, and to remove them (section 7).
 
 ### P4: MCP from stdio to HTTP
 
@@ -208,9 +217,8 @@ flowchart LR
     APP[Agent app] -->|stdio| BR[mai mcp --agent A]
     HOOK[Hook of the app] --> MH[mai hook]
     YOU[You] --> CLI[mai start, ui, uninstall]
-    BR -->|presence check| OS[Touch ID, Windows Hello, password]
-    BR --> KC[(Keychain: agent key)]
-    CLI --> KC2[(Keychain: owner key)]
+    BR --> KF[(Key file: agent keys and owner key)]
+    CLI --> KF
     BR -->|notice file| ST[(State folder)]
     MH --> ST
     WEB[Browser] -->|optional| UI
@@ -238,8 +246,8 @@ to the host: `127.0.0.1:8765`. IMAP and submission stay in the container.
 | `mai pause` / `mai resume` | Freeze and resume the container. An agent in `wait_for_mail` waits until the resume. |
 | `mai status` | The health line, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI |
 | `mai logs [--follow]` | The log of the container |
-| `mai doctor` | Examine the engine, the port, the free disk space, the keychain, and the presence check. Give one step for each problem. |
-| `mai upgrade` | Pull the image of the new CLI version, then stop, make the container again, start, and wait for health |
+| `mai doctor` | Examine the engine, the port, the free disk space, the key file, and the keychain items of 3.0 and 3.1. Give one step for each problem. |
+| `mai upgrade` | Move the keys of the instance from the keychain of 3.0 and 3.1 to the key file. Pull the image of the new CLI version, then stop, make the container again, start, and wait for health |
 | `mai uninstall` | Remove all items of the manifest (section 10) |
 
 `mai start --data-dir PATH` keeps `/data` in a host folder. The CLI writes
@@ -265,7 +273,6 @@ MCP entry is `mai mcp --agent A`. It holds no secret.
 | `mai session rotate LOGIN` | Make a new internal secret for the session, and end its lease |
 | `mai session revoke LOGIN` | Close the session for good, and end its lease |
 | `mai session end LOGIN` | End the lease of a session. The bridge gets an error at its next call. |
-| `mai approvals` | The approved and refused leases of the last 30 days |
 
 There is no command that shows a session secret.
 
@@ -281,14 +288,14 @@ There is no command that shows a session secret.
 | Command | Action |
 |---|---|
 | `mai ui on` / `mai ui off` | Turn the UI on or off. The choice stays after a restart. |
-| `mai ui open` | Do a presence check, then open the UI in the browser and sign you in |
+| `mai ui open` | Open the UI in the browser and sign you in |
 
 ### Server tasks
 
 | Command | Action |
 |---|---|
 | `mai backup`, `mai restore STAMP` | Through the owner API. A restore keeps the hold protocol of 2.1. |
-| `mai exec -- ARGS` | Run the server CLI in the container, for recovery. It starts after a presence check. |
+| `mai exec -- ARGS` | Run the server CLI in the container, for recovery |
 
 ## 5. The engine and the container
 
@@ -363,37 +370,54 @@ of `cursor.s2`.
 ### Named sessions in a chat
 
 One bridge can serve many chats, for example all the chats of one Cursor
-window. Thus a chat selects its session, as in 2.x:
+window. Thus a chat selects its session, as in 2.x. From contract 3.2.0, the
+chat gives only the label of its session, for example a lane ID:
 
-1. The chat calls the tool `login` with the label or the login of a session
-   of the agent of the bridge. An example is `login` with `session` `lane-a`.
-2. The bridge sends a lease request for that named session. The server
-   refuses a session of a different agent, a revoked session, and a session
-   that a different bridge holds (`SESSION_BUSY`). It also refuses a label of
-   the pool (`BAD_LABEL`). Thus a `login` never takes a pool session.
-3. The bridge gives the chat a handle `ses-…`. The handle is valid only in
-   that bridge, and it is not a secret of the server: a different program
-   cannot use it.
-4. The chat gives the handle as the argument `session` in each subsequent
-   tool call. The bridge removes the argument and sends the call with the
-   lease of that session.
-5. A tool call with no `session` uses the pool lease of the bridge. When the
+1. The chat gives the label or the login of a session of the agent of the
+   bridge as the argument `session` in each tool call. An example is
+   `whoami` with `session` `lane-a`. No `login` call is necessary.
+2. When the bridge has no lease for that session, it sends a lease request
+   for that named session before it sends the call. The server refuses a
+   session of a different agent, a revoked session, and a session that a
+   different bridge holds (`SESSION_BUSY`). It also refuses a label of the
+   pool (`BAD_LABEL`). Thus a call with a label never takes a pool session.
+   The call gets the tool error with the path `session`.
+3. The bridge keeps the lease with a handle `ses-…`. Each subsequent call
+   with the same label, the same login, or the handle uses that lease. Calls
+   at the same time for the same session make one lease request. The handle
+   is valid only in that bridge, and it is not a secret of the server: a
+   different program cannot use it.
+4. The bridge removes the argument and sends the call with the lease of that
+   session. A call that comes to the server with the argument `session` gives
+   `BRIDGE_ONLY`, because it did not go through a bridge. Before contract
+   3.2.0, the server removed the argument, and the call acted as the session
+   of its lease.
+5. The tool `login` is optional. It does the same lease steps and gives the
+   handle. A `login` to a session that the bridge holds gives the handle of
+   that lease.
+6. A tool call with no `session` uses the pool lease of the bridge. When the
    pool lease has no session, the first such call gets a free pool session,
    or the tool error `NO_FREE_SESSION`.
-6. The tool `logout` with a handle ends that lease. The stop of the bridge
-   ends each lease of the bridge.
+7. The tool `logout` with a label, a login, or a handle ends that lease. The
+   stop of the bridge ends each lease of the bridge.
 
-The presence check occurs one time for each bridge process, at its first
-lease. A subsequent login of a chat of the same bridge gets no new prompt,
-because the user approved that bridge.
+A value with the form of a handle is always a handle. The pattern of the
+argument agrees with the label rule and the agent name rule of the server.
+It accepts a label of the pool, and the bridge refuses that label with
+`BAD_LABEL`, as `login` does.
+
+The bridge reads the agent key from the key file at each lease request. Thus
+a new key from `mai agent rotate` applies at the next lease request. There is
+no presence check (section 7).
 
 Thus `cursor.lane-a` cannot read the mail of `cursor.lane-b`: each tool call
-acts as the session of its handle, and only the owner makes sessions.
+acts as the session of its argument `session`, and only the owner makes
+sessions.
 
 ### A lease with no session
 
-A full pool must not stop a bridge: the chats of the bridge can use `login`
-with named sessions. Thus, when no pool session of the agent is free, the
+A full pool must not stop a bridge: the chats of the bridge can use named
+sessions. Thus, when no pool session of the agent is free, the
 server gives a lease with no session:
 
 - The result of the lease request has `"session": null`. Each agent can have
@@ -464,7 +488,8 @@ error, for example `MAIL_SERVER_DOWN`.
 
 The MCP tools act as the session of the lease that the bridge selects for the
 call. Contract 3.1.0 has the tools `login` and `logout` of the bridge, and
-the optional argument `session` of each tool.
+the optional argument `session` of each tool. In contract 3.2.0, the
+argument `session` is a label, a login, or a handle.
 
 ### The memory of a bridge
 
@@ -481,8 +506,8 @@ different protection of that memory from other programs of the same user:
 
 A pool session belongs to one bridge process. Each app has its own rule for
 the start of a bridge. An MCP server gets no ID of a chat, thus two chats
-that share one bridge share the pool session. A chat that logs in to a named
-session has its own session in each app.
+that share one bridge share the pool session. A chat that gives the label of a
+named session has its own session in each app.
 
 | App | One bridge for each |
 |---|---|
@@ -508,53 +533,91 @@ plain agent is an agent with no mai MCP entry.
 
 | Key | Use | Where |
 |---|---|---|
-| Owner key | The owner API `/api` | Keychain, service `dev.mai`, account `owner` |
-| Agent key, one for each agent | The lease API | Keychain, service `dev.mai`, account `agent:<name>` |
+| Owner key | The owner API `/api` | Key file, account `owner@<instance>` |
+| Agent key, one for each agent | The lease API | Key file, account `agent:<name>@<instance>` |
 
-On macOS, the CLI writes and reads each key through the Security framework.
-The access list of each item holds only the signed `mai` binary, by its
-designated requirement. A different program that reads the item, also
-`security`, makes macOS show a prompt [A]. P3 shows why the CLI must not use
-`/usr/bin/security` for this.
+The key file is `keys.json` in the state folder of the CLI (section 11). It
+holds the keys of each instance. It has the mode 0600, in a folder with the
+mode 0700. On Unix, the CLI refuses a key file that a group or other users
+can read. The error gives the command that corrects the mode.
+
+Each write of the key file is atomic: a temporary file in the same folder, an
+fsync, and a rename. A lock on the file `keys.json.lock` lets one process at a
+time read or change the key file. The lock is `flock` on Unix and `LockFileEx`
+on Windows. Thus two CLIs or bridges at the same time do not lose a key.
 
 The server keeps only a hash of each key. In 2.x, the file
 `/data/secrets/owner.cred` held the owner credential in clear text. 3.0 has
 no such file. At the first start, the CLI makes the owner key on the host and
 gives only its hash to the container.
 
-### The approval of a lease
+### The keys of 3.0 and 3.1
 
-Before the bridge reads the agent key for a new lease, it does a presence
-check:
+3.0 and 3.1 kept the keys in the keychain, with the service `dev.mai` and the
+same account names. Each item had an access list that held only the `mai`
+binary that wrote it.
 
-| OS | Presence check |
-|---|---|
-| macOS | LocalAuthentication: Touch ID, or the password of the user |
-| Windows | Windows Hello. The agent key is a key of Windows Hello in the TPM, thus each signature occurs only after the gesture [A]. |
-| Linux | polkit, with an action that the package installs [A] |
+- When the key file has no key for an account, the CLI reads the keychain
+  item of the account. It writes the key to the key file, and then it deletes
+  the keychain item. If the write is not successful, the keychain item stays.
+  On macOS, the read can show one prompt for each item.
+- When no keychain is available and the manifest records a keychain item for
+  the account, the command gives an error with a step. Thus the CLI does not
+  make a new key in place of the key of the item. 3.0 and 3.1 did not operate
+  with no keychain. Thus with no record, no keychain item exists.
+- `mai upgrade` moves all the keys of the instance. When the key file has the
+  same key for the account of a keychain item, the CLI deletes the keychain
+  item. A keychain item stays when the key file has a different key for its
+  account. Then `mai upgrade` gives a step and the exit code 1. For the owner
+  key, `mai upgrade` does a test of the two keys on the server. When the
+  server accepts only the key of the key file, the CLI deletes the keychain
+  item. When the server accepts only the key of the keychain item, the CLI
+  writes that key to the key file and deletes the keychain item. Thus no
+  command deletes or replaces a key that the server accepts.
+- A bridge of 3.0 or 3.1 that runs reads the agent key from the keychain item
+  at each lease request. When the item is gone, the bridge stops with
+  `BAD_KEY` and the step `Run mai agent add NAME`, which gives
+  `AGENT_EXISTS`. Thus after `mai upgrade`, the user starts each app that
+  runs `mai mcp` again. `mai upgrade` gives this step when it deletes the
+  keychain item of an agent. It also gives the step when the manifest
+  records the keychain item of an agent, and the item is gone. For example,
+  a bridge of 3.2 moved the key before the upgrade.
+- `mai doctor` tells about each keychain item of the instance. It reads no
+  key, thus macOS shows no prompt.
+- `mai uninstall` removes the keys of the instance from the key file and each
+  keychain item of the instance. When a keychain item stays, for example
+  because no keychain is available, `mai uninstall` gives a step and the exit
+  code 1. The manifest stays with the record of each such item, and the binary
+  also stays. Thus a subsequent `mai uninstall` can remove the items.
+- When no keychain is available and the manifest records keychain items of
+  the instance, `mai doctor` gives a warning with a step.
+- With `MAI_HOME`, the CLI uses no keychain item, because the items are of
+  the home of the user.
 
-The prompt shows the agent, the app at the top of the process chain, the
-folder of the bridge, and its process ID. P5 shows that the chain is
-information, not proof.
+The code of the keychain is only for this move and for the removal. It is
+behind an interface, and the tests use a fake of the keychain.
 
-You can set the approval rule with `mai config set approval RULE`:
+### No presence check
 
-| Rule | Effect |
-|---|---|
-| `each-bridge` (default) | A presence check for each new bridge |
-| `app-instance` | One check for each start of an app. A plain agent in the same app instance can then get a lease. |
+3.0 and 3.1 did a presence check before the first lease of each bridge, and
+before `mai ui open` and `mai exec`: Touch ID, Windows Hello, or polkit. 3.2.0
+has no presence check, no approval rule, and no command `mai approvals`.
+
+On a self-run instance, a program of your OS user that can use the Docker
+socket controls mai. The command `docker exec mai mai ...` gives it each
+session and each mail. A presence check does not stop that program. Thus the
+prompts gave friction and no protection.
 
 ### The paths of a plain agent
 
 | Path of a plain agent | Control | Limit |
 |---|---|---|
 | Read a session secret | No session secret exists on the host | none |
-| Read a key from the keychain | The access list holds only the signed `mai` | On Linux, the Secret Service gives each program of the user access [A] |
-| Start `mai mcp` itself, also with `exec` | The presence check. You see an unexpected prompt and refuse it. | A prompt at the same time as a correct prompt can trick you |
+| Read a key from the key file | The mode 0600 refuses the other OS users | Each program of your OS user can read the key file |
+| Start `mai mcp` itself, also with `exec` | none | A program of your OS user can get a lease |
 | Call `/mcp` or `/api` directly | The server refuses a call with no lease token and no owner key | none |
 | Use IMAP or SMTP | The container publishes no mail ports | none |
 | Read the memory of a bridge | The table "The memory of a bridge" | Windows, and root on each OS |
-| Change the `mai` binary | A changed binary has a different signature. The keychain refuses it. | Linux and Windows have no such check |
 | Use the Docker socket, for example `docker exec mai` | none | **A program with access to the socket is root in the container and can read all mail.** |
 
 ### The hard limit
@@ -562,8 +625,8 @@ You can set the approval rule with `mai config set approval RULE`:
 A program of your OS user runs with your rights. For a wall that has no
 limit, run the agent in a sandbox or as a different OS user:
 
-- The sandbox of the agent app must refuse the Docker socket and the
-  keychain to the commands of the agent [A].
+- The sandbox of the agent app must refuse the Docker socket and the key
+  file to the commands of the agent [A].
 - In some apps, the sandbox covers the terminal tool but not the MCP
   servers. Then the bridge runs and the plain commands of the agent do not
   [A].
@@ -608,13 +671,12 @@ owner can delete copies in the UI. A backup holds the copies.
 
 ### Sign-in
 
-1. `mai ui open` does a presence check.
-2. The CLI gets a sign-in ticket from `/api` with the owner key. The ticket is
+1. The CLI gets a sign-in ticket from `/api` with the owner key. The ticket is
    valid one time, for 60 s.
-3. The CLI opens `http://127.0.0.1:8765/ui/sign-in#t=<ticket>` in the
+2. The CLI opens `http://127.0.0.1:8765/ui/sign-in#t=<ticket>` in the
    default browser. The ticket is in the fragment, thus the browser does not
    send it in the URL.
-4. The page sends the ticket in a POST and gets a cookie with `HttpOnly`,
+3. The page sends the ticket in a POST and gets a cookie with `HttpOnly`,
    `SameSite=Strict`, and a life of 12 h (idle limit 30 min).
 
 ### Content of 3.0.0
@@ -635,25 +697,43 @@ The UI shows no secret. A reply from the UI is decision 6.
 ### The manifest
 
 The CLI records each item that it makes, in `manifest.json` in its state
-folder. Each record has the type, the name or path, and the ID. A record of
-a change in a file of an app also has a hash of the content. The manifest
-holds no secret.
+folder. Each record has the type, the name or path, the ID, and the instance.
+A record of a change in a file of an app also has a hash of the content. The
+manifest holds no secret.
+
+The instances of one state folder use one manifest. A record of 3.0 or 3.1
+has no instance. The CLI gives it the instance of its name, for example the
+container `mai-dev`, or the instance of the file. The record of a data folder
+is different, because a different instance can own the folder. The container
+with the folder as its mount at `/data`, or `config.json` with that
+`data_dir`, tells its instance. When no instance is known, the folder stays.
 
 ### What `mai uninstall` removes
 
-1. All leases. The bridges stop at their next call.
+1. All leases, through the owner API on the host port of the container of
+   the instance. The bridges stop at their next call. When the container
+   does not run, the CLI sends no key, and the remove of the container ends
+   the leases.
 2. The container `mai`, with its anonymous volumes.
 3. The volumes `mai3-data` and `mai3-spool`, or the content of the host data
-   folder that mai made.
+   folder that mai made. A container or a volume goes only when its label
+   `dev.mai.instance` is the instance.
 4. Each image that the CLI pulled, by its image ID. The CLI does not remove an
    image that a different container uses.
 5. The entries that `mai connect` wrote in the files of the apps. If you
    changed an entry, the CLI shows the difference and waits for your decision.
-6. The keychain items of the service `dev.mai`.
-7. The configuration folder, the state folder (manifest, notice files,
-   approvals), and the cache and log folder of the CLI.
-8. The polkit action on Linux, and the shell completion files, if the
-   package installed them.
+   An entry names no instance, and its bridge uses the instance of
+   `config.json`. Thus the entries stay while a different instance has keys
+   or records, and the uninstall of the last instance removes them.
+6. The keys of the instance in the key file, and each keychain item of the
+   instance from 3.0 and 3.1 (service `dev.mai`).
+7. The configuration folder, the state folder (manifest, notice files, and
+   the key file), and the cache and log folder of the CLI. While a different
+   instance has keys in the key file or records in the manifest, some files
+   stay. The key file and its lock file stay, and the manifest stays with the
+   records of the other instances. The configuration file of such an instance
+   and the binary also stay.
+8. The shell completion files, if the package installed them.
 9. The binary. If a package manager installed it, the CLI runs the
    uninstall of that package manager as the last step. On Windows, a
    direct download removes itself after the exit of the process [A].
@@ -668,7 +748,8 @@ The CLI does not remove the engine, because mai did not install it.
   archive is yours, and the CLI does not record it.
 - After the remove, the CLI does a check of each record of the manifest. It
   also searches the engine for objects with the label
-  `dev.mai.managed-by=mai-cli`, and the keychain for the service `dev.mai`.
+  `dev.mai.managed-by=mai-cli`. It also searches the key file for the keys of
+  the instance, and the keychain for the items of the instance.
   It reports each item as gone or as a failure, and exits 1 on a failure.
 - Caution: `mai uninstall` deletes all mail and all copies, and the CLI keeps
   no copy unless you use `--backup`.
@@ -696,8 +777,11 @@ that it finds, for you to remove.
 | Windows | `%AppData%\mai` | `%LocalAppData%\mai\state` | `%LocalAppData%\mai\cache` |
 
 On Linux, each XDG variable has the default of the XDG specification. The
-configuration file holds the data folder, the port, the approval rule, and an
-image tag if you pin one. No folder holds a secret.
+configuration file holds the data folder, the port, and an image tag if you
+pin one. Only the state folder holds a secret: the key file `keys.json`. The
+state folder is local to the computer. It does not roam with a Windows
+profile, and it is not a folder of configuration files that a user copies to
+a different computer.
 
 ## 12. Changes on the server
 
@@ -730,28 +814,28 @@ image tag if you pin one. No folder holds a secret.
 
 | Part | Location |
 |---|---|
-| Go module | `cli/` with `go.mod`, `cmd/mai`, and the `internal/` packages `engine`, `keychain`, `presence`, `api`, `bridge`, `hook`, `connect`, `manifest`, and `uninstall` |
+| Go module | `cli/` with `go.mod`, `cmd/mai`, and the `internal/` packages `engine`, `keys`, `keychain` (only for the items of 3.0 and 3.1), `api`, `bridge`, `hook`, `connect`, `manifest`, and `uninstall` |
 | Tests | `go test` on macOS, Linux, and Windows in CI. The tests of the lifecycle use a test container, as `scripts/it_container.sh` does. |
-| macOS build | With cgo for the Security framework and LocalAuthentication, thus on a macOS runner |
+| macOS build | With cgo for the Security framework, for the keychain items of 3.0 and 3.1, thus on a macOS runner |
 | Release | GoReleaser on the tag `vX.Y.Z`: six binaries (macOS, Linux, and Windows, each amd64 and arm64), checksums, the Homebrew tap `monorithm/homebrew-tap`, a Scoop bucket, and a winget manifest |
 | Image | The image workflow, with the same version as the CLI |
 
 ## 15. Security summary
 
-- Session secrets stay in the container. The host has two kinds of keys,
-  each in the keychain with an access list for `mai` only (macOS).
-- Each new lease starts only after a presence check. A lease is a token in
-  memory, bound to one connection.
+- Session secrets stay in the container. The host has two kinds of keys, in
+  the key file with mode 0600.
+- A lease is a token in memory, bound to one connection. There is no
+  presence check.
 - The container publishes only `127.0.0.1:8765`, with the Host and Origin
   rules of 2.x.
 - The owner gets a copy of each mail. Agents cannot read or add to the
   copies.
 - The CLI never puts a secret in an argument, in the environment of a child
-  process, or in a file.
+  process, or in a file other than the key file.
 - The trust rules of 2.x stay: a notice has only text of the server, and a
   mail never carries user approval.
-- The limits are in section 7: the Docker socket, root, Linux keychains, and
-  Windows process memory.
+- The limits are in section 7: the Docker socket, the programs of your OS
+  user, root, and Windows process memory.
 
 ## 16. Phases
 
@@ -759,7 +843,7 @@ image tag if you pin one. No folder holds a secret.
 |---|---|---|
 | 1 | The Go module, the engine package, the lifecycle commands, `doctor`, the manifest, `uninstall`, and `uninstall --legacy`. The cause of the slow stop, with a goal of less than 10 s. | 7 to 9 |
 | 2 | The server for contract 3.0.0: leases, the owner API, the key hashes, the copies, the envelope record, and no mail ports | 6 to 8 |
-| 3 | The keychain package with access lists, the presence check on the three OS, and the first start of the owner | 6 to 9 |
+| 3 | The keychain package with access lists, the presence check on the three OS, and the first start of the owner. 3.2.0 replaces the keychain and the presence check with the key file. | 6 to 9 |
 | 4 | The bridge, the notice files and `mai hook`, `connect` and `disconnect`, and a sandbox profile for each app | 4 to 6 |
 | 5 | The mail UI and `mai ui` | 4 to 6 |
 | 6 | GoReleaser, the packages, the signatures, and a release candidate | 3 to 4 |
@@ -773,6 +857,7 @@ image tag if you pin one. No folder holds a secret.
 | Session secrets in the keychain, as in the first draft | Not chosen | P3: each program of the user can read them on macOS. |
 | A check of the process chain as the control | Not chosen | P5: `exec` gives a plain agent the same chain as a bridge. |
 | A key in the Secure Enclave of macOS | Not chosen for 3.0.0 | It is possible only in an app bundle with a provisioning profile. The access list of the keychain gives most of the protection. |
+| The keychain and a presence check for each bridge, as in 3.0 and 3.1 | Not chosen for 3.2.0 | A program that can use the Docker socket controls mai. Thus the keychain and the prompts gave friction and no protection. |
 | A detail address of the owner for the copies | Not chosen | P6: the global LMTP value lets mail into each folder of an agent. |
 | Agents as a different OS user | Not the default | It gives the hard wall, but each app must run as that user. The docs give it as an alternative. |
 | One Go binary with no Docker | Not chosen for 3.0 | It must have a new mail server and storage in place of Postfix, Dovecot, and PostgreSQL. |
@@ -783,11 +868,13 @@ image tag if you pin one. No folder holds a secret.
    ad-hoc signature on macOS. The access list of the keychain then holds the
    hash of the code of one build. Thus macOS shows one keychain prompt after
    each upgrade. An Apple Developer ID (a paid membership) removes that
-   prompt.
-2. **The approval rule.** Recommendation: `each-bridge` as the default.
+   prompt. From 3.2.0, the CLI keeps no key in the keychain, thus this prompt
+   occurs only for the move of a key of 3.0 or 3.1.
+2. **The approval rule.** Removed in 3.2.0, because there is no presence
+   check.
 3. **Linux.** The Secret Service gives no wall between programs of one user.
-   Recommendation: polkit for the presence check, and a warning in `mai
-   doctor` that names the sandbox profile.
+   Removed in 3.2.0: the key file replaces the Secret Service, and there is no
+   polkit check.
 4. **The limit of sessions for each agent.** Recommendation: 8.
 5. **The engine install.** Recommendation: 3.0.0 does not install an engine.
    It gives the install step for the OS. A subsequent version can install Podman
@@ -802,8 +889,6 @@ image tag if you pin one. No folder holds a secret.
 
 - [A] Podman gives the same Engine API calls for the lifecycle steps, and the
   CLI can start a stopped Podman machine.
-- [A] A keychain item with an access list for `mai` only makes macOS show a
-  prompt when `security` reads it.
 - [A] A signed bridge with the hardened runtime refuses an attach from a
   program that is not root.
 - [A] Windows Hello can sign with a TPM key for a desktop program with no
@@ -814,7 +899,7 @@ image tag if you pin one. No folder holds a secret.
   one connection in the container, thus the server can bind a lease to it.
 - [A] Cursor, VS Code, Codex, and Antigravity start one bridge for each
   window or process, as section 6 gives.
-- [A] The sandbox of each app can refuse the Docker socket and the keychain
+- [A] The sandbox of each app can refuse the Docker socket and the key file
   to the commands of the agent.
 - [A] `mai pause` with an agent in `wait_for_mail` gives a timeout and not an
   error to the agent after the resume.

@@ -1,6 +1,7 @@
 // Package uninstall removes each item that the CLI made: the container, the volumes, the
-// images, the entries in the files of the apps, the keychain items, the folders of the CLI,
-// and at the end the binary. It also removes a 2.x install on request.
+// images, the entries in the files of the apps, the keys of the instance in the key file, the
+// legacy keychain items of the instance, the folders of the CLI, and at the end the binary.
+// It also removes a 2.x install on request.
 //
 // The functions take an engine interface and folder paths, so that the tests use fakes.
 package uninstall

@@ -34,6 +34,20 @@ func wantRetrySafe(t *testing.T, a map[string]any, code string) {
 	}
 }
 
+// renewEnds waits until the named lease of the handle has no renew that runs.
+func (h *harness) renewEnds(t *testing.T, handle string) {
+	t.Helper()
+	l := h.b.namedLease(handle)
+	if l == nil {
+		t.Fatalf("the bridge has no lease for the handle %s", handle)
+	}
+	waitFor(t, "the end of the renew of the heartbeat", func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.renewing == nil
+	})
+}
+
 // A server error of the lease request (HTTP 500 with no error code, as the server gives when
 // the mail server does not reply) is not a refusal of the session. The named session must
 // stay: the next call gets a new lease for it.
@@ -156,6 +170,10 @@ func TestTheHeartbeatKeepsANamedSessionWhenTheLeaseRequestGivesAServerError(t *t
 	h.srv.mu.Unlock()
 	waitFor(t, "two failed lease requests of the heartbeat", func() bool { return failures.Load() >= 2 })
 	failNamed.Store(false)
+	// The handler counts a failed lease request before it sends the answer. Thus the renew of
+	// the heartbeat can still wait for that answer. A call at that time shares the renew and
+	// gets its error. Wait until the renew ends. Each subsequent renew gets a lease.
+	h.renewEnds(t, handle)
 	if r := result(t, h.call(t, 2, "whoami", map[string]any{"session": handle})); r["session"] != "cursor.lane-a" {
 		t.Fatalf("whoami after the failed heartbeats = %v", r)
 	}

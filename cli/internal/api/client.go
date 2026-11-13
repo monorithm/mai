@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
@@ -38,8 +38,13 @@ func Code(err error) string {
 	return ""
 }
 
-// ErrNoOwnerKey means that the keychain has no owner key for the instance.
-var ErrNoOwnerKey = errors.New("api: no owner key in the keychain; run mai start first")
+// ErrNoOwnerKey means that the key file has no owner key for the instance.
+var ErrNoOwnerKey = errors.New("api: no owner key in the key file; run mai start first")
+
+// KeySource gives the key of an account. The key file of the CLI (keys.File) is one.
+type KeySource interface {
+	Get(account string) (string, error)
+}
 
 // Client calls the owner API. The owner key is only in the memory of the client.
 type Client struct {
@@ -54,7 +59,7 @@ func New(base, ownerKey string) *Client {
 }
 
 // Open reads the configuration of the CLI and the owner key from store.
-func Open(store keychain.Store) (*Client, Config, error) {
+func Open(store KeySource) (*Client, Config, error) {
 	d, err := paths.Default()
 	if err != nil {
 		return nil, Config{}, err
@@ -63,8 +68,8 @@ func Open(store keychain.Store) (*Client, Config, error) {
 	if err != nil {
 		return nil, cfg, err
 	}
-	key, err := store.Get(keychain.Service, keychain.OwnerAccount(cfg.Instance))
-	if errors.Is(err, keychain.ErrNotFound) {
+	key, err := store.Get(keys.OwnerAccount(cfg.Instance))
+	if errors.Is(err, keys.ErrNotFound) {
 		return nil, cfg, ErrNoOwnerKey
 	}
 	if err != nil {
@@ -72,9 +77,6 @@ func Open(store keychain.Store) (*Client, Config, error) {
 	}
 	return New(cfg.BaseURL(), key), cfg, nil
 }
-
-// OpenSystem is Open with the keychain of the OS.
-func OpenSystem() (*Client, Config, error) { return Open(keychain.System()) }
 
 func (c *Client) do(ctx context.Context, method, path string, auth bool, in, out any) error {
 	var body io.Reader

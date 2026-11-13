@@ -16,7 +16,7 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	if c != Defaults() {
 		t.Fatalf("got %+v, want %+v", c, Defaults())
 	}
-	if c.Instance != "mai" || c.Port != 8765 || c.Approval != "each-bridge" || c.DataDir != "" {
+	if c.Instance != "mai" || c.Port != 8765 || c.DataDir != "" {
 		t.Fatalf("defaults are wrong: %+v", c)
 	}
 	if c.Image != "ghcr.io/monorithm/mai:"+version.Version {
@@ -33,14 +33,14 @@ func TestLoadMissingFieldGivesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Port != 18765 || c.Instance != "mai" || c.Approval != "each-bridge" || c.Image != DefaultImage() {
+	if c.Port != 18765 || c.Instance != "mai" || c.Image != DefaultImage() {
 		t.Fatalf("got %+v", c)
 	}
 }
 
 func TestSaveThenLoad(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
-	want := Config{Instance: "x", Port: 1, Image: "img:1", DataDir: "/d", Approval: "app-instance"}
+	want := Config{Instance: "x", Port: 1, Image: "img:1", DataDir: "/d"}
 	if err := Save(dir, want); err != nil {
 		t.Fatal(err)
 	}
@@ -104,5 +104,31 @@ func TestLoadBadJSON(t *testing.T) {
 	}
 	if _, err := Load(dir); err == nil {
 		t.Fatal("no error for bad JSON")
+	}
+}
+
+// The port, the image, and the data folder of config.json are of the instance that the file
+// names. An update to a different instance must not give these values to that instance.
+func TestUpdateToADifferentInstanceKeepsNoValueOfTheInstanceBefore(t *testing.T) {
+	dir := t.TempDir()
+	if err := Update(dir, Overrides{Instance: "b", Port: 18993, Image: "img:b", DataDir: "/data-of-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(dir, Overrides{Instance: "a", Port: 18992}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c != (Config{Instance: "a", Port: 18992, Image: DefaultImage()}) {
+		t.Fatalf("after the update to the instance a, config.json gives %+v", c)
+	}
+	// An update of the same instance keeps the other fields.
+	if err := Update(dir, Overrides{Instance: "a", DataDir: "/data-of-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = Load(dir); c.Port != 18992 || c.DataDir != "/data-of-a" {
+		t.Fatalf("after an update of the same instance, config.json gives %+v", c)
 	}
 }

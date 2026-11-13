@@ -21,8 +21,16 @@ func env(name, fallback string) string {
 	return fallback
 }
 
+// Isolated tells if MAI_HOME is set. Then the CLI keeps all its files in that folder, and
+// it uses no item outside it, for example no legacy item of the keychain.
+func Isolated() bool { return os.Getenv("MAI_HOME") != "" }
+
 // Default returns the folders for the current user. MAI_HOME, if set, puts all three under
 // one folder; the tests use it.
+//
+// The state folder holds the key file. It is the folder that fits a secret: it is local to
+// the computer, it does not roam with a Windows profile, and it is not a folder of
+// configuration files that a user can copy to a different computer.
 func Default() (Dirs, error) {
 	if h := os.Getenv("MAI_HOME"); h != "" {
 		return Dirs{Config: filepath.Join(h, "config"), State: filepath.Join(h, "state"), Cache: filepath.Join(h, "cache")}, nil

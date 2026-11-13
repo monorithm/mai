@@ -22,7 +22,7 @@ NO_FREE_SESSION = {
         "code": "NO_FREE_SESSION",
         "message": (
             "No pool session of the agent is free. "
-            "Call login with a named session, or try again later."
+            "Give the label of a named session as session, or try again later."
         ),
         "path": None,
         "retry_safe": True,
@@ -153,6 +153,22 @@ def test_a_bridge_tool_on_a_lease_with_no_session_binds_no_session(tmp_path):
     ):
         result = tool(d, token, name, args)[1]["result"]
         assert result["structuredContent"]["error"]["code"] == "BRIDGE_ONLY"
+    assert beat(parts, token) == {"session": None, "new_mail": 0}
+
+
+def test_a_call_with_the_argument_session_on_a_lease_with_no_session_binds_no_session(
+    tmp_path,
+):
+    parts, pool, token = full_pool(tmp_path)
+    anyio.run(parts.leases.end, pool[0]["lease"])
+    d = make_dispatcher(parts)
+    # A pool session is free, but a call that did not go through the bridge must not
+    # get it: before, the server removed the argument, and the call acted as that pool
+    # session.
+    for value in ("lane-a", "cursor.lane-a", "ses-abcdefghijklmnop"):
+        result = tool(d, token, "whoami", {"session": value})[1]["result"]
+        error = result["structuredContent"]["error"]
+        assert error["code"] == "BRIDGE_ONLY" and error["path"] == "session"
     assert beat(parts, token) == {"session": None, "new_mail": 0}
 
 

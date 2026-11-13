@@ -18,10 +18,13 @@ MESSAGES = {
     "STORE_UNAVAILABLE": "The store does not reply.",
     "BUSY": "The server is busy.",
     "INTERNAL": "An internal error occurred.",
-    "BRIDGE_ONLY": "Only the bridge mai mcp answers this tool. Use the MCP entry that mai connect writes.",
+    "BRIDGE_ONLY": (
+        "Only the bridge mai mcp answers login and logout and reads the argument session. "
+        "Use the MCP entry that mai connect writes."
+    ),
     "NO_FREE_SESSION": (
         "No pool session of the agent is free. "
-        "Call login with a named session, or try again later."
+        "Give the label of a named session as session, or try again later."
     ),
     "INVALID_TRANSITION": "The item cannot go to this state from its current state.",
     "WIP_LIMIT": "The lane has its maximum number of items in progress.",

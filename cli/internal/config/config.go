@@ -18,7 +18,6 @@ const FileName = "config.json"
 const (
 	DefaultInstance = "mai"
 	DefaultPort     = 8765
-	DefaultApproval = "each-bridge"
 	ImageRepository = "ghcr.io/monorithm/mai"
 )
 
@@ -28,7 +27,6 @@ type Config struct {
 	Port     int    `json:"port"`
 	Image    string `json:"image"`
 	DataDir  string `json:"data_dir"`
-	Approval string `json:"approval"`
 }
 
 // DefaultImage is the image of the version of the CLI.
@@ -41,7 +39,6 @@ func Defaults() Config {
 		Port:     DefaultPort,
 		Image:    DefaultImage(),
 		DataDir:  "",
-		Approval: DefaultApproval,
 	}
 }
 
@@ -59,9 +56,6 @@ func (c *Config) fill() {
 	}
 	if c.Image == "" {
 		c.Image = d.Image
-	}
-	if c.Approval == "" {
-		c.Approval = d.Approval
 	}
 }
 
@@ -101,9 +95,20 @@ func Save(dir string, c Config) error {
 }
 
 // Update applies o to the fields of the file in dir and writes the file. A field that the
-// file does not hold stays out of the file, so that its default can change with the CLI.
+// file does not hold stays out of the file, so that its default can change with the CLI. When
+// o names a different instance, the port, the image, and the data folder of the file are of
+// the instance before it. Thus these fields go, and only the values of o stay.
 func Update(dir string, o Overrides) error {
-	return update(dir, func(raw *Config) { *raw = raw.Apply(o) })
+	return update(dir, func(raw *Config) {
+		current := raw.Instance
+		if current == "" {
+			current = DefaultInstance
+		}
+		if o.Instance != "" && o.Instance != current {
+			*raw = Config{}
+		}
+		*raw = raw.Apply(o)
+	})
 }
 
 // PinImage writes the image field of the file. An empty image removes the pin, so that the

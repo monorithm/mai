@@ -1,6 +1,6 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `3.1.1`.
+The server name is `mai`. The contract version is `3.2.0`.
 
 On HTTP, `tools/list` gives all 22 tools. For each tool call, the lease token
 of the bridge `mai mcp` is necessary as the bearer token.
@@ -9,16 +9,76 @@ of the bridge `mai mcp` is necessary as the bearer token.
 
 1. A tool call with no `session` argument uses the pool session of the bridge,
    for example `cursor.s1`.
-2. The tool `login` takes the label or the login of a named session of the
-   agent of the bridge, for example `lane-a`. The bridge gets a lease on that
-   session and gives a handle, for example `ses-abcdefghijklmnop`.
-3. Each other tool has the optional argument `session`. With a handle, the
-   bridge sends the call with the lease of that handle. The server removes the
-   argument before the tool runs.
-4. The tool `logout` takes a handle and ends its lease.
+2. Each tool other than `login` and `logout` has the optional argument
+   `session`. Its value is one of these:
+   - The label of a named session of the agent of the bridge, for example
+     `lane-1`.
+   - The login of that session, for example `cursor.lane-1`.
+   - A handle that `login` gave, for example `ses-abcdefghijklmnop`.
+
+   A different value gives `INVALID_ARGUMENT` with the path `session`, and
+   the call does not run. An example is an empty string. A call with no
+   `session` argument, or with `null`, uses the pool session. Some clients
+   send `null` for each optional argument.
+3. With a label or a login, no `login` call is necessary. When the bridge has
+   no lease for that session, the first call gets the lease, as a `login`
+   does. Each subsequent call with the same label, login, or handle uses the
+   same lease. Calls at the same time for the same session make one lease
+   request, also for the new lease after a restart of the server.
+4. The tool `login` is optional. It takes the label or the login of a named
+   session, gets the lease as a call with the label does, and gives a handle.
+   A `login` to a session that the bridge holds gives the handle of that
+   lease, also when a call with the label got the lease. A value that is not
+   a label or a login gives `BAD_LABEL` with the path `session`, and no lease
+   request.
+5. The tool `logout` takes a label, a login, or a handle, and ends the lease
+   of that named session in the bridge. With no value, or with a value that
+   is not a label, a login, or a handle, the result is `INVALID_ARGUMENT`
+   with the path `session`.
+6. The bridge removes the argument `session` and sends the call with the
+   lease of that session.
+
+A value with the form of a handle is always a handle. For a session whose
+label has the form of a handle, give its login.
 
 The bridge answers `login` and `logout` itself. A call of these tools that
-comes to the server gives the error `BRIDGE_ONLY`.
+comes to the server gives the error `BRIDGE_ONLY`. A call of a different tool
+that comes to the server with the argument `session` gives `BRIDGE_ONLY` with
+the path `session`. Before contract 3.2.0, the server removed the argument,
+and the call acted as the session of its lease.
+
+### Errors of a call with a label
+
+When a call with a label or a login gets no lease, the result is a tool error
+with the path `session`. The code is the same as the code of `login`:
+
+| Cause | Code | `retry_safe` |
+|---|---|---|
+| A label of the pool, for example `s2` or `cursor.s2` | `BAD_LABEL` | false |
+| The agent has no session with that name, or the login is of a different agent | `SESSION_UNKNOWN` | false |
+| A different lease holds the session | `SESSION_BUSY` | false |
+| The owner revoked the session | `SESSION_REVOKED` | false |
+| The mail server or the store does not reply | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE` | true |
+| A network error, or an error with no code | `SERVER_UNAVAILABLE` | true |
+| The server gives a lease of a different session, for example a server of 3.0 that does not know named sessions | `SERVER_UNAVAILABLE` | false |
+| The key file has no key for the agent, or the server refuses the agent key | `BAD_KEY` | false |
+| The bridge cannot read the agent key from the key file or from its keychain item | `KEY_FILE_ERROR` | false |
+| A different process holds the lock of the key file for more than 10 seconds | `BUSY` | true |
+
+For `BAD_KEY`, the message gives the step. For an agent that exists on the
+server, the step is `mai agent rotate NAME`. For a new agent, the step is
+`mai agent add NAME`. For `KEY_FILE_ERROR`, the message gives the error of the
+key file and its step, for example `chmod 600 PATH`.
+
+A call with a label acts only as that session. When the server gives a lease
+of a different session, the bridge ends that lease, and the call does not
+run. The message tells the chat to tell the owner to run `mai upgrade`. The
+same rule applies to the new lease after a restart of the server.
+
+Calls at the same time for the same session get the error of one lease
+request. A refusal keeps no lease. Thus the next call with the label sends a
+new lease request. A value that is not a label, a login, or a handle gives
+`INVALID_ARGUMENT` with the path `session`, and no lease request.
 
 ### Pool labels
 
@@ -28,14 +88,15 @@ the sessions with these labels.
 
 - The owner request for a named session with a label of the pool gives
   `BAD_LABEL`. The message tells the owner to use `--count`.
-- A `login` or a lease request with a label of the pool, for example `s2` or
-  `cursor.s2`, gives `BAD_LABEL`. A chat that calls no `login` uses the pool.
+- A `login`, a tool call, or a lease request with a label of the pool as the
+  session, for example `s2` or `cursor.s2`, gives `BAD_LABEL`. A chat that
+  gives no `session` uses the pool.
 - A label, an agent name, or a login with a line break at the end is not
   valid. For example, the owner request for the label `s1` with a line break
   gives `BAD_LABEL`.
 
-Thus a `login` never takes a pool session, and the pool never gives a named
-session.
+Thus a `login` or a call with a label never takes a pool session, and the
+pool never gives a named session.
 
 ### A lease with no session
 
@@ -129,7 +190,7 @@ command `mai agent add` adds an agent. The code of the server has no list of age
 | `ref` | `ref-` and 16 hex digits | `ref-3f9a0c1d2b4e5f60` |
 | `thread_ref` | `thr-` and 16 hex digits | `thr-a1b2c3d4e5f60718` |
 | `item_ref` | `itm-` and 12 base32 characters | `itm-k3q9x2m7p4ta` |
-| `session` | A handle of the bridge: `ses-` and 16 base32 characters (`a` to `z`, `2` to `7`) | `ses-abcdefghijklmnop` |
+| `session` | The label of a named session, its login (agent name, a dot, and the label), or a handle of the bridge: `ses-` and 16 base32 characters (`a` to `z`, `2` to `7`). The pattern is `^(ses-[a-z2-7]{16}\|([a-z0-9][a-z0-9-]{0,47}\.)?[a-z0-9][a-z0-9-]{0,31})$`. | `lane-1`, `cursor.lane-1`, `ses-abcdefghijklmnop` |
 | `kind` | `request`, `reply`, `status`, `notice`, `signal` | `request` |
 | `priority` | `low`, `normal`, `high` | `normal` |
 | `status` | `unread`, `notified`, `seen`, `done` | `seen` |
@@ -156,16 +217,18 @@ result with the output schema gets the code of the error.
 | `LOGIN_FAILED` | The credential is not correct. |
 | `CREDENTIAL_EXPIRED` | The credential is expired. |
 | `CREDENTIAL_REVOKED` | The credential is revoked. |
-| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. |
+| `SESSION_UNKNOWN` | The bridge does not know the handle, or the agent has no session with that name. For `logout`, the bridge has no lease for that session. |
 | `SESSION_BUSY` | A different lease holds the named session. |
 | `SESSION_REVOKED` | The owner revoked the named session. |
 | `BAD_LABEL` | The label is not correct, or it is a label of the pool. |
-| `NO_FREE_SESSION` | No pool session of the agent is free. Call `login` with a named session, or try the call again after some time. |
-| `BRIDGE_ONLY` | A call of `login` or `logout` came to the server, not to the bridge. |
+| `BAD_KEY` | Only the bridge gives this code in a tool result. The key file has no key for the agent, or the server refuses the agent key. The message gives the step: `mai agent rotate NAME` for an agent that exists, or `mai agent add NAME` for a new agent. |
+| `KEY_FILE_ERROR` | Only the bridge gives this code. The bridge cannot read the agent key from the key file or from its keychain item. The message gives the step, for example `chmod 600 PATH`. `retry_safe` is false. |
+| `NO_FREE_SESSION` | No pool session of the agent is free. Give the label of a named session as `session`, or try the call again after some time. |
+| `BRIDGE_ONLY` | A call of `login` or `logout`, or a call with the argument `session`, came to the server, not to the bridge. |
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
 | `FORBIDDEN_ROLE` | The roles of the session do not let the session use the tool. |
 | `RECIPIENT_UNKNOWN` | The address is not known. |
-| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. A call with no `session` uses the pool session, which does not have the mail of a named session. |
+| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. A call with no `session` uses the pool session, which does not have the mail of a named session. Give the label of the session as `session` in each call. |
 | `BODY_TOO_LARGE` | The body is too large. |
 | `REFUSED_HEADER` | A header is not permitted. |
 | `RETRY_KEY_REUSED` | The retry key was used with different arguments. |
@@ -173,7 +236,7 @@ result with the output schema gets the code of the error.
 | `MAIL_SERVER_DOWN` | Dovecot or Postfix does not operate. |
 | `STORE_UNAVAILABLE` | The database does not operate. |
 | `SERVER_UNAVAILABLE` | Only the bridge gives this code. The lease request of the bridge got a network error, or an error with no code. Try the call again after some time. |
-| `BUSY` | Too many waits are open, or a lease operation waited too long for a different lease operation. |
+| `BUSY` | Too many waits are open, or a lease operation waited too long for a different lease operation. In the bridge, a different process holds the lock of the key file for more than 10 seconds. |
 | `INTERNAL` | An internal error occurred. |
 | `INVALID_TRANSITION` | The item cannot go to that state. |
 | `WIP_LIMIT` | The number of items in progress is at the limit. |

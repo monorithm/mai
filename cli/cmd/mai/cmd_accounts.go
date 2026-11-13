@@ -14,17 +14,17 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/monorithm/mai/cli/v3/internal/api"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
-// accountsKeychain gives the keychain of the commands of agents, sessions, and the UI. The
-// tests replace it with a store in memory.
-var accountsKeychain = func() keychain.Store { return keychain.System() }
+// openKeys opens the key file of the CLI, with the legacy keychain. The tests replace it to
+// use a legacy keychain in memory.
+var openKeys = keys.Default
 
 func init() {
 	register("agent", "Add, list, rotate, or remove an agent account", func(args []string) int {
@@ -33,14 +33,15 @@ func init() {
 	register("session", "Make, list, rotate, revoke, or end the named sessions of an agent", func(args []string) int {
 		return runSession(args, os.Stdin, os.Stdout, os.Stderr)
 	})
-	register("approvals", "Show the approved and refused leases of the last 30 days", func(args []string) int {
-		return runApprovals(args, os.Stdout, os.Stderr)
-	})
 }
 
 // ownerClient opens the client of the owner API and the manifest of the instance.
 func ownerClient() (*api.Client, api.Config, *manifest.Manifest, error) {
-	c, cfg, err := api.Open(accountsKeychain())
+	kf, err := openKeys()
+	if err != nil {
+		return nil, api.Config{}, nil, err
+	}
+	c, cfg, err := api.Open(kf)
 	if err != nil {
 		return nil, cfg, nil, err
 	}
@@ -76,7 +77,10 @@ func runAgent(args []string, out, errOut io.Writer) int {
 		return fail(errOut, err)
 	}
 	ctx := context.Background()
-	store := accountsKeychain()
+	kf, err := openKeys()
+	if err != nil {
+		return fail(errOut, err)
+	}
 	switch sub {
 	case "add":
 		for _, name := range rest {
@@ -84,12 +88,19 @@ func runAgent(args []string, out, errOut io.Writer) int {
 			if err != nil {
 				return fail(errOut, err)
 			}
-			account := keychain.AgentAccount(cfg.Instance, a.Name)
-			if err := store.Set(keychain.Service, account, a.AgentKey); err != nil {
-				_ = c.RemoveAgent(ctx, a.Name)
-				return fail(errOut, fmt.Errorf("keychain: %w; the agent %s is removed again", err, a.Name))
+			account := keys.AgentAccount(cfg.Instance, a.Name)
+			if err := kf.Set(account, a.AgentKey); err != nil {
+				if rerr := c.RemoveAgent(ctx, a.Name); rerr != nil {
+					return fail(errOut, fmt.Errorf("keep the agent key: %w. The remove of the agent %s on the server also failed: %v. "+
+						"Thus the agent %s stays on the server with a key that no file holds. "+
+						"Step: correct the key file, and then run mai agent rotate %s", err, a.Name, rerr, a.Name, a.Name))
+				}
+				return fail(errOut, fmt.Errorf("keep the agent key: %w; the agent %s is removed again", err, a.Name))
 			}
-			if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+			// The agent is new on the server, and the server accepts only its new key. Thus a
+			// legacy keychain item of the agent, for example of a server whose data is gone,
+			// holds a key that is not valid, and it goes.
+			if err := removeLegacyItem(kf, m, account, errOut); err != nil {
 				return fail(errOut, err)
 			}
 			fmt.Fprintln(out, a.Name)
@@ -101,11 +112,13 @@ func runAgent(args []string, out, errOut io.Writer) int {
 		if err != nil {
 			return fail(errOut, err)
 		}
-		account := keychain.AgentAccount(cfg.Instance, name)
-		if err := store.Set(keychain.Service, account, key); err != nil {
-			return fail(errOut, fmt.Errorf("keychain: %w; run mai agent rotate %s again", err, name))
+		account := keys.AgentAccount(cfg.Instance, name)
+		if err := kf.Set(account, key); err != nil {
+			return fail(errOut, fmt.Errorf("keep the agent key: %w; run mai agent rotate %s again", err, name))
 		}
-		if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+		// The server now accepts only the new key. Thus a legacy keychain item of the agent
+		// holds a key that is not valid, and it goes.
+		if err := removeLegacyItem(kf, m, account, errOut); err != nil {
 			return fail(errOut, err)
 		}
 		fmt.Fprintln(out, name)
@@ -127,11 +140,12 @@ func runAgent(args []string, out, errOut io.Writer) int {
 			if err := c.RemoveAgent(ctx, name); err != nil {
 				return fail(errOut, err)
 			}
-			account := keychain.AgentAccount(cfg.Instance, name)
-			if err := store.Delete(keychain.Service, account); err != nil && !errors.Is(err, keychain.ErrNotFound) {
-				return fail(errOut, fmt.Errorf("keychain: %w", err))
+			account := keys.AgentAccount(cfg.Instance, name)
+			if err := kf.Delete(account); err != nil && !errors.Is(err, keys.ErrNotFound) {
+				return fail(errOut, fmt.Errorf("remove the agent key: %w", err))
 			}
-			if err := m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account}); err != nil {
+			// A legacy keychain item of the agent also goes.
+			if err := removeLegacyItem(kf, m, account, errOut); err != nil {
 				return fail(errOut, err)
 			}
 			fmt.Fprintln(out, name)
@@ -140,6 +154,20 @@ func runAgent(args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintln(errOut, use)
 	return 2
+}
+
+// removeLegacyItem removes the legacy keychain item of the account, and then its record in
+// the manifest. When the item stays, the record also stays, thus "mai uninstall" can remove
+// the item.
+func removeLegacyItem(kf *keys.File, m *manifest.Manifest, account string, errOut io.Writer) error {
+	switch err := kf.DeleteLegacy(account); {
+	case errors.Is(err, keychain.ErrUnavailable):
+	case err != nil:
+		fmt.Fprintf(errOut, "mai: the keychain item %s stays: %v\n", account, err)
+	default:
+		return m.Remove(manifest.Item{Type: manifest.KeychainKey, Name: account})
+	}
+	return nil
 }
 
 // sessionUse is the usage text of mai session.
@@ -378,58 +406,4 @@ func yesNo(b bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-// ApprovalsFile is the name of the local list of approvals in the state folder. The bridge
-// adds one record for each presence check of a new lease.
-const ApprovalsFile = "approvals.json"
-
-// approval is one record of approvals.json.
-type approval struct {
-	Time   time.Time `json:"time"`
-	Agent  string    `json:"agent"`
-	App    string    `json:"app"`
-	Folder string    `json:"folder"`
-	PID    int       `json:"pid"`
-	Result string    `json:"result"` // "approved" or "refused"
-}
-
-type approvalsDoc struct {
-	Approvals []approval `json:"approvals"`
-}
-
-func runApprovals(args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("approvals", flag.ContinueOnError)
-	fs.SetOutput(errOut)
-	days := fs.Int("days", 30, "show the records of this number of days")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return 2
-	}
-	d, err := paths.Default()
-	if err != nil {
-		return fail(errOut, err)
-	}
-	b, err := os.ReadFile(filepath.Join(d.State, ApprovalsFile))
-	if errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(out, "no approvals")
-		return 0
-	}
-	if err != nil {
-		return fail(errOut, err)
-	}
-	var doc approvalsDoc
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return fail(errOut, fmt.Errorf("%s: %w", ApprovalsFile, err))
-	}
-	since := time.Now().Add(-time.Duration(*days) * 24 * time.Hour)
-	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "TIME\tRESULT\tAGENT\tAPP\tFOLDER\tPID")
-	for _, a := range doc.Approvals {
-		if a.Time.Before(since) {
-			continue
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\n", a.Time.Local().Format(time.RFC3339), a.Result, a.Agent, a.App, a.Folder, a.PID)
-	}
-	_ = w.Flush()
-	return 0
 }

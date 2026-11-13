@@ -11,9 +11,7 @@ import (
 
 	"github.com/monorithm/mai/cli/v3/internal/bridge"
 	"github.com/monorithm/mai/cli/v3/internal/hook"
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/paths"
-	"github.com/monorithm/mai/cli/v3/internal/presence"
 	"github.com/monorithm/mai/cli/v3/internal/procchain"
 )
 
@@ -43,6 +41,11 @@ func runMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "mai mcp: %v\n", err)
 		return 1
 	}
+	kf, err := openKeys()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mai mcp: %v\n", err)
+		return 1
+	}
 	folder, _ := os.Getwd()
 	app := ""
 	if chain, err := procchain.Self(); err == nil {
@@ -50,21 +53,28 @@ func runMCP(args []string) int {
 			app = top.Name()
 		}
 	}
+	ppid := os.Getppid()
 	b := &bridge.Bridge{
 		Agent:    *agent,
 		Instance: cfg.Instance,
 		Endpoint: cfg.Endpoint(),
-		Store:    keychain.System(),
-		Presence: presence.Check,
+		Keys:     kf,
 		StateDir: dirs.State,
 		App:      app,
-		AppPID:   os.Getppid(),
+		AppPID:   ppid,
 		PID:      os.Getpid(),
 		Folder:   folder,
 		Stdin:    os.Stdin,
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
+		// When the process of the app ends, the bridge gets a different parent. An app can
+		// also close the read end of the standard output and stay.
+		AppGone: func() bool { return os.Getppid() != ppid || bridge.OutputClosed(os.Stdout) },
 	}
+	// When the app exits, its ends of the pipes close. A write to stdout or stderr then gets
+	// EPIPE. The bridge must not stop at the signal SIGPIPE, because it ends each lease and
+	// removes its notice file before it stops.
+	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := stopContext()
 	defer stop()
 	return b.Run(ctx)

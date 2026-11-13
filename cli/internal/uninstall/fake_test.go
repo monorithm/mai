@@ -3,9 +3,13 @@ package uninstall
 import (
 	"context"
 	"errors"
+	"net/netip"
+	"strconv"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 )
@@ -13,6 +17,17 @@ import (
 type fakeContainer struct {
 	ID, Name, ImageID string
 	Labels            map[string]string
+	Port              int    // the host port of the HTTP API; 0 for no binding
+	Running           bool   // the state of the container
+	Data              string // the host folder of /data; "" for a volume
+}
+
+// mounts gives the mount points of the container.
+func (c fakeContainer) mounts() []container.MountPoint {
+	if c.Data == "" {
+		return nil
+	}
+	return []container.MountPoint{{Type: mount.TypeBind, Source: c.Data, Destination: "/data"}}
 }
 
 type fakeImage struct {
@@ -60,7 +75,15 @@ func (f *fakeEngine) findImage(ref string) int {
 func (f *fakeEngine) ContainerList(_ context.Context, _ client.ContainerListOptions) (client.ContainerListResult, error) {
 	var out client.ContainerListResult
 	for _, c := range f.containers {
-		out.Items = append(out.Items, container.Summary{ID: c.ID, Names: []string{"/" + c.Name}, ImageID: c.ImageID, Labels: c.Labels})
+		// Docker Desktop gives the path of its VM for a bind mount in a list, for example
+		// /host_mnt/private/tmp/x. Only the inspect gives the host path.
+		var mounts []container.MountPoint
+		for _, m := range c.mounts() {
+			m.Source = "/host_mnt" + m.Source
+			mounts = append(mounts, m)
+		}
+		out.Items = append(out.Items, container.Summary{ID: c.ID, Names: []string{"/" + c.Name}, ImageID: c.ImageID, Labels: c.Labels,
+			Mounts: mounts})
 	}
 	return out, nil
 }
@@ -76,6 +99,13 @@ func (f *fakeEngine) ContainerInspect(_ context.Context, id string, _ client.Con
 	r.Container.Name = "/" + c.Name
 	r.Container.Image = c.ImageID
 	r.Container.Config = &container.Config{Labels: c.Labels}
+	r.Container.State = &container.State{Running: c.Running}
+	r.Container.Mounts = c.mounts()
+	r.Container.HostConfig = &container.HostConfig{}
+	if c.Port != 0 {
+		port := network.MustParsePort("8080/tcp")
+		r.Container.HostConfig.PortBindings = network.PortMap{port: {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: strconv.Itoa(c.Port)}}}
+	}
 	return r, nil
 }
 

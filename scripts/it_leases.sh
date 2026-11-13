@@ -57,7 +57,7 @@ fi
 echo "ok: no /data/secrets/owner.cred"
 
 version=$(curl -fsS "$base/api/version")
-[ "$(printf '%s' "$version" | json 'd["contract"]')" = 3.1.1 ] || fail "contract version"
+[ "$(printf '%s' "$version" | json 'd["contract"]')" = 3.2.0 ] || fail "contract version"
 echo "ok: GET /api/version"
 
 agent=$(curl -fsS -X POST "$base/api/agents" -H "authorization: Bearer $owner" \
@@ -98,7 +98,7 @@ assert tools["login"]["inputSchema"]["required"] == ["session"]
 for name, t in tools.items():
     if name not in ("login", "logout"):
         session = t["inputSchema"]["properties"]["session"]
-        assert session["pattern"] == "^ses-[a-z2-7]{16}$", name
+        assert session["pattern"] == r"^(ses-[a-z2-7]{16}|([a-z0-9][a-z0-9-]{0,47}\.)?[a-z0-9][a-z0-9-]{0,31})$", name
         assert "session" not in t["inputSchema"].get("required", []), name
 ' || fail "tools/list"
 echo "ok: tools/list has login, logout, and the argument session"
@@ -202,11 +202,14 @@ call_mcp -H "authorization: Bearer $lane_a" \
 [ "$code" = 200 ] || fail "whoami of lane-a gave HTTP $code"
 is_true "d['result']['structuredContent']['login'] == 'cursor.lane-a'" "whoami of lane-a"
 echo "ok: whoami with the lease of lane-a gives cursor.lane-a"
-call_mcp -H "authorization: Bearer $lane_a" \
-  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"whoami","arguments":{"session":"ses-abcdefghijklmnop"}}}'
-[ "$code" = 200 ] || fail "whoami with a session argument gave HTTP $code"
-is_true "d['result']['structuredContent']['login'] == 'cursor.lane-a'" "whoami with a session argument"
-echo "ok: the server removes the argument session"
+for value in ses-abcdefghijklmnop lane-a cursor.lane-a; do
+  call_mcp -H "authorization: Bearer $lane_a" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"whoami\",\"arguments\":{\"session\":\"$value\"}}}"
+  [ "$code" = 200 ] || fail "whoami with the session $value gave HTTP $code"
+  is_true "d['result']['isError'] is True and d['result']['structuredContent']['error']['code'] == 'BRIDGE_ONLY' and d['result']['structuredContent']['error']['path'] == 'session'" \
+    "whoami with the session $value on the server"
+done
+echo "ok: a call with the argument session on the server gives BRIDGE_ONLY with the path session"
 for call in '"login","arguments":{"session":"lane-a"}' '"logout","arguments":{"session":"ses-abcdefghijklmnop"}'; do
   call_mcp -H "authorization: Bearer $lane_a" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":$call}}"

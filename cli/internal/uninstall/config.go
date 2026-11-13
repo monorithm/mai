@@ -19,6 +19,9 @@ type Config struct {
 // ConfigFile is the name of the configuration file in the configuration folder.
 const ConfigFile = "config.json"
 
+// DefaultInstance is the instance of a command with no --instance and no config.json.
+const DefaultInstance = "mai"
+
 // LoadConfig reads <dir>/config.json and sets the defaults.
 func LoadConfig(dir string) (Config, error) {
 	c := Config{}
@@ -32,7 +35,7 @@ func LoadConfig(dir string) (Config, error) {
 		}
 	}
 	if c.Instance == "" {
-		c.Instance = "mai"
+		c.Instance = DefaultInstance
 	}
 	if c.Port == 0 {
 		c.Port = 8765

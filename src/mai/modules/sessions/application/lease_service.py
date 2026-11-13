@@ -491,7 +491,7 @@ class LeaseService:
             raise LeaseError(
                 "BAD_LABEL",
                 f"{label} is a label of the pool, not of a named session."
-                " A chat that calls no login uses the pool.",
+                " A tool call with no session argument uses the pool.",
             )
         login = f"{agent}.{label}"
         rows = await self._credential_call(self._credentials.session_list(agent))

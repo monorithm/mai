@@ -3,8 +3,9 @@
 # module and installed with "go install" (docs/how-to/make-a-release.md). Keep this file for
 # a subsequent release with binaries and packages.
 # Six binaries: macOS, Linux, and Windows, each amd64 and arm64.
-# The macOS binaries use cgo for the Security framework and LocalAuthentication, thus the
-# build runs on a macOS runner. The Linux and Windows binaries use no cgo.
+# The macOS binaries use cgo for the Security framework, which reads and removes the keychain
+# items of mai 3.0 and 3.1. Thus the build runs on a macOS runner. The Linux and Windows
+# binaries use no cgo.
 # Signatures: the macOS binaries get an ad-hoc signature with the hardened runtime. A
 # Developer ID signature and notarization are not part of this configuration.
 # A local test with no upload: goreleaser release --snapshot --clean

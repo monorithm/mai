@@ -16,12 +16,11 @@ type Config struct {
 	Port     int    `json:"port"`
 	Image    string `json:"image"`
 	DataDir  string `json:"data_dir"`
-	Approval string `json:"approval"`
 }
 
 // DefaultConfig is the configuration when the file has no value.
 func DefaultConfig() Config {
-	return Config{Instance: "mai", Port: 8765, Approval: "each-bridge"}
+	return Config{Instance: "mai", Port: 8765}
 }
 
 // LoadConfig reads <configDir>/config.json.
@@ -48,9 +47,6 @@ func LoadConfig(configDir string) (Config, error) {
 		c.Image = f.Image
 	}
 	c.DataDir = f.DataDir
-	if f.Approval != "" {
-		c.Approval = f.Approval
-	}
 	return c, nil
 }
 
