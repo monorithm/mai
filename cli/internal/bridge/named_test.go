@@ -163,12 +163,12 @@ func TestWhoamiGoesWithTheLeaseOfTheHandle(t *testing.T) {
 func TestAnUnknownHandleGivesSessionUnknown(t *testing.T) {
 	h := startNamed(t)
 	h.login(t, 1, "lane-a")
-	for i, s := range []any{"ses-aaaaaaaaaaaaaaaa", "lane-a", "cursor.lane-a", 42} {
+	for i, s := range []any{"ses-aaaaaaaaaaaaaaaa", "ses-abcdefghijklmnop"} {
 		a := h.call(t, 10+i, "whoami", map[string]any{"session": s})
 		if code := errorCode(t, a); code != "SESSION_UNKNOWN" {
 			t.Fatalf("whoami with %v = %v", s, a)
 		}
-		if text := fmt.Sprint(result(t, a)["content"]); !strings.Contains(text, "Call login again") {
+		if text := fmt.Sprint(result(t, a)["content"]); !strings.Contains(text, "call login again") {
 			t.Fatalf("whoami with %v: content = %s", s, text)
 		}
 	}

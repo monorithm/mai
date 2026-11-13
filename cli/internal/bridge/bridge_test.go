@@ -69,6 +69,10 @@ func bearer(r *http.Request) string {
 
 var testLabelRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
+// testPoolLabelRule is the form of a label of the pool. The server refuses a lease request
+// for it with BAD_LABEL.
+var testPoolLabelRule = regexp.MustCompile(`^s[0-9]+$`)
+
 // grant gives a new lease on session, or a lease with no session when session is "".
 func (f *fakeServer) grant(w http.ResponseWriter, session string) {
 	f.n++
@@ -123,6 +127,10 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				login = "cursor." + name
+			}
+			if _, label, _ := strings.Cut(login, "."); testPoolLabelRule.MatchString(label) {
+				writeErr(w, 400, "BAD_LABEL")
+				return
 			}
 			switch {
 			case !strings.HasPrefix(login, "cursor.") || f.named[login] == "":
@@ -191,7 +199,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if ok && s == "" && msg["method"] == "tools/call" {
 			if f.poolFull {
 				noFree := map[string]any{"error": map[string]any{"code": "NO_FREE_SESSION",
-					"message": "No pool session of the agent is free. Call login with a named session, or try again later.", "retry_safe": true}}
+					"message": "No pool session of the agent is free. Give the label of a named session as session, or try again later.", "retry_safe": true}}
 				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": msg["id"],
 					"result": map[string]any{"isError": true, "structuredContent": noFree}})
 				return

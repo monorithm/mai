@@ -1,10 +1,13 @@
 // Package bridge is "mai mcp": it gets a lease for an agent and bridges the MCP stdio of an
 // app to POST /mcp of the server.
 //
-// The bridge holds the pool lease of the agent, and one lease for each named session that
-// a chat logged in to with the tool login. The chat gives the handle of the login as the
-// argument session of each tool call. The bridge removes the argument and sends the call
-// with the lease of that handle. A tool call with no argument session uses the pool lease.
+// The bridge holds the pool lease of the agent, and one lease for each named session of its
+// chats. A chat gives the label or the login of its session as the argument session of each
+// tool call, for example lane-1. The first call with the label gets the lease of that
+// session, as the tool login does. The tool login is optional: it gets the lease and gives
+// a handle, which a chat can give as session in place of the label. The bridge removes the
+// argument and sends the call with the lease of that session. A tool call with no argument
+// session uses the pool lease.
 //
 // When a lease ends on the server, the bridge asks for a new lease. Only a refusal of the
 // server (an HTTP 4xx answer with an error code) ends a named session in the bridge. A
@@ -213,7 +216,7 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 		b.writeError(nil, -32700, "parse error")
 		return nil
 	}
-	l, line, isCall, ok := b.route(ctx, id, hasID, line)
+	l, line, isCall, name, ok := b.route(ctx, id, hasID, line)
 	if !ok {
 		return nil
 	}
@@ -233,7 +236,19 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 	answer, err := b.post(ctx, token, line)
 	if isLeaseUnknown(err) {
 		b.logf("the server does not know the lease of %s; the bridge asks for a new lease", l.describe())
-		if rerr := b.renew(ctx, l, token); rerr != nil {
+		rerr := b.renew(ctx, l, token)
+		if errors.Is(rerr, errEnded) && name != "" {
+			// The bridge ended the lease during the call, for example at a logout of the
+			// session. The server did not do the call. A call with the label or the login
+			// of a session gets a new lease for it, as the first call does.
+			next, fail := b.open(ctx, name)
+			if fail != nil {
+				b.writeResult(id, fail)
+				return nil
+			}
+			l, rerr = next, nil
+		}
+		if rerr != nil {
 			return b.renewFailed(id, hasID, isCall, l, rerr)
 		}
 		answer, err = b.post(ctx, l.current(), line)
@@ -272,7 +287,7 @@ func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, e
 	switch {
 	case errors.Is(err, errEnded):
 		if hasID {
-			b.answerFailure(id, isCall, "SESSION_UNKNOWN", msgUnknownHandle, false)
+			b.answerFailure(id, isCall, "SESSION_UNKNOWN", msgEnded, false)
 		}
 		return nil
 	case l.handle == "" && isBadKey(err):
