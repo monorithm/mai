@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Exit codes of Run.
@@ -65,6 +66,12 @@ type Bridge struct {
 	Stdin    io.Reader
 	Stdout   io.Writer
 	Stderr   io.Writer
+	// AppGone tells if the app is gone, for example because its process ended, or because it
+	// closed the read end of the standard output. After the end of the standard input, the
+	// bridge then stops the requests in flight at once, because nothing can read their
+	// answers. nil means that the bridge cannot tell. Then it waits a maximum of drainTimeout
+	// for these answers.
+	AppGone func() bool
 
 	// requestMu lets one lease request occur at a time.
 	requestMu sync.Mutex
@@ -447,8 +454,10 @@ func sseData(data []byte) [][]byte {
 }
 
 // Run gets the pool lease, bridges stdin to /mcp until stdin ends, a write to stdout fails,
-// or ctx ends, and then ends each lease of the bridge. Cancel ctx on SIGINT, SIGTERM, or
-// SIGHUP. A failed write to stdout or stderr must not stop the process, thus ignore SIGPIPE.
+// or ctx ends, and then ends each lease of the bridge. After the end of stdin, each request in
+// flight gets its answer, for a maximum of drainTimeout, unless the app is gone (drain). Cancel
+// ctx on SIGINT, SIGTERM, or SIGHUP. A failed write to stdout or stderr must not stop the
+// process, thus ignore SIGPIPE.
 //
 // The pool lease can have no session, when no pool session of the agent is free. The bridge
 // then serves the requests that use no session and the named sessions. When the start
@@ -535,14 +544,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 			return ExitOK
 		case line, ok := <-lines:
 			if !ok {
-				// The app closed stdin. Each request that started gets its answer first.
-				inflight.Wait()
-				select {
-				case <-stop:
-					return ExitError
-				default:
-					return ExitOK
-				}
+				return b.drain(ctx, &inflight, stop)
 			}
 			select {
 			case slots <- struct{}{}:
@@ -560,6 +562,60 @@ func (b *Bridge) Run(ctx context.Context) int {
 					}
 				}
 			}()
+		}
+	}
+}
+
+// drainTimeout is the longest time that the bridge waits for the answers of the requests in
+// flight after the end of the standard input. The tests change it.
+var drainTimeout = 10 * time.Second
+
+// drainPoll is the time between two examinations of the app (AppGone) during that wait.
+const drainPoll = 100 * time.Millisecond
+
+// drain waits for the answers of the requests in flight after the app closed the standard
+// input. When the app is gone, nothing can read an answer. Thus drain then returns at once,
+// and the deferred cancel of Run stops each request in flight. Then Run ends each lease and
+// removes the notice file. drain also returns after drainTimeout, at a failed write to the
+// app, and at the end of ctx.
+func (b *Bridge) drain(ctx context.Context, inflight *sync.WaitGroup, stop <-chan struct{}) int {
+	done := make(chan struct{})
+	go func() {
+		inflight.Wait()
+		close(done)
+	}()
+	tick := time.NewTicker(drainPoll)
+	defer tick.Stop()
+	limit := time.NewTimer(drainTimeout)
+	defer limit.Stop()
+	for {
+		if b.AppGone != nil && b.AppGone() {
+			b.logf("the app closed the standard input, and the app is gone. The bridge stops the requests in flight.")
+			return ExitOK
+		}
+		select {
+		case <-done:
+			select {
+			case <-stop:
+				return ExitError
+			default:
+				return ExitOK
+			}
+		case <-stop:
+			return ExitError
+		case err := <-b.fatal:
+			b.writeError(nil, -32001, stopText(b.Agent, err))
+			b.logf("stop: %s", leaseErrorText(b.Agent, err))
+			return ExitError
+		case <-b.outGone:
+			b.logf("a write to the app failed, thus the app closed the standard output of the bridge. The bridge stops.")
+			return ExitOK
+		case <-ctx.Done():
+			return ExitOK
+		case <-limit.C:
+			b.logf("the app closed the standard input, and a request got no answer in %s. The bridge stops the requests in flight.", drainTimeout)
+			return ExitOK
+		case <-tick.C:
 		}
 	}
 }

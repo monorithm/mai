@@ -206,6 +206,12 @@ when a write to its stdout is not successful, for example after the app
 exits during a call. On Unix, the bridge also stops on SIGINT, SIGTERM, or
 SIGHUP. On Windows, it stops on Ctrl+C or when the console closes.
 
+After the end of stdin, the bridge waits a maximum of 10 seconds for the
+results of the calls in flight. On Unix, the bridge does not wait when the
+app is gone, because nothing can read the results. The app is gone when its
+process ended, or when it closed the read end of the stdout of the bridge.
+Then the bridge stops each call in flight immediately.
+
 Before the bridge stops, it ends each lease and removes its notice file. The
 bridge ignores SIGPIPE. Thus a closed stdout or stderr does not stop the
 bridge before this step. The bridge ends the leases at the same time, and it

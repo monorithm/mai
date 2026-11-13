@@ -53,6 +53,7 @@ func runMCP(args []string) int {
 			app = top.Name()
 		}
 	}
+	ppid := os.Getppid()
 	b := &bridge.Bridge{
 		Agent:    *agent,
 		Instance: cfg.Instance,
@@ -60,12 +61,15 @@ func runMCP(args []string) int {
 		Keys:     kf,
 		StateDir: dirs.State,
 		App:      app,
-		AppPID:   os.Getppid(),
+		AppPID:   ppid,
 		PID:      os.Getpid(),
 		Folder:   folder,
 		Stdin:    os.Stdin,
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
+		// When the process of the app ends, the bridge gets a different parent. An app can
+		// also close the read end of the standard output and stay.
+		AppGone: func() bool { return os.Getppid() != ppid || bridge.OutputClosed(os.Stdout) },
 	}
 	// When the app exits, its ends of the pipes close. A write to stdout or stderr then gets
 	// EPIPE. The bridge must not stop at the signal SIGPIPE, because it ends each lease and

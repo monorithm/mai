@@ -177,7 +177,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signal SIGPIPE. Thus the server kept each lease of the bridge until the
   lease expired, and a new bridge got `SESSION_BUSY` for the same named
   session. The bridge also stops when a write to its stdout is not
-  successful.
+  successful. The bridge does not wait for the result of a call that
+  nothing can read. On Unix, when stdin ends and the app is gone, the bridge
+  stops each call in flight immediately. The app is gone when its process
+  ended, or when it closed the read end of the stdout of the bridge. Else
+  the bridge waits a maximum of 10 seconds for the results of the calls in
+  flight.
+  Before, the bridge kept each lease until the end of a long call, for
+  example 50 seconds for `wait_for_mail`.
 - `mai uninstall --instance NAME` removes only the items of that instance.
   Each record of the manifest has its instance. The CLI gives each record of
   3.0 and 3.1 the instance of its name, or the instance of the file. A
