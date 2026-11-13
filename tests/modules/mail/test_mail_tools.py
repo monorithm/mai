@@ -62,6 +62,8 @@ from mai.modules.mail.domain import mail_rules as r
 from mai.modules.mail.infra.memory_directory import InMemoryDirectory
 from mai.modules.mail.infra.memory_sent_requests import InMemorySentRequests
 from mai.modules.mail.infra.threaded_mailbox_access import ThreadedMailboxAccess
+from mai.modules.mcp.application.json_rpc import validate
+from mai.modules.mcp.domain.tool_schemas import BY_NAME
 
 
 class FakeMail:
@@ -70,6 +72,8 @@ class FakeMail:
         self.uid = itertools.count(1)
         self.sent = []
         self.header_fetches = []
+        # The number of the next sends that fail, as when Postfix does not reply.
+        self.failed_sends = 0
 
     def add(self, box, raw, flags=()):
         uid = next(self.uid)
@@ -77,6 +81,9 @@ class FakeMail:
         return uid
 
     def send(self, raw, mail_from, rcpt_to):
+        if self.failed_sends:
+            self.failed_sends -= 1
+            raise ToolError("MAIL_SERVER_DOWN")
         self.sent.append((raw, mail_from, list(rcpt_to)))
 
     def append(self, mailbox, raw, flags=()):
@@ -164,8 +171,7 @@ class FakeClaims:
         return "cursor.lane-a@mai.internal" if self.calls else None
 
 
-@pytest.fixture
-def env():
+def make_env(sent):
     fake = FakeMail()
     state = State("cursor.lane-a", "cursor", "ses-test", fake)
     claims = FakeClaims()
@@ -177,7 +183,7 @@ def env():
     reader = MailReader(
         cast("SessionService", FakeSessions(state)), ThreadedMailboxAccess()
     )
-    sender = MailSender(reader, InMemorySentRequests(), directory)
+    sender = MailSender(reader, sent, directory)
     tools = MailTools(
         ListAddressesHandler(reader, directory),
         SendMessageHandler(reader, sender),
@@ -194,6 +200,11 @@ def env():
         return anyio.run(tools[name], context, args)
 
     return fake, claims, call
+
+
+@pytest.fixture
+def env():
+    return make_env(InMemorySentRequests())
 
 
 def make_mail(
@@ -347,3 +358,44 @@ def test_migrations_are_in_range():
     from mai.modules.mail.infra import MIGRATIONS
 
     assert all(400 <= m.version < 500 for m in MIGRATIONS)
+
+
+SEND_OUTPUT = BY_NAME["send_message"]["outputSchema"]
+
+
+class NoDeleteSentRequests(InMemorySentRequests):
+    """The memory store, with a release that fails as a DELETE of the app role does in PostgreSQL."""
+
+    async def release(self, login, request_id, message_id):
+        raise PermissionError("permission denied for table sent_request")
+
+
+def test_a_replay_gives_the_date_of_the_sent_mail(env):
+    _, _, call = env
+    args = {"to": ["codex"], "subject": "Hi", "body": "x", "request_id": "d1"}
+    first = call("send_message", args)
+    again = call("send_message", dict(args))
+    assert again["duplicate"] and again["message_id"] == first["message_id"]
+    assert again["date"] == first["date"]
+    validate(SEND_OUTPUT, first)
+    validate(SEND_OUTPUT, again)
+
+
+@pytest.mark.parametrize(
+    "sent", [InMemorySentRequests, NoDeleteSentRequests], ids=["release", "no-delete"]
+)
+def test_a_retry_after_a_failed_send_delivers_the_mail_once(sent):
+    fake, _, call = make_env(sent())
+    args = {"to": ["codex"], "subject": "Hi", "body": "x", "request_id": "f1"}
+    fake.failed_sends = 1
+    with pytest.raises(ToolError) as e:
+        call("send_message", args)
+    # The error of the send is the result, also when the store of the keys fails.
+    assert e.value.code == "MAIL_SERVER_DOWN"
+    assert fake.sent == [] and fake.boxes["Sent"] == {}
+    retry = call("send_message", dict(args))
+    assert retry["duplicate"] is False
+    validate(SEND_OUTPUT, retry)
+    again = call("send_message", dict(args))
+    assert again["duplicate"] and again["message_id"] == retry["message_id"]
+    assert len(fake.sent) == 1 and len(fake.boxes["Sent"]) == 1
