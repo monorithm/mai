@@ -266,6 +266,9 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 //
 // When the request is not successful, l keeps its token. Thus the next call or heartbeat
 // gets LEASE_UNKNOWN again and tries again. The pool lease then has no session.
+//
+// When the request is successful, renew writes the notice file. Thus the notice has the
+// session of the new lease immediately, also when a tool call (not a heartbeat) renewed l.
 func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 	l.renewMu.Lock()
 	defer l.renewMu.Unlock()
@@ -305,6 +308,7 @@ func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 	} else {
 		b.logf("the bridge has a new lease for the session %s", l.session())
 	}
+	b.writeNotice()
 	return nil
 }
 
