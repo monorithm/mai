@@ -64,7 +64,7 @@ func TestTheUninstallOfADifferentInstanceKeepsTheMoveOfTheKeychainItems(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	moved := lcMoveKeys("mai", m)
+	moved := lcMoveKeys("mai", configPort(t), m)
 	stays, _ := k.legacy.Has(keys.AgentAccount("mai", "cursor"))
 	if moved && stays {
 		t.Fatalf("mai upgrade of mai gives success, but the keychain item agent:cursor@mai stays:\n%s%s", mout.String(), merr.String())

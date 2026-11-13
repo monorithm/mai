@@ -153,7 +153,7 @@ func TestUpgradeMovesEachKeyOfTheInstance(t *testing.T) {
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "codex")},
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai-dev")},
 	)
-	if !lcMoveKeys("mai", m) {
+	if !lcMoveKeys("mai", configPort(t), m) {
 		t.Fatalf("the move failed: %s", errs.String())
 	}
 	for account, want := range map[string]string{
@@ -196,7 +196,7 @@ func TestUpgradeTellsWhenAKeyDoesNotMove(t *testing.T) {
 	openKeys = func() (*keys.File, error) { return keys.Open(dirs.State, refuseRead{legacy}), nil }
 	t.Cleanup(func() { openKeys = old })
 	m := testManifest(t, manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai")})
-	if lcMoveKeys("mai", m) {
+	if lcMoveKeys("mai", configPort(t), m) {
 		t.Fatal("the move gave true")
 	}
 	if !strings.Contains(errs.String(), "Run mai upgrade again") || len(m.Of(manifest.KeychainKey)) != 1 {

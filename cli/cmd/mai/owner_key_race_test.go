@@ -45,7 +45,7 @@ func TestUpgradeDoesAServerCheckWhenADifferentProcessWritesTheOwnerKey(t *testin
 	lcOut, lcErr = &out, &errs
 	t.Cleanup(func() { lcOut, lcErr = oldOut, oldErr })
 
-	if lcMoveKeys("mai", loadTestManifest(t, home)) {
+	if lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
 		t.Fatal("the move gave true, but the keychain item stays")
 	}
 	text := errs.String()

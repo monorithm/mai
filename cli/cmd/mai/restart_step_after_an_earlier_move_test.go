@@ -32,7 +32,7 @@ func TestUpgradeTellsToStartTheAppsAgainWhenABridgeMovedTheAgentKeyBefore(t *tes
 
 	// Then the user runs mai upgrade.
 	out, errs := captureLifecycle(t)
-	if !lcMoveKeys("mai", loadTestManifest(t, home)) {
+	if !lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
 		t.Fatalf("the move failed: %s", errs.String())
 	}
 	if !strings.Contains(out.String(), "start each app that runs mai mcp again") {

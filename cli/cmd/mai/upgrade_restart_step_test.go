@@ -36,7 +36,7 @@ func TestUpgradeTellsToStartTheAppsAgainAfterTheMoveOfAnAgentKey(t *testing.T) {
 			old := openKeys
 			openKeys = func() (*keys.File, error) { return keys.Open(dirs.State, legacy), nil }
 			t.Cleanup(func() { openKeys = old })
-			if !lcMoveKeys("mai", testManifest(t, records...)) {
+			if !lcMoveKeys("mai", configPort(t), testManifest(t, records...)) {
 				t.Fatalf("the move gave false: %s", errs.String())
 			}
 			text := out.String()

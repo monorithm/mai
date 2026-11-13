@@ -35,7 +35,7 @@ func TestUpgradeFailsWhenTheItemOfAMovedKeyStays(t *testing.T) {
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai")},
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "cursor")},
 	)
-	ok := lcMoveKeys("mai", m)
+	ok := lcMoveKeys("mai", configPort(t), m)
 	stay := legacy.Accounts()
 	if len(stay) != 2 {
 		t.Fatalf("the keychain items are %v", stay)
@@ -65,7 +65,7 @@ func TestUpgradeFailsWhenAKeychainItemStaysAfterTheMove(t *testing.T) {
 	openKeys = func() (*keys.File, error) { return keys.Open(dirs.State, legacy), nil }
 	t.Cleanup(func() { openKeys = old })
 	m := testManifest(t, manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai")})
-	if lcMoveKeys("mai", m) {
+	if lcMoveKeys("mai", configPort(t), m) {
 		t.Fatalf("the move gave true, but the keychain items %v stay", legacy.Accounts())
 	}
 	if !strings.Contains(errs.String(), "owner@mai stays") || !strings.Contains(errs.String(), "Step:") {

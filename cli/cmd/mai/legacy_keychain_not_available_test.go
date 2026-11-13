@@ -104,7 +104,7 @@ func TestAKeychainThatIsNotAvailableOnceDoesNotLoseTheOwnerKey(t *testing.T) {
 
 	// "mai upgrade" later, with the keychain available again.
 	legacy.down.Store(false)
-	lcMoveKeys("mai", m)
+	lcMoveKeys("mai", configPort(t), m)
 
 	plain := keys.Open(state, nil)
 	inFile, _ := plain.Get(account)
@@ -155,7 +155,7 @@ func TestUpgradeWithAKeychainThatIsNotAvailableTellsAboutTheRecordedItems(t *tes
 	legacy.down.Store(true)
 	useLegacy(t, legacy)
 	m := testManifest(t, manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount("mai")})
-	if lcMoveKeys("mai", m) {
+	if lcMoveKeys("mai", configPort(t), m) {
 		t.Fatal("the move gave true, but the recorded item did not move")
 	}
 	text := errs.String()
@@ -185,7 +185,7 @@ func TestUpgradeKeepsAKeychainItemWithADifferentAgentKey(t *testing.T) {
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "codex")},
 		manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "cursor")},
 	)
-	if lcMoveKeys("mai", m) {
+	if lcMoveKeys("mai", configPort(t), m) {
 		t.Fatal("the move gave true, but a keychain item with a different key stays")
 	}
 	if got, _ := k.legacy.Get(keys.AgentAccount("mai", "codex")); got != "mai1:codex:old" {
@@ -221,7 +221,7 @@ func TestUpgradeRemovesTheOwnerItemOnlyWhenTheServerAcceptsTheKeyOfTheKeyFile(t 
 	if err := k.file.Set(keys.OwnerAccount("mai"), testOwnerKey); err != nil {
 		t.Fatal(err)
 	}
-	if !lcMoveKeys("mai", loadTestManifest(t, home)) {
+	if !lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
 		t.Fatalf("the move failed: %s", errs.String())
 	}
 	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); ok {
@@ -241,7 +241,7 @@ func TestUpgradeRemovesTheOwnerItemOnlyWhenTheServerAcceptsTheKeyOfTheKeyFile(t 
 		t.Fatal(err)
 	}
 	errs.Reset()
-	if lcMoveKeys("mai", m) {
+	if lcMoveKeys("mai", configPort(t), m) {
 		t.Fatal("the move gave true, but the keychain item with the accepted key stays")
 	}
 	if got, _ := k.legacy.Get(keys.OwnerAccount("mai")); got != testOwnerKey {
@@ -278,7 +278,7 @@ func TestUpgradeKeepsTheOwnerItemWhenTheServerDoesNotReply(t *testing.T) {
 	if err := k.file.Set(keys.OwnerAccount("mai"), "mai1:owner:new"); err != nil {
 		t.Fatal(err)
 	}
-	if lcMoveKeys("mai", testManifest(t)) {
+	if lcMoveKeys("mai", configPort(t), testManifest(t)) {
 		t.Fatal("the move gave true")
 	}
 	if ok, _ := k.legacy.Has(keys.OwnerAccount("mai")); !ok {

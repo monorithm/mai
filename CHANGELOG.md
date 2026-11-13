@@ -128,6 +128,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `mai upgrade --instance NAME` does the check of the owner keys on the port
+  of the container of that instance. When that port is not known, it does no
+  check. The new container gets the port and the data folder of the
+  container that it replaces. The upgrade examines them before it stops that
+  container. Before, the upgrade used the values of the instance of
+  `config.json`. Thus it sent the owner keys of the instance to a different
+  server. It also removed the container of the instance, and then it stopped
+  because a different server used the port. When `config.json` names a different instance, each step
+  names `--instance NAME`, and the upgrade does not change `config.json`.
 - `mai start --instance NAME` uses the port and the data folder of that
   instance, also when `config.json` names a different instance. Before, the
   start took the port and the data folder of the instance of `config.json`.

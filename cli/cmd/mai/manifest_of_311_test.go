@@ -119,7 +119,7 @@ func TestDoctorAndUpgradeMoveEachItemOfThe311Manifest(t *testing.T) {
 		}
 	}
 	out, errs := captureLifecycle(t)
-	if !lcMoveKeys("mai", loadTestManifest(t, home)) {
+	if !lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) {
 		t.Fatalf("the move failed: %s", errs.String())
 	}
 	noSecret(t, "mai upgrade", out.String()+errs.String())

@@ -146,6 +146,38 @@ func (s *lcSession) spec() engine.Spec {
 	return engine.Spec{Instance: s.cfg.Instance, Port: s.cfg.Port, Image: s.cfg.Image, DataDir: s.cfg.DataDir}
 }
 
+// lcCommand gives the text of a command of the CLI for a step of the instance. It names
+// --instance when config.json names a different instance, because each command acts on the
+// instance of config.json by default.
+func lcCommand(instance, name string, rest ...string) string {
+	parts := []string{"mai", name}
+	if lcFileInstance() != instance {
+		parts = append(parts, "--instance", instance)
+	}
+	return strings.Join(append(parts, rest...), " ")
+}
+
+// lcFileInstance gives the instance that config.json names, or "" when the file cannot be read.
+func lcFileInstance() string {
+	dirs, err := paths.Default()
+	if err != nil {
+		return ""
+	}
+	cfg, err := config.Load(dirs.Config)
+	if err != nil {
+		return ""
+	}
+	return cfg.Instance
+}
+
+// serverPort gives the port of the server of the instance, or 0 when it is not known.
+func (s *lcSession) serverPort() int {
+	if !s.known {
+		return 0
+	}
+	return s.cfg.Port
+}
+
 // lcLegacyMessage is the text for a container that the CLI did not make.
 func lcLegacyMessage(name string) string {
 	return fmt.Sprintf("a container %q exists that mai 3 did not make. A 2.x install holds the name. Run \"mai uninstall --legacy\" to remove the 2.x install, or use --instance NAME.", name)
@@ -241,7 +273,8 @@ func (s *lcSession) setOwner(ctx context.Context, id string) error {
 	case code == 0:
 		fmt.Fprintln(lcOut, "mai: the owner key is set")
 	case code == lcOwnerKeyExists && made:
-		fmt.Fprintln(lcErr, "mai: the server has a different owner key. To give it the key of the key file, run: mai exec -- mai owner set-key --replace")
+		fmt.Fprintln(lcErr, "mai: the server has a different owner key. To give it the key of the key file, run: "+
+			lcCommand(s.cfg.Instance, "exec", "--", "mai", "owner", "set-key", "--replace"))
 	case code == lcOwnerKeyExists:
 	default:
 		return fmt.Errorf("mai owner set-key gave exit code %d", code)
@@ -404,7 +437,7 @@ func lcSimple(name string, args []string, call func(*engine.Engine, context.Cont
 		return lcFail("%v", err)
 	}
 	if !ok {
-		return lcFail("no container %q exists. Run: mai start", s.cfg.Instance)
+		return lcFail("no container %q exists. Run: %s", s.cfg.Instance, lcCommand(s.cfg.Instance, "start"))
 	}
 	if err := call(s.eng, ctx, c.ID); err != nil {
 		return lcFail("%s: %v", name, err)
@@ -473,7 +506,7 @@ func runStatus(args []string) int {
 		return lcFail("%v", err)
 	}
 	if !ok {
-		p("container", "none. Run: mai start")
+		p("container", "none. Run: "+lcCommand(s.cfg.Instance, "start"))
 		return 1
 	}
 	state := "unknown"
@@ -550,7 +583,7 @@ func runLogs(args []string) int {
 		return lcFail("%v", err)
 	}
 	if !ok {
-		return lcFail("no container %q exists. Run: mai start", s.cfg.Instance)
+		return lcFail("no container %q exists. Run: %s", s.cfg.Instance, lcCommand(s.cfg.Instance, "start"))
 	}
 	if err := s.eng.Logs(ctx, c.ID, *follow, lcOut, lcErr); err != nil && ctx.Err() == nil {
 		return lcFail("logs: %v", err)
@@ -580,13 +613,29 @@ func runExec(args []string) int {
 		return lcFail("%v", err)
 	}
 	if !ok {
-		return lcFail("no container %q exists. Run: mai start", s.cfg.Instance)
+		return lcFail("no container %q exists. Run: %s", s.cfg.Instance, lcCommand(s.cfg.Instance, "start"))
 	}
 	code, err := s.eng.Exec(ctx, c.ID, rest, os.Stdin, lcOut, lcErr)
 	if err != nil {
 		return lcFail("exec: %v", err)
 	}
 	return code
+}
+
+// checkReplace gives an error when the new container of the instance cannot replace the
+// container c: a different program uses the port, or a container of a different instance
+// mounts the data folder. It runs before the stop of c, thus c stays after a failure.
+func (s *lcSession) checkReplace(ctx context.Context, c container.InspectResponse) error {
+	sp := s.spec()
+	held := c.State != nil && c.State.Running && engine.HostPort(c) == sp.Port
+	if !held && !lcPortFree(sp.Port) {
+		return fmt.Errorf("the port 127.0.0.1:%d is in use, thus the container of the instance %s stays. "+
+			"Stop the program that uses it, and then run %s again", sp.Port, sp.Instance, lcCommand(sp.Instance, "upgrade"))
+	}
+	if sp.DataDir != "" {
+		return s.checkDataDir(ctx, sp.DataDir)
+	}
+	return nil
 }
 
 func runUpgrade(args []string) int {
@@ -612,14 +661,16 @@ func runUpgrade(args []string) int {
 	if err != nil {
 		return lcFail("read the manifest: %v", err)
 	}
+	// For an instance that config.json does not name, the container gives the port of the
+	// server. The check of the owner keys uses only that port.
+	c, ok, ownErr := s.owned(ctx)
 	// The move of the keys comes first, thus it also occurs when the image does not change.
 	exit := 0
-	if !lcMoveKeys(s.cfg.Instance, m) {
+	if !lcMoveKeys(s.cfg.Instance, s.serverPort(), m) {
 		exit = 1
 	}
-	c, ok, err := s.owned(ctx)
-	if err != nil {
-		return lcFail("%v", err)
+	if ownErr != nil {
+		return lcFail("%v", ownErr)
 	}
 	imageID, pulled, err := s.eng.EnsureImage(ctx, s.cfg.Image, *noPull, lcErr)
 	if err != nil {
@@ -634,6 +685,9 @@ func runUpgrade(args []string) int {
 		if c.Image == imageID {
 			fmt.Fprintf(lcOut, "mai: the container has the image %s\n", s.cfg.Image)
 			return exit
+		}
+		if err := s.checkReplace(ctx, c); err != nil {
+			return lcFail("%v", err)
 		}
 		fmt.Fprintln(lcErr, "mai: stop the container")
 		if err := s.eng.Stop(ctx, c.ID); err != nil {
@@ -662,8 +716,12 @@ func runUpgrade(args []string) int {
 	if pin == config.DefaultImage() {
 		pin = ""
 	}
-	if err := config.PinImage(s.dirs.Config, pin); err != nil {
-		return lcFail("write the configuration: %v", err)
+	// config.json holds the values of the instance that it names. Thus the image of a
+	// different instance does not go in it.
+	if !s.other() {
+		if err := config.PinImage(s.dirs.Config, pin); err != nil {
+			return lcFail("write the configuration: %v", err)
+		}
 	}
 	fmt.Fprintf(lcOut, "mai: the server runs %s\n", s.cfg.Image)
 	return exit
@@ -683,8 +741,9 @@ func lcRecordedKeys(m *manifest.Manifest) []string {
 // removes a legacy item whose account the key file has only when the item holds the same key,
 // or when the server accepts only the key of the key file. It removes the record of each
 // legacy item that is gone from the manifest. It gives false when a key did not move, or when
-// a legacy item stays.
-func lcMoveKeys(instance string, m *manifest.Manifest) bool {
+// a legacy item stays. port is the port of the server of the instance. When it is 0, the port
+// is not known, and the check of the owner keys on the server does not occur.
+func lcMoveKeys(instance string, port int, m *manifest.Manifest) bool {
 	kf, err := openKeys()
 	if err != nil {
 		fmt.Fprintf(lcErr, "mai: the key file: %v\n", err)
@@ -699,7 +758,7 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		fmt.Fprintf(lcErr, "mai: the key file: %v\n", err)
 		return false
 	}
-	r, err := kf.MoveAll(candidates, lcOwnerCheck(instance))
+	r, err := kf.MoveAll(candidates, lcOwnerCheck(instance, port))
 	if len(r.Moved) > 0 {
 		fmt.Fprintf(lcOut, "mai: moved %d key(s) from the keychain to the key file %s: %s\n",
 			len(r.Moved), kf.Path(), strings.Join(r.Moved, ", "))
@@ -730,7 +789,7 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		// mai 3.0 and 3.1 did not operate with no keychain. Thus only a recorded item can exist.
 		fmt.Fprintf(lcErr, "mai: the keychain is not available, thus the keys of mai 3.0 or 3.1 did not move: %s. "+
 			"The manifest records these keychain items. Make the keychain available, for example in a desktop session of the user, "+
-			"and then run mai upgrade again.\n", strings.Join(mine, ", "))
+			"and then run %s again.\n", strings.Join(mine, ", "), lcCommand(instance, "upgrade"))
 		return false
 	}
 	var pruned []string
@@ -750,7 +809,7 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		fmt.Fprint(lcOut, lcRestartStep)
 	}
 	if err != nil {
-		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run mai upgrade again.\n", err)
+		fmt.Fprintf(lcErr, "mai: a key did not move from the keychain: %v. Run %s again.\n", err, lcCommand(instance, "upgrade"))
 		return false
 	}
 	if len(r.Conflicts) > 0 || len(r.Stays) > 0 {
@@ -766,7 +825,7 @@ func lcMoveKeys(instance string, m *manifest.Manifest) bool {
 		switch has, herr := kf.HasLegacyItem(a); {
 		case herr != nil:
 			fmt.Fprintf(lcErr, "mai: the check of the keychain item %s failed: %v. "+
-				"Step: unlock the keychain, and then run mai upgrade again.\n", a, herr)
+				"Step: unlock the keychain, and then run %s again.\n", a, herr, lcCommand(instance, "upgrade"))
 			done = false
 		case has:
 			fmt.Fprintf(lcErr, "mai: the keychain item %s stays after the move. %s\n", a, lcStayStep(a))
@@ -799,8 +858,9 @@ func lcAgentItemGone(accounts []string) bool {
 // lcStayStep gives the step for a keychain item that stays, although the key file has the key
 // of its account.
 func lcStayStep(account string) string {
-	return fmt.Sprintf("Step: unlock the keychain, and then run mai upgrade again. When macOS shows a prompt, let mai delete the item. "+
-		"Or delete the keychain item yourself: the service %s, the account %s.", keychain.Service, account)
+	return fmt.Sprintf("Step: unlock the keychain, and then run %s again. When macOS shows a prompt, let mai delete the item. "+
+		"Or delete the keychain item yourself: the service %s, the account %s.",
+		lcCommand(keys.InstanceOf(account), "upgrade"), keychain.Service, account)
 }
 
 // errNoAgentCheck means that the CLI has no check of an agent key on the server. A lease
@@ -808,21 +868,18 @@ func lcStayStep(account string) string {
 var errNoAgentCheck = errors.New("the CLI cannot ask the server about an agent key")
 
 // lcOwnerCheck gives the check of the server for a legacy item whose key is not the key of the
-// key file. Only the owner key has a check: an owner API call with the key.
-func lcOwnerCheck(instance string) keys.Accepts {
+// key file. Only the owner key has a check: an owner API call with the key on port, the port of
+// the server of the instance. When port is 0, it gives no check, because the CLI must not send
+// a key of the instance to the server of a different instance.
+func lcOwnerCheck(instance string, port int) keys.Accepts {
+	if port == 0 {
+		return nil
+	}
 	return func(account, key string) (bool, error) {
 		if account != keys.OwnerAccount(instance) {
 			return false, errNoAgentCheck
 		}
-		dirs, err := paths.Default()
-		if err != nil {
-			return false, err
-		}
-		cfg, err := config.Load(dirs.Config)
-		if err != nil {
-			return false, err
-		}
-		return lcOwnerKeyAccepted(cfg.Port, key)
+		return lcOwnerKeyAccepted(port, key)
 	}
 }
 
@@ -853,30 +910,38 @@ func lcOwnerKeyAccepted(port int, key string) (bool, error) {
 // lcConflictText tells why a legacy item stays, and gives the step for the user.
 func lcConflictText(instance, path string, c keys.Conflict) string {
 	owner := keys.OwnerAccount(instance)
+	upgrade := lcCommand(instance, "upgrade")
 	if c.Account != owner {
 		name := strings.TrimSuffix(strings.TrimPrefix(c.Account, "agent:"), "@"+instance)
+		rotate := "run mai agent rotate " + name
+		if lcFileInstance() != instance {
+			// The commands of the agents act on the instance of config.json.
+			rotate = "run " + lcCommand(instance, "start") + ", which makes " + instance +
+				" the instance of config.json, and then run mai agent rotate " + name
+		}
 		return fmt.Sprintf("the key file %s has a different key for this account. "+
-			"Step: run mai agent rotate %s. The server then accepts only the new key, and the command removes the keychain item.",
-			path, name)
+			"Step: %s. The server then accepts only the new key, and the command removes the keychain item.",
+			path, rotate)
 	}
 	switch {
 	case !c.Checked:
 		return fmt.Sprintf("the key file %s has a different owner key, and mai did no check of the two keys on the server. "+
-			"Step: run mai upgrade again. It does the check.", path)
+			"Step: start the server with %s, and then run %s again. It does the check.", path, lcCommand(instance, "start"), upgrade)
 	case c.Err != nil:
 		return fmt.Sprintf("the key file %s has a different owner key, and the check of the server failed: %v. "+
-			"Step: start the server with mai start, and then run mai upgrade again.", path, c.Err)
+			"Step: start the server with %s, and then run %s again.", path, c.Err, lcCommand(instance, "start"), upgrade)
 	case c.LegacyAccepted && !c.FileAccepted:
 		return fmt.Sprintf("the server accepts the key of the keychain item, and it refuses the owner key of the key file %s. "+
-			"Step: remove the account %s from the key file, and then run mai upgrade again. "+
+			"Step: remove the account %s from the key file, and then run "+upgrade+" again. "+
 			"The move then puts the key of the keychain item in the key file.", path, owner)
 	case !c.LegacyAccepted && !c.FileAccepted:
 		return fmt.Sprintf("the key file %s has a different owner key, and the server refuses the two keys. "+
-			"Step: give the owner key of the key file to the server with mai exec -- mai owner set-key --replace, "+
-			"which reads the key on stdin. Then run mai upgrade again.", path)
+			"Step: give the owner key of the key file to the server with %s, "+
+			"which reads the key on stdin. Then run %s again.", path,
+			lcCommand(instance, "exec", "--", "mai", "owner", "set-key", "--replace"), upgrade)
 	}
 	return fmt.Sprintf("the key file %s has a different owner key, and the server accepts the two keys. "+
-		"Step: run mai upgrade again.", path)
+		"Step: run %s again.", path, upgrade)
 }
 
 func runDoctor(args []string) int {
@@ -920,7 +985,7 @@ func runDoctor(args []string) int {
 	case s.eng != nil && s.portIsMai(ctx):
 		ok("port", port+" is in use by mai")
 	default:
-		bad("port", port+" is in use by a different program", "stop that program, or run: mai start --port N")
+		bad("port", port+" is in use by a different program", "stop that program, or run: "+lcCommand(s.cfg.Instance, "start", "--port", "N"))
 	}
 	if err := os.MkdirAll(s.dirs.State, 0o700); err == nil {
 		if free, err := engine.FreeBytes(s.dirs.State); err != nil {
@@ -1001,7 +1066,7 @@ func lcDoctorKeys(s *lcSession, ok func(k, v string), warn, bad func(k, v, step 
 		// The items can exist, but no check is possible.
 		warn("legacy", fmt.Sprintf("the keychain is not available, and the manifest records %d keychain item(s) of mai 3.0 or 3.1 for the instance %s: %s",
 			len(recorded), inst, strings.Join(recorded, ", ")),
-			"make the keychain available, for example in a desktop session of the user, and then run: mai upgrade")
+			"make the keychain available, for example in a desktop session of the user, and then run: "+lcCommand(inst, "upgrade"))
 	case errors.Is(err, keychain.ErrUnavailable):
 		// mai 3.0 and 3.1 did not operate with no keychain. Thus with no record, no item exists.
 		ok("legacy", "no keychain is available, thus it holds no key of mai")
@@ -1010,7 +1075,7 @@ func lcDoctorKeys(s *lcSession, ok func(k, v string), warn, bad func(k, v, step 
 	case len(items) > 0:
 		bad("legacy", fmt.Sprintf("%d key(s) of the instance %s are in the keychain of mai 3.0 or 3.1 (service %s): %s",
 			len(items), inst, keychain.Service, strings.Join(items, ", ")),
-			"run: mai upgrade. It moves the keys to the key file and removes the keychain items")
+			"run: "+lcCommand(inst, "upgrade")+". It moves the keys to the key file and removes the keychain items")
 	default:
 		ok("legacy", "the keychain holds no key of the instance "+inst)
 	}

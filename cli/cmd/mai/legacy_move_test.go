@@ -251,7 +251,7 @@ func TestTheCommandsMoveEachKeyOfA31InstallToTheKeyFile(t *testing.T) {
 	lcOut, lcErr = &out, &errOut
 	t.Cleanup(func() { lcOut, lcErr = oldOut, oldErr })
 	m := loadTestManifest(t, home)
-	if !lcMoveKeys("mai", m) {
+	if !lcMoveKeys("mai", configPort(t), m) {
 		t.Fatalf("the move of mai upgrade failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "moved 1 key(s)") || !strings.Contains(out.String(), "agent:codex@mai") {
@@ -281,7 +281,7 @@ func TestTheCommandsMoveEachKeyOfA31InstallToTheKeyFile(t *testing.T) {
 		t.Fatalf("doctor after the move: ok %v, bad %v", ok, bad)
 	}
 	out.Reset()
-	if !lcMoveKeys("mai", loadTestManifest(t, home)) || out.Len() != 0 {
+	if !lcMoveKeys("mai", configPort(t), loadTestManifest(t, home)) || out.Len() != 0 {
 		t.Fatalf("a second move wrote %q", out.String())
 	}
 }

@@ -66,6 +66,14 @@ the CLI does not use these values of `config.json`:
 - After a successful start, `config.json` names the instance of the start,
   with its port and its data folder. A start that is not successful does not
   change `config.json`.
+- `mai upgrade` does the check of the owner keys only on the port of the
+  server of the instance. When the CLI does not know that port, it does no
+  check, and the keychain item stays. The new container gets the port and
+  the data folder of the container that it replaces. The upgrade examines
+  them before it stops that container. It does not write the image of a
+  different instance to `config.json`.
+- When `config.json` names a different instance, each step of a command
+  names `--instance NAME`.
 
 ## Bridge
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -17,6 +18,8 @@ import (
 	"github.com/monorithm/mai/cli/v3/internal/config"
 	"github.com/monorithm/mai/cli/v3/internal/engine"
 	"github.com/monorithm/mai/cli/v3/internal/keys"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
+	"github.com/monorithm/mai/cli/v3/internal/paths"
 )
 
 // Two instances share one MAI_HOME. config.json names the instance mai-wf-b and its port. A
@@ -72,6 +75,66 @@ func serverOfB(t *testing.T) (*bearerLog, string) {
 		t.Fatal(err)
 	}
 	return log, port
+}
+
+// configPort gives the port of config.json of the test, the port of the fake server of the
+// instance of the file. With no config.json, it gives 0. Then no check of the owner keys
+// occurs, and no test sends a key to the default port, which a real server can use.
+func configPort(t *testing.T) int {
+	t.Helper()
+	dirs, err := paths.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(config.Path(dirs.Config))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Port int `json:"port"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	return c.Port
+}
+
+// "mai upgrade --instance mai-wf-a" does the check of the two owner keys of mai-wf-a on the
+// server of mai-wf-a. It must not send these keys to the port of config.json, which is the port
+// of mai-wf-b. Here mai-wf-a has no container, thus the port of its server is not known.
+func TestTheMoveOfTheKeysOfAnInstanceSendsNoKeyToTheServerOfTheInstanceOfConfig(t *testing.T) {
+	t.Setenv("MAI_HOME", t.TempDir())
+	log, _ := serverOfB(t)
+	k := useTestKeys(t)
+	if err := k.file.Set(keys.OwnerAccount(instA), fileKeyOfA); err != nil {
+		t.Fatal(err)
+	}
+	k.legacy.Put(keys.OwnerAccount(instA), legacyKeyOfA)
+	m, err := manifest.Load(filepath.Join(os.Getenv("MAI_HOME"), "state", manifest.FileName), instA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: keys.OwnerAccount(instA)}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := lcOpen(config.Overrides{Instance: instA}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, errs := captureLifecycle(t)
+	_ = lcMoveKeys(instA, s.serverPort(), m)
+	if got := log.keysOfA(); len(got) > 0 {
+		t.Errorf("mai upgrade --instance %s sent the owner keys of %s to the server of %s: %v\nstderr: %s",
+			instA, instA, instB, got, errs.String())
+	}
+	// The step of the conflict must name the instance, else "mai exec" runs in the container
+	// of the instance of config.json.
+	if strings.Contains(errs.String(), "mai exec -- mai owner set-key --replace") || !strings.Contains(errs.String(), "mai upgrade --instance "+instA) {
+		t.Errorf("the step for %s does not name the instance:\n%s", instA, errs.String())
+	}
 }
 
 // "mai start --instance mai-wf-a" makes mai-wf-a the instance of config.json. The port of
