@@ -153,10 +153,8 @@ func TestWhoamiGoesWithTheLeaseOfTheHandle(t *testing.T) {
 	if r := result(t, h.call(t, 3, "whoami", nil)); r["session"] != "cursor.s1" {
 		t.Fatalf("whoami with no session = %v", r)
 	}
-	r = result(t, h.call(t, 4, "whoami", map[string]any{"session": nil}))
-	if args, _ := r["arguments"].(map[string]any); r["session"] != "cursor.s1" || len(args) != 0 {
-		t.Fatalf("whoami with a null session = %v", r)
-	}
+	// null is not a label, a login, or a handle, as on the server.
+	wantSessionError(t, h.call(t, 4, "whoami", map[string]any{"session": nil}), "INVALID_ARGUMENT", false)
 	h.stop(t)
 }
 

@@ -125,7 +125,8 @@ example `cursor.lane-1`, is also correct. No `login` call is necessary:
 
 The bridge removes the argument `session` before it sends the call. A value
 with the form of a handle is always a handle. A value that is not a label, a
-login, or a handle gives `INVALID_ARGUMENT`. The notice file and `mai hook`
+login, or a handle gives `INVALID_ARGUMENT`, for example an empty string or
+`null`. Only a call with no argument `session` uses the pool lease. The notice file and `mai hook`
 show each named session of the bridge, also a session that a call with a
 label got.
 

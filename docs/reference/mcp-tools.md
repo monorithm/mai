@@ -15,6 +15,10 @@ of the bridge `mai mcp` is necessary as the bearer token.
      `lane-1`.
    - The login of that session, for example `cursor.lane-1`.
    - A handle that `login` gave, for example `ses-abcdefghijklmnop`.
+
+   A different value gives `INVALID_ARGUMENT` with the path `session`, and
+   the call does not run. Examples are an empty string and `null`. A call
+   with no `session` argument uses the pool session.
 3. With a label or a login, no `login` call is necessary. When the bridge has
    no lease for that session, the first call gets the lease, as a `login`
    does. Each subsequent call with the same label, login, or handle uses the

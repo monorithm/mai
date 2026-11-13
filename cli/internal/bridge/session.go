@@ -82,19 +82,20 @@ func parseToolCall(line []byte) (toolCall, bool) {
 	return c, true
 }
 
-// session gives the argument session. given is false when the call has no value: no
-// argument, null, or an empty string. text is false when the value is not a string. A value
-// that is not a string is never a handle, a label, or a login.
+// session gives the argument session. given is false only when the call has no argument
+// session. text is false when the value is not a string, for example null. A value that is
+// not a string is never a handle, a label, or a login. An empty string is also none of them.
+// Thus null and an empty string give INVALID_ARGUMENT, as on the server.
 func (c toolCall) session() (value string, given, text bool) {
 	raw, ok := c.args[argSession]
-	if !ok || string(raw) == "null" {
+	if !ok {
 		return "", false, true
 	}
 	var s string
-	if json.Unmarshal(raw, &s) != nil {
+	if string(raw) == "null" || json.Unmarshal(raw, &s) != nil {
 		return string(raw), true, false
 	}
-	return s, s != "", true
+	return s, true, true
 }
 
 // without gives the line of the call with no argument session.
@@ -470,7 +471,7 @@ func (b *Bridge) route(ctx context.Context, id json.RawMessage, hasID bool, line
 
 // leaseOf gives the lease of the argument session of a tool call that is not login or
 // logout:
-//   - With no value, the pool lease.
+//   - With no argument session, the pool lease.
 //   - With a handle, the lease of that handle.
 //   - With a label or a login of a session, the named lease of that session. When the bridge
 //     has no such lease, the call gets it as a login does (open). Thus a chat needs no login.
