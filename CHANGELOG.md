@@ -6,6 +6,82 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The key file of the host CLI. The file `keys.json` in the state folder holds
+  the owner key and the agent keys of each instance, with the account names of
+  the keychain. The file has the mode 0600, in a folder with the mode 0700.
+  Each write is atomic, and a lock lets one process at a time read or change
+  the file. Thus two CLIs or bridges at the same time do not lose a key. On
+  Unix, the CLI refuses a key file that a group or other users can read, and
+  the error gives the `chmod` command.
+- The move of the keys of 3.0 and 3.1. When the key file has no key for an
+  account, the CLI reads the keychain item of the service `dev.mai`. It writes
+  the key to the key file, and then it deletes the keychain item.
+  `mai upgrade` moves all the keys of the instance.
+- `mai doctor` examines the key file and tells about each keychain item of the
+  instance. It shows no key. On macOS, it reads no key and shows no prompt.
+- MCP contract 3.2.0: the argument `session` of each tool other than `login`
+  and `logout` takes the label of a named session, for example `lane-1`. It
+  also takes the login of the session, for example `cursor.lane-1`, or a
+  handle, as before. A chat that gives the label in each call does not call
+  `login`. The tool `logout` also takes a label or a login.
+- The bridge `mai mcp` gets the lease of a named session at the first call
+  with its label or its login. Each subsequent call with the same label,
+  login, or handle uses the same lease. Calls at the same time for the same
+  session make one lease request, and each of these calls gets the result of
+  that request. A `login` to that session gives the handle of the same lease.
+  When the lease request is not successful, the call gets the tool error of
+  `login` with the path `session`. Examples are `BAD_LABEL` for a label of
+  the pool, and `SESSION_BUSY`. A value that is not a label, a login, or a
+  handle gives `INVALID_ARGUMENT`.
+
+### Changed
+
+- The bridge reads the agent key from the key file at each lease request.
+  Thus a new key from `mai agent rotate` applies to a bridge that runs. When
+  the key file has no key for the agent, the result is `BAD_KEY`, as before.
+- `mai uninstall` removes the keys of the instance from the key file and each
+  keychain item of the instance. When the key file holds the keys of a
+  different instance, only the key file and its lock file stay.
+- With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
+  keychain item.
+- On macOS, cgo is necessary only for the Security framework, which reads and
+  removes the keychain items of 3.0 and 3.1.
+- A tool call that comes to the server with the argument `session` gives
+  `BRIDGE_ONLY` with the path `session`, and the tool does not run. In 3.1,
+  the server removed the argument, and the call acted as the session of its
+  lease, for example a pool session.
+- The instructions of `initialize` and the guide `mai://guide` tell a chat to
+  give the label of its session as `session` in each call. The messages of
+  `BRIDGE_ONLY`, `NO_FREE_SESSION`, and `BAD_LABEL` also tell this rule.
+- `scripts/it_named_sessions.sh` builds mai with no tag and uses only a
+  scratch `MAI_HOME`. It does a test of calls with the label `lane-c` and no
+  login. At the end, it makes sure that `mai uninstall` removed the keys of the
+  instance from the key file.
+- `scripts/it_leases.sh` does a test of `BRIDGE_ONLY` with the path `session`
+  for a handle, a label, and a login.
+
+### Removed
+
+- The presence check before the first lease of each bridge, `mai ui open`,
+  and `mai exec`: Touch ID, Windows Hello, and polkit. On a self-run instance,
+  a program that can use the Docker socket controls mai. Thus the keychain and
+  the prompts gave friction and no protection.
+- The command `mai approvals`, its file `approvals.json`, and the field
+  `approval` of `config.json`.
+- The build tag `presencefake`, the variable `MAI_TEST_KEYCHAIN_SERVICE`, the
+  polkit action `dev.mai.lease`, and the CI step
+  `go test -tags presencefake ./...`.
+
+### Fixed
+
+- The server refuses a value with a line break at the end for an argument
+  with a pattern. Examples are a `ref`, a `thread_ref`, and an address. Before,
+  the validator of the server used the Python rule for `$`, which also matches
+  before a line break at the end. A strict MCP client uses the ECMA-262 rule,
+  and it refused such a value.
+
 ## [3.1.1] - 2026-11-13
 
 ### Fixed
