@@ -113,6 +113,17 @@ def lease(agent_key: str) -> str:
         return json.loads(resp.read())["lease"]
 
 
+def end(token: str) -> None:
+    """End the lease. The tool logout ends only a named session of the bridge."""
+    req = urllib.request.Request(
+        URL.removesuffix("/mcp") + "/api/leases/current",
+        method="DELETE",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        assert resp.status == 204
+
+
 def ok(token: str, name: str, arguments: dict) -> dict:
     failed, out = call(token, name, arguments)
     assert not failed, out
@@ -178,8 +189,8 @@ def test_a_retry_after_a_failed_send_delivers_the_mail_once():
     while delivered(reader, subject) < 1 and time.monotonic() < deadline:
         time.sleep(0.5)
     assert delivered(reader, subject) == 1
-    ok(sender, "logout", {})
-    ok(reader, "logout", {})
+    end(sender)
+    end(reader)
 
 
 def test_a_send_after_the_idle_timeout_of_postfix_delivers_the_mail_once():
@@ -203,5 +214,5 @@ def test_a_send_after_the_idle_timeout_of_postfix_delivers_the_mail_once():
     while delivered(reader, subject) < 1 and time.monotonic() < deadline:
         time.sleep(0.5)
     assert delivered(reader, subject) == 1
-    ok(sender, "logout", {})
-    ok(reader, "logout", {})
+    end(sender)
+    end(reader)
