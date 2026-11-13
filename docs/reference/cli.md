@@ -281,7 +281,10 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   for example because no keychain is available, `mai uninstall` gives a step
   and the exit code 1. Then the manifest stays with the record of each such
   item, and the binary also stays. Thus a subsequent `mai uninstall` can
-  remove the items.
+  remove the items. Each step gives `mai uninstall --instance NAME`, unless
+  the instance is `mai` and `config.json` names it. A command with no
+  `--instance` acts on the instance of `config.json`, and that file can stay
+  for a different instance.
 - Instances in the same state folder use one key file and one manifest. Each
   record of the manifest has its instance. `mai uninstall --instance NAME`
   removes only the items of that instance. A container or a volume goes only

@@ -521,7 +521,7 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 	case u.Binary != nil && legacyStays(rs):
 		// A subsequent uninstall removes the keychain items that stay, thus the CLI stays.
 		rs = append(rs, Result{Item: "binary " + u.Binary.Path, State: Kept,
-			Detail: "it stays, because keychain items stay. Do the step of each keychain item, and then run mai uninstall again"})
+			Detail: "it stays, because keychain items stay. Do the step of each keychain item, and then run " + p.again() + " again"})
 	case u.Binary != nil && len(p.Others) > 0:
 		// The other instances need the CLI, for example for the bridges of their apps.
 		rs = append(rs, Result{Item: "binary " + u.Binary.Path, State: Kept,
@@ -854,7 +854,7 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 		} else {
 			if len(stay) > 0 {
 				fmt.Fprintf(u.out(), "The manifest %s stays with the record of the keychain items %s. "+
-					"Thus a subsequent mai uninstall can remove them.\n", p.Manifest.Path(), strings.Join(stay, ", "))
+					"Thus a subsequent %s can remove them.\n", p.Manifest.Path(), strings.Join(stay, ", "), p.again())
 			}
 			if len(recOthers) > 0 {
 				fmt.Fprintf(u.out(), "The manifest %s stays, because it holds the records of the instances: %s\n",
@@ -894,11 +894,7 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	for _, k := range extra {
 		rs = append(rs, Result{Item: "key " + k, State: Gone})
 	}
-	again := "mai uninstall"
-	if p.Instance != "mai" {
-		// The configuration goes, thus a subsequent uninstall must get the instance.
-		again += " --instance " + p.Instance
-	}
+	again := p.again()
 	for _, k := range p.Legacy {
 		item := legacyPrefix + k
 		if errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
@@ -943,6 +939,17 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	}
 	sort.Strings(others)
 	return rs, others
+}
+
+// again gives the command that does the uninstall of the instance again. A command with no
+// --instance acts on the instance of config.json, and config.json can stay for a different
+// instance. Thus the command names --instance, unless the instance is the default instance
+// and config.json names it. That config.json goes with the instance.
+func (p *Plan) again() string {
+	if p.Instance == DefaultInstance && p.Config.Instance == p.Instance {
+		return "mai uninstall"
+	}
+	return "mai uninstall --instance " + p.Instance
 }
 
 // legacyPrefix is the start of the name of the result of a legacy keychain item.

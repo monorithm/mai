@@ -90,7 +90,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   When a keychain item of the instance stays, for example because no
   keychain is available, `mai uninstall` gives a step and the exit code 1.
   Then the manifest stays with the record of each such item, and the binary
-  also stays. Thus a subsequent `mai uninstall` can remove the items.
+  also stays. Thus a subsequent `mai uninstall` can remove the items. Each
+  step gives `mai uninstall --instance NAME`, unless the instance is `mai`
+  and `config.json` names it. Thus the step does not act on the instance of
+  a `config.json` that stays for a different instance.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 - On macOS, cgo is necessary only for the Security framework, which reads and
