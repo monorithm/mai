@@ -705,7 +705,10 @@ container `mai-dev`, or the instance of the file.
 
 ### What `mai uninstall` removes
 
-1. All leases. The bridges stop at their next call.
+1. All leases, through the owner API on the host port of the container of
+   the instance. The bridges stop at their next call. When the container
+   does not run, the CLI sends no key, and the remove of the container ends
+   the leases.
 2. The container `mai`, with its anonymous volumes.
 3. The volumes `mai3-data` and `mai3-spool`, or the content of the host data
    folder that mai made. A container or a volume goes only when its label

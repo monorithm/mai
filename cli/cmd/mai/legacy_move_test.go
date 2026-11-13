@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -330,7 +331,10 @@ func TestUninstallOfA31InstallWithNoUpgradeRemovesEachKeychainItem(t *testing.T)
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	u := &uninstall.Uninstaller{Engine: emptyEngine{}, Keys: kf, Dirs: dirs, Yes: true, Out: &out}
+	// The engine of the test has no container, thus no host port of a container gives the
+	// server. The test gives the URL of the fake server.
+	u := &uninstall.Uninstaller{Engine: emptyEngine{}, Keys: kf, Dirs: dirs, Yes: true, Out: &out,
+		BaseURL: "http://127.0.0.1:" + strconv.Itoa(configPort(t))}
 	if code := u.Run(context.Background()); code != 0 {
 		t.Fatalf("mai uninstall: exit %d\n%s", code, out.String())
 	}

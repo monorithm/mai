@@ -74,6 +74,10 @@ the CLI does not use these values of `config.json`:
   the data folder of the container that it replaces. The upgrade examines
   them before it stops that container. It does not write the image of a
   different instance to `config.json`.
+- `mai uninstall` ends the leases on the port of the container of the
+  instance. When that container does not run, it sends no key, and the
+  remove of the container ends the leases. The size of the mail data counts
+  only the volumes and the data folders of the instance.
 - When `config.json` names a different instance, each step of a command
   names `--instance NAME`.
 

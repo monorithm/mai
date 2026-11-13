@@ -15,6 +15,7 @@ import (
 
 	"github.com/moby/moby/client"
 
+	"github.com/monorithm/mai/cli/v3/internal/engine"
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -73,7 +74,7 @@ type Uninstaller struct {
 	In       io.Reader
 	Out      io.Writer
 	HTTP     *http.Client
-	BaseURL  string  // base URL of the server; empty = http://127.0.0.1:<port>
+	BaseURL  string  // base URL of the server; empty = the host port of the container of the instance
 	Binary   *Binary // nil = keep the binary
 }
 
@@ -89,6 +90,7 @@ type Plan struct {
 	Legacy     []string        // accounts of the instance with a legacy keychain item
 	LegacyErr  error           // the error of the examination of the legacy keychain
 	Paths      []string
+	DataDirs   []string // the data folders of the instance in Paths
 	Manifest   *manifest.Manifest
 	Config     Config
 	// Others holds each different instance with a key in the key file or a record in the
@@ -188,6 +190,9 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 	p.AppFiles = man.OfInstance(inst, manifest.File)
 	for _, it := range man.OfInstance(inst, manifest.Folder) {
 		p.Paths = appendNew(p.Paths, it.Path)
+		if it.Name == "data" {
+			p.DataDirs = appendNew(p.DataDirs, it.Path)
+		}
 	}
 	p.Paths = appendNew(p.Paths, u.Dirs.Cache)
 	p.Paths = appendNew(p.Paths, u.Dirs.State)
@@ -316,8 +321,10 @@ func (u *Uninstaller) dataSize(ctx context.Context, p *Plan) string {
 			}
 		}
 	}
-	if p.Config.DataDir != "" {
-		_ = filepath.WalkDir(p.Config.DataDir, func(_ string, d fs.DirEntry, err error) error {
+	// The data folder of config.json can be of a different instance. Thus only the data
+	// folders of the instance count.
+	for _, dir := range p.DataDirs {
+		_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 			if err == nil && d.Type().IsRegular() {
 				if info, ierr := d.Info(); ierr == nil {
 					total += info.Size()
@@ -395,7 +402,7 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 	if u.Keys != nil {
 		ks = u.Keys
 	}
-	fmt.Fprintln(w, EndLeases(ctx, u.HTTP, u.baseURL(p), ks, p.Instance))
+	fmt.Fprintln(w, u.endLeases(ctx, p, ks))
 	rs := u.Remove(ctx, p)
 	rs = append(rs, u.Search(ctx, p.Instance)...)
 	switch {
@@ -418,11 +425,43 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 	return 0
 }
 
-func (u *Uninstaller) baseURL(p *Plan) string {
-	if u.BaseURL != "" {
-		return u.BaseURL
+// endLeases ends the leases of the instance on the host port of its container. The port of
+// config.json can be the port of a different instance, thus the owner key of the instance goes
+// only to the port of its container. When that port is not known, no key goes, and the remove
+// of the container ends the leases.
+func (u *Uninstaller) endLeases(ctx context.Context, p *Plan, ks KeySource) string {
+	base := u.BaseURL
+	if base == "" {
+		port, why := u.serverPort(ctx, p.Instance)
+		if port == 0 {
+			return "Leases: not ended, because " + why + ". The remove of the container ends them."
+		}
+		base = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d", p.Config.Port)
+	return EndLeases(ctx, u.HTTP, base, ks, p.Instance)
+}
+
+// serverPort gives the host port of the HTTP API of the container of the instance, when the
+// container runs. Else it gives 0 and the cause.
+func (u *Uninstaller) serverPort(ctx context.Context, instance string) (int, string) {
+	r, err := u.Engine.ContainerInspect(ctx, instance, client.ContainerInspectOptions{})
+	switch {
+	case IsNotFound(err):
+		return 0, "the instance " + instance + " has no container"
+	case err != nil:
+		return 0, "the examination of the container " + instance + " failed: " + err.Error()
+	}
+	c := r.Container
+	switch {
+	case c.Config == nil || !managedBy(c.Config.Labels, instance):
+		return 0, "the container " + instance + " has no label of the instance " + instance
+	case c.State == nil || !c.State.Running:
+		return 0, "the container " + instance + " does not run"
+	}
+	if port := engine.HostPort(c); port != 0 {
+		return port, ""
+	}
+	return 0, "the container " + instance + " has no host port of the HTTP API"
 }
 
 // Report writes one line for each result.

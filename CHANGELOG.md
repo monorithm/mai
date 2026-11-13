@@ -128,6 +128,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `mai uninstall --instance NAME` ends the leases on the port of the
+  container of that instance. When the container does not run, the
+  uninstall sends no key and tells this in a line. Then the remove of the
+  container ends the leases. Before, the uninstall sent the owner key of the
+  instance to the port of `config.json`, which can be the server of a
+  different instance. The size of the mail data also counts only the
+  volumes and the data folders of the instance.
 - `mai status --instance NAME` and `mai doctor --instance NAME` use the port
   of the container of that instance. Before, they used the port of the
   instance of `config.json`. Thus `mai status` showed the port and the
