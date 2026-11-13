@@ -16,6 +16,8 @@
 package keys
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -172,7 +174,7 @@ func (f *File) inFile(account string) (string, error) {
 // meantime, that key stays, and move gives it. Then same is false if the legacy item holds a
 // different key.
 func (f *File) move(account string) (key string, same bool, err error) {
-	secret, err := f.legacy.Get(account)
+	secret, err := f.legacyGet(account)
 	switch {
 	case errors.Is(err, keychain.ErrNotFound):
 		return "", false, ErrNotFound
@@ -201,6 +203,39 @@ func (f *File) move(account string) (key string, same bool, err error) {
 		return key, false, nil
 	}
 	return key, true, nil
+}
+
+// Prefixes of the data of a keychain item that go-keyring wrote. mai 3.0 and 3.1 built on macOS
+// with no cgo wrote each item through go-keyring and /usr/bin/security. go-keyring keeps the
+// secret as "go-keyring-base64:" and the base64 of the secret. Its older versions used
+// "go-keyring-encoded:" and the hex of the secret.
+const (
+	goKeyringBase64 = "go-keyring-base64:"
+	goKeyringHex    = "go-keyring-encoded:"
+)
+
+// legacyGet reads the secret of the legacy item of the account. It decodes the data that
+// go-keyring wrote. A Store that decoded the data gives the secret, and a secret of mai never
+// starts with a prefix of go-keyring.
+func (f *File) legacyGet(account string) (string, error) {
+	data, err := f.legacy.Get(account)
+	if err != nil {
+		return "", err
+	}
+	var dec []byte
+	switch {
+	case strings.HasPrefix(data, goKeyringBase64):
+		dec, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(data, goKeyringBase64))
+	case strings.HasPrefix(data, goKeyringHex):
+		dec, err = hex.DecodeString(strings.TrimPrefix(data, goKeyringHex))
+	default:
+		return data, nil
+	}
+	if err != nil {
+		// The error of the decoder can quote the data, thus it is not shown.
+		return "", errors.New("keychain: the data of the item has a prefix of go-keyring, but it is not valid")
+	}
+	return string(dec), nil
 }
 
 // recorded tells if the manifest in the folder of the key file records a legacy keychain item
@@ -471,7 +506,7 @@ func (f *File) MoveAll(accounts []string, accepts Accepts) (MoveReport, error) {
 			}
 			continue
 		}
-		secret, err := f.legacy.Get(a)
+		secret, err := f.legacyGet(a)
 		switch {
 		case errors.Is(err, keychain.ErrNotFound):
 			continue

@@ -194,7 +194,9 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
 
 - When the key file has no key for an account, the CLI reads the keychain item
   of the account. It writes the key to the key file, and then it deletes the
-  keychain item. On macOS, the read can show one prompt for each item.
+  keychain item. On macOS, the read can show one prompt for each item. The
+  CLI reads the items of each build of mai 3.0 and 3.1, with cgo or with no
+  cgo.
 - When no keychain is available and the manifest records a keychain item for
   the account, the command gives an error with a step. Thus `mai start` does
   not make a new owner key in place of the key of the keychain item. The
