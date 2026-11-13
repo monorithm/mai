@@ -21,7 +21,11 @@ ITEM_REF = {"type": "string", "pattern": r"^itm-[a-zA-Z2-7]{12}$"}
 SESSION = {"type": "string", "pattern": r"^ses-[a-z2-7]{16}$"}
 SESSION_ARG = dict(
     SESSION,
-    description="The handle that login gave. With no handle, the call uses the pool session of the app.",
+    description=(
+        "The handle that login gave. After a login, give it in each call, also"
+        " in reply and read_message. With no handle, the call uses the pool"
+        " session of the app, which does not have the mail of the named session."
+    ),
 )
 SESSION_NAME = {
     "type": "string",
@@ -97,6 +101,35 @@ def obj(props=None, required=(), extra=False):
     return schema
 
 
+# The structured content of a tool error, {"error": {...}}. A strict MCP client
+# compares each tool result with the output schema of the tool, also an error
+# result. Thus each output schema also accepts this form.
+TOOL_ERROR = {
+    "type": "object",
+    "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "retry_safe": {"type": "boolean"},
+    },
+    "required": ["code", "message", "retry_safe"],
+}
+
+
+def with_error(outputs):
+    """OUTPUTS that also accept the structured content of a tool error.
+
+    The required fields of a result become one of two alternatives: the
+    fields of a successful result, or the field error.
+    """
+    schema = {k: v for k, v in outputs.items() if k != "required"}
+    schema["properties"] = dict(outputs.get("properties", {}), error=TOOL_ERROR)
+    required = outputs.get("required")
+    if required:
+        schema["anyOf"] = [{"required": list(required)}, {"required": ["error"]}]
+    return schema
+
+
 def out(props=None, required=()):
     schema = {"type": "object", "properties": dict(props or {})}
     if required:
@@ -131,7 +164,7 @@ def tool(
         "name": name,
         "description": description,
         "inputSchema": inputs,
-        "outputSchema": outputs,
+        "outputSchema": with_error(outputs),
         "annotations": annotations,
         "group": group,
         "roles": roles,

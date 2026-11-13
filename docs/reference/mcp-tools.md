@@ -1,6 +1,6 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `3.1.0`.
+The server name is `mai`. The contract version is `3.1.1`.
 
 On HTTP, `tools/list` gives all 22 tools. For each tool call, the lease token
 of the bridge `mai mcp` is necessary as the bearer token.
@@ -140,6 +140,12 @@ command `mai agent add` adds an agent. The code of the server has no list of age
 A tool error has a `code`. Some errors also have a `path` (the argument that
 has the error).
 
+A tool error is a result with `isError` true. Its structured content is
+`{"error": {"code": ..., "message": ..., "path": ..., "retry_safe": ...}}`.
+The output schema of each tool accepts this form as an alternative to the
+fields of a successful result. Thus a strict MCP client that compares each
+result with the output schema gets the code of the error.
+
 | Code | Meaning |
 |---|---|
 | `INVALID_ARGUMENT` | An argument is not correct. |
@@ -155,7 +161,7 @@ has the error).
 | `NOT_LOGGED_IN` | The call is not possible before a login. |
 | `FORBIDDEN_ROLE` | The roles of the session do not let the session use the tool. |
 | `RECIPIENT_UNKNOWN` | The address is not known. |
-| `UNKNOWN_MESSAGE` | The `ref` is not known. |
+| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. A call with no `session` uses the pool session, which does not have the mail of a named session. |
 | `BODY_TOO_LARGE` | The body is too large. |
 | `REFUSED_HEADER` | A header is not permitted. |
 | `RETRY_KEY_REUSED` | The retry key was used with different arguments. |

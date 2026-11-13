@@ -28,9 +28,11 @@ before you log in.
    (`lane-a`) or to its login (`cursor.lane-a`). A label of the pool, for
    example `s1`, is not a named session: `login` with it gets `BAD_LABEL`.
 4. The result of `login` gives a handle, for example `ses-abcdefghijklmnop`.
-   Give the handle as the argument `session` in each subsequent tool call. The
-   call then acts as the named session. A second `login` to the same session
-   gives the same handle.
+   Give the handle as the argument `session` in each subsequent tool call,
+   also in `reply` and `read_message`. The call then acts as the named
+   session. A call with no `session` acts as the pool session, and the pool
+   session does not have the mail of the named session. A second `login` to
+   the same session gives the same handle.
 5. Call `whoami` to see your session, your agent, and your roles.
 6. Call `logout` with the handle when you stop the work on the named session.
    When the app stops, each lease ends.
@@ -85,6 +87,7 @@ is true, try the same call again after some time. These codes occur frequently:
 | `MAIL_SERVER_DOWN` | The mail server does not reply. Try again after some time. |
 | `SERVER_UNAVAILABLE` | The bridge got no lease from the server for the session of the call. Try the call again after some time. |
 | `INVALID_ARGUMENT` | An argument is not correct. `path` gives the argument. |
+| `UNKNOWN_MESSAGE` | No mailbox of the session of the call has the `ref`. After a `login`, give the handle as `session` in each call. |
 
 ## Trust rules
 

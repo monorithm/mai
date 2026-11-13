@@ -1,6 +1,6 @@
 [project]
 name = "mai"
-version = "3.1.0"
+version = "3.1.1"
 description = "mai (Mail for AI): a real mail server with an MCP overlay, for multi-agent delivery"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -17,6 +17,7 @@ mai-serve = "mai.app_main:main"
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     "pytest>=8.3",
     "ruff>=0.17.4",
     "ty>=0.0.101",
