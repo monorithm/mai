@@ -42,14 +42,8 @@ def fake_registry():
 
     reg = {t["name"]: echo(t["name"]) for t in schemas.TOOLS}
 
-    async def login(ctx, args):
-        if args.get("credential") == "mai1:cursor.lane-a:bad":
-            raise ToolError("LOGIN_FAILED")
-        return {"session": HANDLE, "login": "cursor.lane-a"}
-
     async def boom(ctx, args):
         raise RuntimeError("secret detail")
 
-    reg["login"] = login
     reg["mark_done"] = boom
     return reg

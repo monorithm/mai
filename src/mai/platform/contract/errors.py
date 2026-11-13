@@ -18,6 +18,7 @@ MESSAGES = {
     "STORE_UNAVAILABLE": "The store does not reply.",
     "BUSY": "The server is busy.",
     "INTERNAL": "An internal error occurred.",
+    "BRIDGE_ONLY": "Only the bridge mai mcp answers this tool. Use the MCP entry that mai connect writes.",
     "INVALID_TRANSITION": "The item cannot go to this state from its current state.",
     "WIP_LIMIT": "The lane has its maximum number of items in progress.",
     "SUPERVISOR_TAKEN": "The project already has a supervisor.",

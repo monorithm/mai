@@ -19,13 +19,17 @@ def _server_version() -> str:
 
 @Injectable()
 class SessionTools:
-    """The MCP tools login, logout, and whoami."""
+    """The MCP tool whoami, and the credential login and logout of a session handle.
+
+    The registry has only whoami. The bridge "mai mcp" answers the tools login
+    and logout, and the dispatcher gives BRIDGE_ONLY for them.
+    """
 
     def __init__(self, sessions: SessionService) -> None:
         self._sessions = sessions
 
     def tools(self) -> dict:
-        return {"logout": self.logout, "whoami": self.whoami}
+        return {"whoami": self.whoami}
 
     async def login(self, ctx: Ctx, args: dict) -> dict:
         client = args.get("client")
