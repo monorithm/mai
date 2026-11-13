@@ -354,7 +354,8 @@ of `cursor.s2`.
   sessions with these labels. The owner API, the server CLI, and the host CLI
   refuse `mai session new AGENT --label s1` with `BAD_LABEL`. The message
   tells the owner to use `--count`. Thus a named session never has a label of
-  the pool.
+  the pool. A label with a line break at the end is not valid, thus it cannot
+  go around this check.
 
 ### Named sessions in a chat
 
@@ -405,6 +406,13 @@ server gives a lease with no session:
 - When no pool session is free, the tool result is the error
   `NO_FREE_SESSION` with `retry_safe` true, and HTTP 200. It is not HTTP 401,
   because a 401 makes the bridge renew its lease.
+- If the owner revokes the selected pool session during this step, the
+  server tries the next free pool session. Thus `NO_FREE_SESSION` occurs only
+  when no pool session is free. A pool lease request does the same.
+- When the owner removes the agent, the lease with no session ends at its
+  next heartbeat or tool call: the server gives HTTP 401 `LEASE_UNKNOWN`. The
+  bridge then sends a new lease request and gets `BAD_KEY`. A lease on a
+  session ends in the same way, because the removal revokes its session.
 - The owner list of the leases shows the lease with `"session": null`. The
   owner list of the sessions does not show it. The commands `mai session
   end`, `mai session rotate`, and `mai session revoke` act only on the leases

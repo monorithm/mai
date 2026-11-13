@@ -30,6 +30,9 @@ the sessions with these labels.
   `BAD_LABEL`. The message tells the owner to use `--count`.
 - A `login` or a lease request with a label of the pool, for example `s2` or
   `cursor.s2`, gives `BAD_LABEL`. A chat that calls no `login` uses the pool.
+- A label, an agent name, or a login with a line break at the end is not
+  valid. For example, the owner request for the label `s1` with a line break
+  gives `BAD_LABEL`.
 
 Thus a `login` never takes a pool session, and the pool never gives a named
 session.
@@ -47,6 +50,11 @@ that limit, the lease request gives `NO_FREE_SESSION`.
 | A heartbeat | `{"session": null, "new_mail": 0}` |
 | A tool call | The server gives the lease a free pool session, then the tool runs as that session. Each subsequent heartbeat gives that session. |
 | A tool call when no pool session is free | A tool error `NO_FREE_SESSION` with `retry_safe` true, and HTTP 200. The lease stays. |
+| A tool call or a heartbeat after the owner removes the agent | HTTP 401 `LEASE_UNKNOWN`. The lease ends. The bridge then sends a new lease request and gets `BAD_KEY`. |
+
+If the owner revokes the selected pool session during the tool call, the
+server tries the next free pool session. Thus `NO_FREE_SESSION` occurs only
+when no pool session is free.
 
 The owner list of the leases shows a lease with no session with the session
 `null`. The owner list of the sessions has one row for each session, thus it

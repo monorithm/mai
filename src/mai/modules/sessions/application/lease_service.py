@@ -4,11 +4,12 @@ An app sends the agent key and gets a lease. With no session name, the lease
 is on a free pool session of the agent: the server makes the sessions
 <agent>.s1 to <agent>.s8 when necessary. When no pool session is free, the
 lease starts with no session. The first tool call of that lease then gets a
-pool session that is free at that time. With a session name, the lease is on
-that named session of the agent. A named session never has a label of the
-pool. For each lease on a session, the server gives the session a new random
-secret, logs in to the mail server with it, and keeps the secret only in the
-memory of the login.
+pool session that is free at that time. A lease with no session ends when the
+owner removes its agent. With a session name, the lease is on that named
+session of the agent. A named session never has a label of the pool. For each
+lease on a session, the server gives the session a new random secret, logs in
+to the mail server with it, and keeps the secret only in the memory of the
+login.
 """
 
 from __future__ import annotations
@@ -133,12 +134,15 @@ class LeaseService:
         async with self._lock:
             await self._expire()
             try:
+                login, handle = None, None
                 if session is None:
-                    login = await self._pool_session(agent)
+                    opened = await self._open_pool_session(agent, app)
+                    if opened is None:
+                        await self._check_unbound_limit(agent)
+                    else:
+                        login, handle = opened[0], opened[1].handle
                 else:
                     login = await self._named_session(agent, session)
-                handle = None
-                if login is not None:
                     handle = (await self._open(login, app)).handle
             except ToolError as exc:
                 raise LeaseError.of_tool_error(exc) from None
@@ -168,15 +172,17 @@ class LeaseService:
         """Keep the lease of TOKEN live. Returns the session and the count of new mail.
 
         A lease with no session gives the session None and the count 0. When
-        the count fails, the count is None.
+        the count fails, the count is None. A lease with no session ends when
+        the owner removes its agent.
         """
         lease = await self._live(token)
         lease = await self._store.seen(lease.token_hash, self.now())
         if lease is None:
             raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
-        if lease.session is None:
-            return {"session": None, "new_mail": 0}
         try:
+            if lease.session is None:
+                await self._check_agent(lease)
+                return {"session": None, "new_mail": 0}
             state = await self._state(lease)
         except ToolError as exc:
             raise LeaseError.of_tool_error(exc) from None
@@ -239,7 +245,8 @@ class LeaseService:
 
         The bind occurs one time: a call that waits for the lock gets the
         session of the first bind. With no free pool session, the call raises
-        ToolError(NO_FREE_SESSION).
+        ToolError(NO_FREE_SESSION). When the owner removed the agent, the
+        lease ends and the call raises LeaseError(LEASE_UNKNOWN).
         """
         async with self._lock:
             await self._expire()
@@ -248,15 +255,16 @@ class LeaseService:
                 raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
             if current.session is not None:
                 return current
+            await self._check_agent(current)
             try:
-                login = await self._pool_session(current.agent)
-                if login is None:
-                    raise _no_free_session(current.agent)
-                state = await self._open(login, current.app)
+                opened = await self._open_pool_session(current.agent, current.app)
             except LeaseError:
-                # The pool session is not free now, also when a revoke occurs
-                # during the bind. The next call tries again.
+                # The selected pool session cannot get a lease now. The next
+                # call tries again.
                 raise ToolError("NO_FREE_SESSION") from None
+            if opened is None:
+                raise ToolError("NO_FREE_SESSION")
+            login, state = opened
             bound = await self._store.bind(current.token_hash, login, state.handle)
             if bound is None:
                 # The lease ended during the mail login.
@@ -264,21 +272,63 @@ class LeaseService:
                 raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
             return bound
 
-    async def _pool_session(self, agent: str) -> str | None:
-        """The login of a free pool session of AGENT, or None when no pool session is free.
+    async def _check_agent(self, lease: Lease) -> None:
+        """End LEASE and raise LeaseError(LEASE_UNKNOWN) when the owner removed its agent.
 
-        None occurs only while the agent has fewer than MAX_UNBOUND_LEASES
-        leases with no session. After that limit, the call raises
-        LeaseError(NO_FREE_SESSION).
+        A lease on a session ends when the removal of the agent revokes the
+        session. A lease with no session has no session to revoke, thus it
+        needs this check.
         """
+        if not await self._credential_call(self._keys.is_active(lease.agent)):
+            await self._finish(lease)
+            raise LeaseError("LEASE_UNKNOWN", "the lease is not known")
+
+    async def _check_unbound_limit(self, agent: str) -> None:
+        """Raise LeaseError(NO_FREE_SESSION) when AGENT has its limit of leases with no session."""
+        unbound = sum(
+            1
+            for lease in await self._store.all()
+            if lease.agent == agent and lease.session is None
+        )
+        if unbound >= MAX_UNBOUND_LEASES:
+            raise _no_free_session(agent)
+
+    async def _open_pool_session(
+        self, agent: str, app: str
+    ) -> tuple[str, SessionState] | None:
+        """Give a free pool session of AGENT a new secret and a mail login.
+
+        Returns the login and the session state, or None when no pool session
+        is free. A revoke can close the selected session after the read of the
+        session list. Then the call tries the next free pool session. When the
+        session list tells that the selected session can get a lease, the
+        LeaseError of the rotate goes to the caller.
+        """
+        tried: set[str] = set()
+        while True:
+            login = await self._pool_session(agent, tried)
+            if login is None:
+                return None
+            try:
+                return login, await self._open(login, app)
+            except LeaseError:
+                if await self._is_open(agent, login):
+                    raise
+                tried.add(login)
+
+    async def _pool_session(self, agent: str, tried: set[str]) -> str | None:
+        """The login of a free pool session of AGENT that is not in TRIED, or None."""
         await self._credential_call(self._credentials.agent_add(agent))
-        leases = await self._store.all()
-        taken = {lease.session for lease in leases if lease.session is not None}
+        taken = {
+            lease.session
+            for lease in await self._store.all()
+            if lease.session is not None
+        }
         rows = await self._credential_call(self._credentials.session_list(agent))
         known = {row["login"]: row for row in rows}
         for number in range(1, MAX_SESSIONS + 1):
             login = session_login(agent, number)
-            if login in taken:
+            if login in taken or login in tried:
                 continue
             row = known.get(login)
             if row is None:
@@ -286,10 +336,14 @@ class LeaseService:
                 return login
             if row.get("status") in OPEN_STATES:
                 return login
-        unbound = sum(1 for x in leases if x.agent == agent and x.session is None)
-        if unbound >= MAX_UNBOUND_LEASES:
-            raise _no_free_session(agent)
         return None
+
+    async def _is_open(self, agent: str, login: str) -> bool:
+        """True when the session list of AGENT tells that LOGIN can get a lease."""
+        rows = await self._credential_call(self._credentials.session_list(agent))
+        return any(
+            row["login"] == login and row.get("status") in OPEN_STATES for row in rows
+        )
 
     async def _new_pool_session(self, agent: str, number: int) -> None:
         try:

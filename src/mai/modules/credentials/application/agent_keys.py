@@ -92,6 +92,15 @@ class AgentKeys:
             raise CredentialError("BAD_KEY")
         return login
 
+    async def is_active(self, name: str) -> bool:
+        """True when NAME is an agent that the owner did not remove."""
+        principal = await self._store.get(name)
+        return (
+            principal is not None
+            and principal.kind == "agent"
+            and principal.status == "active"
+        )
+
     async def _active_agent(self, name: str) -> Principal:
         principal = await self._store.get(name)
         if (

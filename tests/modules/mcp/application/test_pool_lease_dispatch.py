@@ -3,12 +3,14 @@
 import json
 
 import anyio
+import pytest
 from bustan import Module, ValueProvider
 from bustan.testing import AsgiTestClient, create_test_app
 
 from mai.modules.mcp import Dispatcher
 from mai.modules.mcp.api.mcp_controller import McpController
 from mai.modules.mcp.api.mcp_http_policy import McpHttpPolicy
+from mai.modules.mcp.application.dispatcher import LeaseRequired
 from mai.modules.mcp.application.wait_lane import WaitLane
 from mai.modules.sessions import SessionTools
 from mai.modules.sessions.domain.lease import MAX_SESSIONS
@@ -122,6 +124,23 @@ def test_a_tool_call_binds_a_free_pool_session_one_time(tmp_path):
     assert len(parts.factory.opened) == logins + 1
     # The bind took the free session: a new pool lease gets no session.
     assert anyio.run(parts.leases.acquire, parts.key, "x", "/w", 20)["session"] is None
+
+
+def test_a_tool_call_on_a_lease_with_no_session_of_a_removed_agent_needs_a_new_lease(
+    tmp_path,
+):
+    parts, pool, token = full_pool(tmp_path)
+    anyio.run(parts.leases.end, pool[0]["lease"])
+    anyio.run(parts.keys.remove, "cursor")
+    d = make_dispatcher(parts)
+    # The transport answers HTTP 401 LEASE_UNKNOWN. The bridge then renews the
+    # lease and gets BAD_KEY. A NO_FREE_SESSION result would keep the bridge on
+    # a lease that no call can use.
+    with pytest.raises(LeaseRequired):
+        tool(d, token, "whoami")
+    # The call ended the lease.
+    with pytest.raises(LeaseRequired):
+        tool(d, token, "login", {"session": "lane-a"})
 
 
 def test_a_bridge_tool_on_a_lease_with_no_session_binds_no_session(tmp_path):
