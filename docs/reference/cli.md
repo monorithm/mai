@@ -300,7 +300,9 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   of the apps also stay, because an entry names no instance. Its bridge uses
   the instance of `config.json`. Then run `mai uninstall --instance NAME` for
   each of these instances. The uninstall of the last instance removes the
-  entries.
+  entries. It removes the key file only when the file holds no key. It holds
+  the lock of the file for the check and the remove. Thus a key that a
+  different process writes during the uninstall stays.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 

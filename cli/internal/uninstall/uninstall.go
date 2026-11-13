@@ -724,13 +724,28 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 	if u.Keys != nil {
 		rs, keyOthers = u.removeKeys(rs, p)
 		if len(keyOthers) > 0 {
-			keep = append(keep, keptPath{u.Keys.Path(), "the key file with the keys of a different instance"},
-				keptPath{u.Keys.Path() + ".lock", ""})
 			fmt.Fprintf(u.out(), "The key file %s stays, because it holds the keys of the instances: %s\n",
 				u.Keys.Path(), strings.Join(keyOthers, ", "))
 		}
 	}
 	rs, keep = u.keepManifest(rs, keep, p, keyOthers)
+	// The remove of a folder never removes the key file and its lock file. A bridge or a
+	// command of a different instance can write a key to the key file during the uninstall,
+	// for example when it moves its key from the keychain. While a different instance has keys or
+	// records, the key file stays. Else dropKeys removes it with the lock, and only when it
+	// holds no key.
+	if u.Keys != nil {
+		text := ""
+		switch {
+		case len(keyOthers) > 0:
+			text = "the key file with the keys of a different instance"
+		case len(p.Others) > 0 && exists(u.Keys.Path()):
+			text = "the key file, because the instances " + strings.Join(p.Others, ", ") + " can write their keys to it"
+		}
+		// The key file is the first path of keep.
+		keep = append([]keptPath{{u.Keys.Path(), text}, {u.Keys.Path() + ".lock", ""}}, keep...)
+	}
+	keysDone, keysGone := false, false
 	// A folder that a container of a different instance mounts stays, for example its data
 	// folder in a folder of the CLI.
 	var mounted []engine.Mount
@@ -765,6 +780,19 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 				rs = append(rs, Result{Item: "folder " + f, State: Failure, Detail: err.Error()})
 				continue
 			}
+			if u.Keys != nil && len(p.Others) == 0 && within(f, u.Keys.Path()) {
+				if !keysDone {
+					keysDone = true
+					rs, keysGone = u.dropKeys(rs, p, &keep[0])
+				}
+				if keysGone {
+					removeEmpty(filepath.Dir(u.Keys.Path()), f)
+				}
+			}
+			if !exists(f) {
+				rs = append(rs, Result{Item: "folder " + f, State: Gone})
+				continue
+			}
 			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: keptText(f, keep)})
 			continue
 		}
@@ -778,6 +806,78 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}))
 	}
 	return rs
+}
+
+// dropKeys removes the key file when no other instance has keys or records. The remove occurs
+// with the lock of the key file, and only when the file holds no key (keys.File.RemoveEmpty).
+// A key that a different process wrote after the remove of the keys stays: a key of a
+// different instance with the key file, and a key of the instance as a failure. It sets the
+// text of the key file in k when the file stays. It gives true when the key file is gone.
+func (u *Uninstaller) dropKeys(rs []Result, p *Plan, k *keptPath) ([]Result, bool) {
+	rest, err := u.Keys.RemoveEmpty()
+	if err != nil {
+		k.text = "the key file, because the uninstall cannot examine it"
+		return append(rs, Result{Item: "key file " + u.Keys.Path(), State: Failure, Detail: err.Error()}), false
+	}
+	if len(rest) == 0 {
+		return rs, true
+	}
+	var others []string
+	for _, a := range rest {
+		if keys.InstanceOf(a) != p.Instance {
+			others = appendNew(others, keys.InstanceOf(a))
+			continue
+		}
+		if r := lateKey(a, p.again()); !reported(rs, r) {
+			rs = append(rs, r)
+		}
+	}
+	k.text = "the key file with a key that a different process wrote during the remove"
+	if len(others) > 0 {
+		k.text = "the key file with the keys of a different instance"
+		sort.Strings(others)
+		fmt.Fprintf(u.out(), "The key file %s stays, because a different process wrote the keys of the instances %s to it during the remove.\n",
+			u.Keys.Path(), strings.Join(others, ", "))
+	}
+	return rs, false
+}
+
+// lateKey is the failure of a key of the instance that a different process wrote to the key
+// file during the remove. again is the command that does the uninstall again.
+func lateKey(account, again string) Result {
+	return Result{Item: "key " + account, State: Failure, Detail: "a different process wrote the key during the remove. " +
+		"Stop each app that runs mai mcp, and then run " + again + " again"}
+}
+
+// reported tells if rs holds the result r.
+func reported(rs []Result, r Result) bool {
+	for _, x := range rs {
+		if x == r {
+			return true
+		}
+	}
+	return false
+}
+
+// removeEmpty removes the folder dir, and then each folder that holds it up to the folder
+// root, while the folder is empty. A folder that holds a file stays, and the folders that hold
+// it also stay.
+func removeEmpty(dir, root string) {
+	for d := dir; within(root, d); d = filepath.Dir(d) {
+		if err := os.Remove(d); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if filepath.Dir(d) == d {
+			return
+		}
+	}
+}
+
+// exists tells if a file or a folder is at the path. An error of the examination counts as a
+// path that exists.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // unownedText tells why a data folder of a record of mai 3.0 or 3.1 stays.
@@ -929,13 +1029,10 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 		}
 		others = appendNew(others, keys.InstanceOf(a))
 	}
-	if len(others) > 0 {
-		// The key file stays for the keys of the other instances. With no other instance, the
-		// key file goes with its folder.
-		for _, a := range mine {
-			rs = append(rs, Result{Item: "key " + a, State: Failure, Detail: "a different process wrote the key during the remove. " +
-				"Stop each app that runs mai mcp, and then run " + again + " again"})
-		}
+	// The remove of a folder never removes the key file. Thus a key of the instance that a
+	// different process wrote after the remove of the keys stays in it.
+	for _, a := range mine {
+		rs = append(rs, lateKey(a, again))
 	}
 	sort.Strings(others)
 	return rs, others

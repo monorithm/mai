@@ -334,6 +334,43 @@ func (f *File) OfInstance(instance string) ([]string, error) {
 	return out, err
 }
 
+// RemoveEmpty removes the key file and its lock file when the key file holds no key. The check
+// and the remove of the key file occur with the lock. Thus a key that a different process
+// writes before the remove stays. RemoveEmpty gives the accounts of a key file that stays.
+// After the remove, a process that waited for the lock writes a new key file.
+func (f *File) RemoveEmpty() ([]string, error) {
+	if _, err := os.Stat(filepath.Dir(f.path)); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	release, err := f.lock()
+	if err != nil {
+		return nil, err
+	}
+	d, err := f.read()
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if len(d.Keys) > 0 {
+		release()
+		var rest []string
+		for a := range d.Keys {
+			rest = append(rest, a)
+		}
+		sort.Strings(rest)
+		return rest, nil
+	}
+	err = os.Remove(f.path)
+	release()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("keys: remove the key file: %w", err)
+	}
+	if err := os.Remove(f.lockPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("keys: remove the lock file: %w", err)
+	}
+	return nil, nil
+}
+
 // DeleteInstance removes each key of the instance from the key file, and gives the accounts
 // that it removed, sorted. The keys of the other instances stay.
 func (f *File) DeleteInstance(instance string) ([]string, error) {
