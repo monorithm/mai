@@ -374,7 +374,7 @@ func TestAFailedReadOfTheKeychainIsNotErrNotFound(t *testing.T) {
 	}
 }
 
-func TestAFailedWriteKeepsTheLegacyItem(t *testing.T) {
+func TestAKeyFileWithABadModeMovesNoKey(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no Unix mode")
 	}
@@ -386,8 +386,45 @@ func TestAFailedWriteKeepsTheLegacyItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.Chmod(f.Path(), 0o644)
-	if _, err := f.Get(OwnerAccount("mai")); err == nil {
-		t.Fatal("get moved a key to a key file with a bad mode")
+	var me *ModeError
+	if _, err := f.Get(OwnerAccount("mai")); !errors.As(err, &me) {
+		t.Fatalf("get: %v; want a ModeError", err)
+	}
+	if ok, _ := legacy.Has(OwnerAccount("mai")); !ok {
+		t.Fatal("the legacy item is gone, and the key file has no key")
+	}
+}
+
+// chmodOnGet is a legacy keychain whose read gives the key file the mode 0644, as a
+// different program can do. Thus the read of the key file before the move succeeds, and the
+// write of the move fails.
+type chmodOnGet struct {
+	*keychain.Memory
+	path string
+}
+
+func (c chmodOnGet) Get(account string) (string, error) {
+	if err := os.Chmod(c.path, 0o644); err != nil {
+		return "", err
+	}
+	return c.Memory.Get(account)
+}
+
+func TestAFailedWriteKeepsTheLegacyItem(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix mode")
+	}
+	dir := t.TempDir()
+	legacy := keychain.NewMemory()
+	legacy.Put(OwnerAccount("mai"), ownerKey)
+	if err := Open(dir, nil).Set(AgentAccount("mai", "cursor"), agentKey); err != nil {
+		t.Fatal(err)
+	}
+	f := Open(dir, chmodOnGet{Memory: legacy, path: filepath.Join(dir, FileName)})
+	_, err := f.Get(OwnerAccount("mai"))
+	var me *ModeError
+	if !errors.As(err, &me) || !strings.Contains(err.Error(), "move "+OwnerAccount("mai")) {
+		t.Fatalf("get: %v; want the error of the write of the move", err)
 	}
 	if ok, _ := legacy.Has(OwnerAccount("mai")); !ok {
 		t.Fatal("the legacy item is gone, and the key file has no key")
