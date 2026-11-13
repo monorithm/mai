@@ -65,9 +65,20 @@ func runMCP(args []string) int {
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := stopContext()
 	defer stop()
 	return b.Run(ctx)
+}
+
+// stopSignals are the signals that stop the bridge: SIGINT, SIGTERM, and SIGHUP. A terminal
+// that closes sends SIGHUP. Windows never sends SIGHUP, thus there the list has no effect
+// for it.
+var stopSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+
+// stopContext gives the context of the bridge. It ends on a stop signal. The bridge then
+// ends each lease.
+func stopContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), stopSignals...)
 }
 
 func runHook(args []string) int {
