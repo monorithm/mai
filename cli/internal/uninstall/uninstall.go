@@ -108,9 +108,13 @@ type Plan struct {
 	keptData []keptPath
 	// mounted holds each folder of the instance that a container of a different instance
 	// mounts. It stays, and it is not in Paths.
-	mounted  []keptFolder
-	Manifest *manifest.Manifest
-	Config   Config
+	mounted []keptFolder
+	// keptImages holds the record of each image of Images that stays, because a container of
+	// a different instance uses it. Remove sets it. Each record has the instance of that
+	// container, thus the uninstall of that instance removes the image.
+	keptImages []manifest.Item
+	Manifest   *manifest.Manifest
+	Config     Config
 	// Others holds each different instance with a key in the key file or a record in the
 	// manifest, sorted. MakePlan sets it, and Remove sets it again after the remove. While
 	// it is not empty, the files of the CLI that the other instances use stay.
@@ -695,7 +699,13 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 		}))
 	}
 	for _, it := range p.Images {
-		rs = append(rs, u.removeImage(ctx, it, removed))
+		r, owner := u.removeImage(ctx, it, removed)
+		if r.State == Kept && owner != "" && owner != p.Instance {
+			it.Instance = owner
+			p.keptImages = append(p.keptImages, it)
+			r.Detail += ". Its record goes to the instance " + owner + ", thus the uninstall of " + owner + " removes it"
+		}
+		rs = append(rs, r)
 	}
 	for _, it := range p.AppEntries {
 		item := "app entry " + it.Name + " in " + it.Path
@@ -957,19 +967,27 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 	stay := legacyStay(rs)
 	recOthers := instancesExcept(p.Manifest.Instances(), p.Instance)
 	p.Others = union(keyOthers, recOthers)
-	entries := append(append([]manifest.Item(nil), p.KeptEntries...), p.KeptFiles...)
-	if len(stay) > 0 || len(recOthers) > 0 || len(entries) > 0 {
+	// The record of each app entry and file that stays gets the instance EntryOwner. The
+	// record of each image that stays gets the instance of the container that uses it.
+	var moved []manifest.Item
+	for _, it := range append(append([]manifest.Item(nil), p.KeptEntries...), p.KeptFiles...) {
+		it.Instance = p.EntryOwner
+		moved = append(moved, it)
+	}
+	entries := len(moved) > 0
+	moved = append(moved, p.keptImages...)
+	if len(stay) > 0 || len(recOthers) > 0 || len(moved) > 0 {
 		text := "the manifest with the records of the keychain items"
 		switch {
-		case len(recOthers) > 0:
+		case len(recOthers) > 0 || len(p.keptImages) > 0:
 			text = "the manifest with the records of a different instance"
-		case len(entries) > 0:
+		case entries:
 			text = "the manifest with the records of the app entries that stay"
 		}
 		// The manifest stays also when the write fails, because it can hold the records of a
 		// different instance.
 		keep = append(keep, keptPath{p.Manifest.Path(), text})
-		if err := keepRecords(p.Manifest, p.Instance, stay, entries, p.EntryOwner); err != nil {
+		if err := keepRecords(p.Manifest, p.Instance, stay, moved); err != nil {
 			rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
 		} else {
 			if len(stay) > 0 {
@@ -981,7 +999,7 @@ func (u *Uninstaller) keepManifest(rs []Result, keep []keptPath, p *Plan, keyOth
 					p.Manifest.Path(), strings.Join(recOthers, ", "))
 			}
 		}
-		if (len(recOthers) > 0 || len(entries) > 0) && len(p.Manifest.Of(manifest.AppEntry)) > 0 {
+		if (len(recOthers) > 0 || entries) && len(p.Manifest.Of(manifest.AppEntry)) > 0 {
 			keep = append(keep, keptPath{filepath.Join(u.Dirs.State, entriesFolder), "the records of the app entries of a different instance"})
 		}
 	}
@@ -1088,15 +1106,15 @@ func legacyStays(rs []Result) bool { return len(legacyStay(rs)) > 0 }
 
 // keepRecords removes each record of the instance from the manifest, except the record of
 // each legacy keychain item of stay. A subsequent uninstall reads the records, and removes the
-// items. The records of the other instances stay. The record of each item of entries also
-// stays, with the instance owner.
-func keepRecords(m *manifest.Manifest, instance string, stay []string, entries []manifest.Item, owner string) error {
+// items. The records of the other instances stay. The record of each item of moved also
+// stays, with the instance of the item.
+func keepRecords(m *manifest.Manifest, instance string, stay []string, moved []manifest.Item) error {
 	want := map[string]bool{}
 	for _, a := range stay {
 		want[a] = true
 	}
 	kept := func(it manifest.Item) bool {
-		for _, e := range entries {
+		for _, e := range moved {
 			if e.Type == it.Type && e.Name == it.Name && e.Path == it.Path && e.Pointer == it.Pointer {
 				return true
 			}
@@ -1116,8 +1134,7 @@ func keepRecords(m *manifest.Manifest, instance string, stay []string, entries [
 			return err
 		}
 	}
-	for _, it := range entries {
-		it.Instance = owner
+	for _, it := range moved {
 		if err := m.Add(it); err != nil {
 			return err
 		}
@@ -1179,33 +1196,39 @@ func removeExcept(root string, keep []string) (bool, error) {
 	return true, errors.Join(errs...)
 }
 
-func (u *Uninstaller) removeImage(ctx context.Context, it manifest.Item, removed map[string]bool) Result {
+// removeImage removes one image of the instance. An image that a different container uses
+// stays. Then owner is the instance of that container, or "" for a container with no label of
+// the CLI.
+func (u *Uninstaller) removeImage(ctx context.Context, it manifest.Item, removed map[string]bool) (r Result, owner string) {
 	ref := imageRef(it)
 	item := "image " + ref
 	info, err := u.Engine.ImageInspect(ctx, ref)
 	if IsNotFound(err) {
-		return Result{Item: item, State: Gone}
+		return Result{Item: item, State: Gone}, ""
 	}
 	if err != nil {
-		return Result{Item: item, State: Failure, Detail: err.Error()}
+		return Result{Item: item, State: Failure, Detail: err.Error()}, ""
 	}
 	list, err := u.Engine.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
-		return Result{Item: item, State: Failure, Detail: err.Error()}
+		return Result{Item: item, State: Failure, Detail: err.Error()}, ""
 	}
 	for _, c := range list.Items {
 		if removed[c.ID] {
 			continue
 		}
 		if c.ImageID == info.ID || c.ImageID == ref {
-			return Result{Item: item, State: Kept, Detail: "a different container uses it: " + strings.Join(c.Names, ",")}
+			if c.Labels[LabelManagedBy] == ManagedByValue {
+				owner = c.Labels[LabelInstance]
+			}
+			return Result{Item: item, State: Kept, Detail: "a different container uses it: " + strings.Join(c.Names, ",")}, owner
 		}
 	}
 	_, err = u.Engine.ImageRemove(ctx, ref, client.ImageRemoveOptions{Force: true, PruneChildren: true})
 	return check(item, ignoreNotFound(err), func() (bool, error) {
 		_, e := u.Engine.ImageInspect(ctx, ref)
 		return engineExists(e)
-	})
+	}), ""
 }
 
 func managedFilter(instance string) client.Filters {

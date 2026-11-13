@@ -207,7 +207,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Each record of the manifest has its instance. The CLI gives each record of
   3.0 and 3.1 the instance of its name, or the instance of the file. A
   container or a volume goes only when its label `dev.mai.instance` is the
-  instance. Before, the uninstall of one instance also removed some items of
+  instance. An image that a container of a different instance uses stays,
+  and its record goes to that instance. Thus the uninstall of the last
+  instance removes the image. Before, the uninstall of one instance also removed some items of
   the other instances in the same state folder. These items were the
   container, the volumes, the images, and the app entries. It also removed
   the records of the keychain items of these instances. Thus `mai upgrade`,
