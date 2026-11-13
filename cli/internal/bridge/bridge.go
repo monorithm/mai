@@ -6,6 +6,11 @@
 // argument session of each tool call. The bridge removes the argument and sends the call
 // with the lease of that handle. A tool call with no argument session uses the pool lease.
 //
+// When a lease ends on the server, the bridge asks for a new lease. Only a refusal of the
+// server (an HTTP 4xx answer with an error code) ends a named session in the bridge. A
+// server error, an answer with no code, or a network error keeps the session, and the next
+// call or heartbeat tries again.
+//
 // Each lease token is only in the memory of the bridge. It is never in a file, an argument,
 // or the environment. Stdout carries only JSON-RPC lines. Logs go to stderr.
 package bridge
@@ -77,11 +82,13 @@ type Bridge struct {
 	fatal   chan error
 }
 
-// apiError is an error answer of the server.
+// apiError is an error answer of the server. RetrySafe is nil when the answer does not
+// have retry_safe.
 type apiError struct {
-	Status  int
-	Code    string
-	Message string
+	Status    int
+	Code      string
+	Message   string
+	RetrySafe *bool
 }
 
 func (e *apiError) Error() string {
@@ -100,12 +107,13 @@ func readAPIError(resp *http.Response, body []byte) *apiError {
 	ae := &apiError{Status: resp.StatusCode}
 	var e struct {
 		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			RetrySafe *bool  `json:"retry_safe"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(body, &e) == nil {
-		ae.Code, ae.Message = e.Error.Code, e.Error.Message
+		ae.Code, ae.Message, ae.RetrySafe = e.Error.Code, e.Error.Message, e.Error.RetrySafe
 	}
 	return ae
 }
@@ -205,26 +213,24 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 		b.writeError(nil, -32700, "parse error")
 		return nil
 	}
-	l, line, ok := b.route(ctx, id, hasID, line)
+	l, line, isCall, ok := b.route(ctx, id, hasID, line)
 	if !ok {
 		return nil
 	}
 	token := l.current()
 	answer, err := b.post(ctx, token, line)
 	if isLeaseUnknown(err) {
-		b.logf("the server does not know the lease of the session %s; the bridge asks for a new lease", l.session())
+		b.logf("the server does not know the lease of %s; the bridge asks for a new lease", l.describe())
 		if rerr := b.renew(ctx, l, token); rerr != nil {
-			return b.renewFailed(id, hasID, l, rerr)
+			return b.renewFailed(id, hasID, isCall, l, rerr)
 		}
 		answer, err = b.post(ctx, l.current(), line)
 		if isLeaseUnknown(err) {
-			if l.handle == "" {
-				b.writeError(id, -32001, "mai: the lease ended. Start the MCP server again.")
-				return errStop
-			}
-			b.drop(l, err)
+			// The server ended the new lease immediately. The lease stays in the bridge, thus
+			// the next call or heartbeat gets a new lease.
 			if hasID {
-				b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
+				b.answerFailure(id, isCall, "SERVER_UNAVAILABLE",
+					"The server ended the new lease of "+l.describe()+" at once. Try again later.", true)
 			}
 			return nil
 		}
@@ -245,34 +251,60 @@ func (b *Bridge) handle(ctx context.Context, line []byte) error {
 }
 
 // renewFailed answers a call when the lease of its session ended and the renew failed.
-// For the pool lease, the bridge stops. A named session that the server refuses goes, and
-// the call gets the code of the server.
-func (b *Bridge) renewFailed(id json.RawMessage, hasID bool, l *lease, err error) error {
-	if l.handle == "" {
-		b.writeError(id, -32001, "mai: the lease ended and no new lease is available: "+err.Error())
-		return errStop
-	}
-	var ae *apiError
+//
+// Only an agent key that is not valid stops the bridge. A named session that the server
+// refused (isRefusal) goes, and the call gets the code of the server. For each other
+// failure, the lease stays in the bridge, and the call gets a tool error with retry_safe
+// true. The next call or heartbeat tries again.
+func (b *Bridge) renewFailed(id json.RawMessage, hasID, isCall bool, l *lease, err error) error {
 	switch {
 	case errors.Is(err, errEnded):
 		if hasID {
-			b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
+			b.answerFailure(id, isCall, "SESSION_UNKNOWN", msgUnknownHandle, false)
 		}
-	case errors.As(err, &ae):
+		return nil
+	case l.handle == "" && isBadKey(err):
+		b.writeError(id, -32001, stopText(b.Agent, err))
+		return errStop
+	case l.handle != "" && isRefusal(err):
 		b.drop(l, err)
 		if hasID {
-			code, msg := ae.Code, ae.Message
-			if code == "" {
-				code, msg = "SESSION_UNKNOWN", msgUnknownHandle
-			}
+			code, msg := refusal(b.Agent, err)
 			b.writeResult(id, toolError(code, "The session "+l.session()+" ended: "+msg))
 		}
-	default:
-		if hasID {
-			b.writeError(id, -32603, "mai: no new lease for the session "+l.session()+": "+err.Error())
-		}
+		return nil
+	}
+	b.logf("the new lease for %s failed: %v. The next call or heartbeat tries again.", l.describe(), err)
+	if hasID {
+		code, msg := unavailable(l, err)
+		b.answerFailure(id, isCall, code, msg, true)
 	}
 	return nil
+}
+
+// answerFailure answers a request with an error: a tool call gets a tool error, and a
+// different request gets a JSON-RPC error.
+func (b *Bridge) answerFailure(id json.RawMessage, isCall bool, code, message string, retrySafe bool) {
+	if isCall {
+		b.writeResult(id, sessionError(code, message, retrySafe))
+		return
+	}
+	b.writeError(id, -32603, "mai: "+code+": "+message)
+}
+
+// refusal gives the code and the message of a refused lease request.
+func refusal(agent string, err error) (string, string) {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.Code, ae.Message
+	}
+	return "BAD_KEY", "The keychain has no key for the agent " + agent + ". Run mai agent add " + agent + "."
+}
+
+// stopText is the text of the error that stops the bridge, when the agent key is not valid.
+func stopText(agent string, err error) string {
+	code, msg := refusal(agent, err)
+	return "mai: the lease ended, and the agent key is not valid: " + code + ": " + msg + " The bridge stops."
 }
 
 // post sends one line to /mcp and returns the answer lines.
@@ -357,7 +389,11 @@ func sseData(data []byte) [][]byte {
 }
 
 // Run gets the pool lease, bridges stdin to /mcp until stdin ends or ctx ends, and then
-// ends each lease of the bridge. Cancel ctx on SIGINT or SIGTERM.
+// ends each lease of the bridge. Cancel ctx on SIGINT, SIGTERM, or SIGHUP.
+//
+// The pool lease can have no session, when no pool session of the agent is free. The bridge
+// then serves the requests that use no session and the named sessions. When the start
+// gets no lease, Run stops. After the start, only an agent key that is not valid stops Run.
 func (b *Bridge) Run(ctx context.Context) int {
 	if err := harden(); err != nil {
 		b.logf("the process protection failed: %v", err)
@@ -379,7 +415,11 @@ func (b *Bridge) Run(ctx context.Context) int {
 		}
 		return ExitError
 	}
-	b.logf("the agent %s has the session %s", b.Agent, a.Session)
+	if a.Session == "" {
+		b.logNoPool()
+	} else {
+		b.logf("the agent %s has the session %s", b.Agent, a.Session)
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	b.beatCtx = ctx
@@ -424,7 +464,7 @@ func (b *Bridge) Run(ctx context.Context) int {
 		case <-ctx.Done():
 			return ExitOK
 		case err := <-b.fatal:
-			b.writeError(nil, -32001, "mai: the lease ended and no new lease is available: "+err.Error())
+			b.writeError(nil, -32001, stopText(b.Agent, err))
 			b.logf("stop: %v", err)
 			return ExitError
 		case <-stop:

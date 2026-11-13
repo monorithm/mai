@@ -18,8 +18,11 @@ import (
 // Notice is the content of a notice file. It holds no secret and no mail text.
 //
 // Session and NewMail are the pool session of the bridge. Named has one notice for each
-// named session that a chat logged in to through the bridge, in login order. A notice in
+// named session that a chat logged in to through the bridge, sorted by login. A notice in
 // Named has no Named list.
+//
+// While the pool lease of the bridge has no session, Session is "". The file then has no
+// pool entry: its JSON has only the list named.
 type Notice struct {
 	Session   string   `json:"session"`
 	NewMail   int      `json:"new_mail"`
@@ -27,10 +30,36 @@ type Notice struct {
 	Named     []Notice `json:"named,omitempty"`
 }
 
-// All gives the pool session first, then each named session.
+// MarshalJSON gives only the list named when the notice has no pool session.
+func (n Notice) MarshalJSON() ([]byte, error) {
+	type fields Notice // The same fields with no MarshalJSON, thus no recursion.
+	if n.Session == "" {
+		return json.Marshal(struct {
+			Named []Notice `json:"named,omitempty"`
+		}{n.Named})
+	}
+	return json.Marshal(fields(n))
+}
+
+// hasSession is true when the notice has the pool session or a named session.
+func (n Notice) hasSession() bool {
+	if n.Session != "" {
+		return true
+	}
+	for _, s := range n.Named {
+		if s.Session != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// All gives the pool session first, when there is one, then each named session.
 func (n Notice) All() []Notice {
 	out := make([]Notice, 0, 1+len(n.Named))
-	out = append(out, Notice{Session: n.Session, NewMail: n.NewMail, UpdatedAt: n.UpdatedAt})
+	if n.Session != "" {
+		out = append(out, Notice{Session: n.Session, NewMail: n.NewMail, UpdatedAt: n.UpdatedAt})
+	}
 	for _, s := range n.Named {
 		if s.Session != "" {
 			out = append(out, Notice{Session: s.Session, NewMail: s.NewMail, UpdatedAt: s.UpdatedAt})
@@ -87,7 +116,7 @@ func readNotice(path string) (Notice, bool) {
 		return Notice{}, false
 	}
 	var out Notice
-	if json.Unmarshal(data, &out) != nil || out.Session == "" {
+	if json.Unmarshal(data, &out) != nil || !out.hasSession() {
 		return Notice{}, false
 	}
 	return out, true

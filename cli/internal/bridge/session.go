@@ -125,11 +125,34 @@ func toolResult(structured map[string]any, isError bool) map[string]any {
 	return r
 }
 
-// toolError is a tool result with isError true and the code of the error.
-func toolError(code, message string) map[string]any {
+// toolError is a tool result with isError true, the code of the error, and retry_safe
+// false.
+func toolError(code, message string) map[string]any { return sessionError(code, message, false) }
+
+// sessionError is a tool result with isError true, the code of the error, and the path
+// session. With retrySafe true, the chat can try the same call again after some time.
+func sessionError(code, message string, retrySafe bool) map[string]any {
 	return toolResult(map[string]any{"error": map[string]any{
-		"code": code, "message": message, "path": argSession, "retry_safe": false,
+		"code": code, "message": message, "path": argSession, "retry_safe": retrySafe,
 	}}, true)
+}
+
+// loginError is the tool error of a login when the lease request is not successful. A
+// refusal of the server gives its code. A server error, an answer with no code, or a network
+// error gives a tool error that the chat can try again.
+func loginError(agent string, err error) map[string]any {
+	var ae *apiError
+	switch {
+	case errors.Is(err, errNoKey):
+		return toolError("BAD_KEY", "The keychain has no key for the agent "+agent+". Run mai agent add "+agent+".")
+	case errors.As(err, &ae) && ae.Code != "":
+		safe := ae.Status >= 500
+		if ae.RetrySafe != nil {
+			safe = *ae.RetrySafe
+		}
+		return sessionError(ae.Code, ae.Message, safe)
+	}
+	return sessionError("SERVER_UNAVAILABLE", "The login got no lease: "+err.Error()+". Try again later.", true)
 }
 
 // msgUnknownHandle is the message of SESSION_UNKNOWN for a handle that the bridge does not
@@ -182,7 +205,8 @@ func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
 	if !strings.Contains(name, ".") {
 		login = b.Agent + "." + name
 	}
-	// One login at a time. Thus two chats that log in to the same session get one lease.
+	// One login or logout at a time. Thus two chats that log in to the same session get one
+	// lease. A login also waits until a logout of the same session ends the lease.
 	b.loginMu.Lock()
 	defer b.loginMu.Unlock()
 	b.mu.Lock()
@@ -194,15 +218,7 @@ func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
 	}
 	a, err := b.request(ctx, name)
 	if err != nil {
-		var ae *apiError
-		switch {
-		case errors.As(err, &ae) && ae.Code != "":
-			b.writeResult(id, toolError(ae.Code, ae.Message))
-		case errors.Is(err, errNoKey):
-			b.writeResult(id, toolError("BAD_KEY", "The keychain has no key for the agent "+b.Agent+". Run mai agent add "+b.Agent+"."))
-		default:
-			b.writeError(id, -32603, "mai: the login failed: "+err.Error())
-		}
+		b.writeResult(id, loginError(b.Agent, err))
 		return
 	}
 	if a.Session == "" {
@@ -228,12 +244,17 @@ func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
 	b.writeResult(id, b.sessionResult(handle, a.Session))
 }
 
-// logout answers the tool logout. It ends the lease of the handle of the argument session.
+// logout answers the tool logout. It ends the heartbeat loop and the lease of the handle of
+// the argument session, and then removes the handle. A login waits for the logout (loginMu).
+// Thus a login to the same session never gets SESSION_BUSY from the lease that the logout
+// ends.
 func (b *Bridge) logout(id json.RawMessage, c toolCall) {
 	handle, _ := c.session()
+	b.loginMu.Lock()
+	defer b.loginMu.Unlock()
 	var l *lease
 	if handleRule.MatchString(handle) {
-		l = b.forget(handle)
+		l = b.namedLease(handle)
 	}
 	if l == nil {
 		b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
@@ -241,7 +262,12 @@ func (b *Bridge) logout(id json.RawMessage, c toolCall) {
 	}
 	l.cancel()
 	<-l.done
-	b.deleteLease(l.finish())
+	token := l.finish()
+	l.waitRenew()
+	b.deleteLease(token)
+	if b.namedLease(handle) == l {
+		b.forget(handle)
+	}
 	b.writeNotice()
 	b.logf("a chat logged out of the session %s", l.session())
 	b.writeResult(id, b.sessionResult(handle, l.session()))
@@ -249,44 +275,44 @@ func (b *Bridge) logout(id json.RawMessage, c toolCall) {
 
 // route selects the lease of a line. It answers login and logout itself, and then returns
 // false. For a tool call with the argument session, it gives the lease of the handle and
-// the line with no argument session.
-func (b *Bridge) route(ctx context.Context, id json.RawMessage, hasID bool, line []byte) (*lease, []byte, bool) {
+// the line with no argument session. isCall is true for a tools/call.
+func (b *Bridge) route(ctx context.Context, id json.RawMessage, hasID bool, line []byte) (l *lease, out []byte, isCall, ok bool) {
 	b.mu.Lock()
 	pool := b.pool
 	b.mu.Unlock()
 	if !hasID {
-		return pool, line, true
+		return pool, line, false, true
 	}
 	c, ok := parseToolCall(line)
 	if !ok {
-		return pool, line, true
+		return pool, line, false, true
 	}
 	switch c.name {
 	case toolLogin:
 		b.login(ctx, id, c)
-		return nil, nil, false
+		return nil, nil, true, false
 	case toolLogout:
 		b.logout(id, c)
-		return nil, nil, false
+		return nil, nil, true, false
 	}
 	if _, has := c.args[argSession]; !has {
-		return pool, line, true
+		return pool, line, true, true
 	}
-	l := pool
-	if handle, ok := c.session(); ok {
+	l = pool
+	if handle, given := c.session(); given {
 		l = nil
 		if handleRule.MatchString(handle) {
 			l = b.namedLease(handle)
 		}
-		if l == nil {
+		if l == nil || l.isEnded() {
 			b.writeResult(id, toolError("SESSION_UNKNOWN", msgUnknownHandle))
-			return nil, nil, false
+			return nil, nil, true, false
 		}
 	}
 	out, err := c.without()
 	if err != nil {
 		b.writeError(id, -32603, "mai: "+err.Error())
-		return nil, nil, false
+		return nil, nil, true, false
 	}
-	return l, out, true
+	return l, out, true, true
 }

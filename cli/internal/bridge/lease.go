@@ -18,6 +18,10 @@ import (
 
 // lease is one lease of the bridge: the pool lease, or the lease of a named session that a
 // chat logged in to. The token is only in this memory.
+//
+// The pool lease can have no session. The server gives such a lease when no pool session of
+// the agent is free. A tools/call on it can bind a free pool session to it. A subsequent
+// heartbeat then gives that session.
 type lease struct {
 	handle string             // The handle of the chat, or "" for the pool lease.
 	ctx    context.Context    // The context of the heartbeat loop.
@@ -35,11 +39,19 @@ type lease struct {
 	renewMu sync.Mutex
 }
 
-// leaseAnswer is the answer of POST /api/leases.
+// leaseAnswer is the answer of POST /api/leases. Session is "" when the answer has
+// "session": null, thus a pool lease with no session.
 type leaseAnswer struct {
 	Lease            string `json:"lease"`
 	Session          string `json:"session"`
 	HeartbeatSeconds int    `json:"heartbeat_seconds"`
+}
+
+// beatAnswer is the answer of a heartbeat. Session is nil for a lease with no session.
+// NewMail is nil when the server cannot count the new mail.
+type beatAnswer struct {
+	Session *string `json:"session"`
+	NewMail *int    `json:"new_mail"`
 }
 
 // errEnded means that the bridge ended the lease. The bridge does not renew it.
@@ -59,10 +71,28 @@ func (l *lease) setIfLive(a leaseAnswer) bool {
 		return false
 	}
 	l.token, l.interval = a.Lease, d
-	if a.Session != "" {
-		l.login = a.Session
+	if l.handle == "" || a.Session != "" {
+		l.setLogin(a.Session)
 	}
 	return true
+}
+
+// setLogin records the session of the lease. When the session changes, the count of new
+// mail goes to 0. Hold l.mu.
+func (l *lease) setLogin(login string) {
+	if login != l.login {
+		l.login, l.newMail, l.updatedAt = login, 0, ""
+	}
+}
+
+// clearLogin removes the session of the pool lease, when the pool lease has no live lease.
+// It returns true when the lease had a session.
+func (l *lease) clearLogin() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	had := l.login != ""
+	l.setLogin("")
+	return had
 }
 
 func (l *lease) current() string {
@@ -75,6 +105,14 @@ func (l *lease) session() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.login
+}
+
+// describe names the lease in a log line or a message.
+func (l *lease) describe() string {
+	if s := l.session(); s != "" {
+		return "the session " + s
+	}
+	return "the pool lease"
 }
 
 func (l *lease) wait() time.Duration {
@@ -106,8 +144,68 @@ func (l *lease) isEnded() bool {
 	return l.ended
 }
 
+// waitRenew waits until a renew of l that runs ends. A renew that ends after finish ends
+// its new lease itself (setIfLive).
+func (l *lease) waitRenew() {
+	l.renewMu.Lock()
+	defer l.renewMu.Unlock()
+}
+
 // errNoKey means that the keychain has no key for the agent.
 var errNoKey = errors.New("no agent key")
+
+// isBadKey is true when the agent key is not valid or not in the keychain. Then no lease
+// request can succeed.
+func isBadKey(err error) bool {
+	var ae *apiError
+	return errors.Is(err, errNoKey) || (errors.As(err, &ae) && ae.Code == "BAD_KEY")
+}
+
+// isRefusal is true when the server refused the lease request with an HTTP 4xx answer and an
+// error code, for example SESSION_REVOKED or SESSION_BUSY. Only a refusal ends a named
+// session. A 5xx answer, an answer with no code, and a network error do not.
+func isRefusal(err error) bool {
+	var ae *apiError
+	return errors.Is(err, errNoKey) || (errors.As(err, &ae) && ae.Code != "" && ae.Status >= 400 && ae.Status < 500)
+}
+
+// endsLease is true when the error of a renew ends l. These errors end l:
+//   - The bridge ended l.
+//   - The server refused the named session of l.
+//   - The agent key of the pool lease is not valid.
+func endsLease(l *lease, err error) bool {
+	if errors.Is(err, errEnded) {
+		return true
+	}
+	if l.handle == "" {
+		return isBadKey(err)
+	}
+	return isRefusal(err)
+}
+
+// msgNoFreeSession is the message of NO_FREE_SESSION. It is the same as the message of the
+// server.
+const msgNoFreeSession = "No pool session of the agent is free. Call login with a named session, or try again later."
+
+// unavailable gives the code and the message of a failed lease request that does not end
+// the lease l. The code is the code of the server, or SERVER_UNAVAILABLE when the answer
+// has no code.
+func unavailable(l *lease, err error) (string, string) {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Code != "" {
+		if ae.Code == "NO_FREE_SESSION" {
+			return ae.Code, msgNoFreeSession
+		}
+		return ae.Code, "The bridge got no lease for " + l.describe() + ": " + ae.Message + ". Try again later."
+	}
+	return "SERVER_UNAVAILABLE", "The bridge got no lease for " + l.describe() + ": " + err.Error() + ". Try again later."
+}
+
+// logNoPool tells that the agent has no free pool session.
+func (b *Bridge) logNoPool() {
+	b.logf("the agent %s has no free pool session. A chat can call login with a named session. "+
+		"A call with no session gets NO_FREE_SESSION until a pool session is free.", b.Agent)
+}
 
 // request sends a lease request for the named session name, or for a pool session when
 // name is "". The presence check occurs only before the first lease request of the
@@ -147,8 +245,11 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 }
 
 // renew gets a new lease for l when old is still the token of l: the same named session,
-// or a pool session for the pool lease. When a different call already renewed l, renew
+// or a new pool lease for the pool lease. When a different call renewed l before, renew
 // does nothing. There is no new presence check.
+//
+// When the request is not successful, l keeps its token. Thus the next call or heartbeat
+// gets LEASE_UNKNOWN again and tries again. The pool lease then has no session.
 func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 	l.renewMu.Lock()
 	defer l.renewMu.Unlock()
@@ -164,11 +265,14 @@ func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 	}
 	a, err := b.request(ctx, name)
 	if err != nil {
+		if l.handle == "" && l.clearLogin() {
+			b.writeNotice()
+		}
 		return err
 	}
 	before := l.session()
 	if !l.setIfLive(a) {
-		// The chat logged out during the request. End the new lease at once.
+		// The chat logged out during the request. End the new lease immediately.
 		b.deleteLease(a.Lease)
 		return errEnded
 	}
@@ -180,7 +284,11 @@ func (b *Bridge) renew(ctx context.Context, l *lease, old string) error {
 		b.byLogin[a.Session] = l.handle
 		b.mu.Unlock()
 	}
-	b.logf("the bridge has a new lease for the session %s", l.session())
+	if l.handle == "" && a.Session == "" {
+		b.logNoPool()
+	} else {
+		b.logf("the bridge has a new lease for the session %s", l.session())
+	}
 	return nil
 }
 
@@ -227,48 +335,78 @@ func (b *Bridge) heartbeatLoop(ctx context.Context, l *lease) {
 	}
 }
 
-// beat sends one heartbeat for l and writes the notice file. It returns an error only when
-// the server does not know the lease and no new lease is available.
-func (b *Bridge) beat(ctx context.Context, l *lease) error {
-	token := l.current()
-	var out struct {
-		Session string `json:"session"`
-		NewMail int    `json:"new_mail"`
-	}
+// heartbeat sends one heartbeat with the token.
+func (b *Bridge) heartbeat(ctx context.Context, token string) (beatAnswer, error) {
+	var out beatAnswer
 	hctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	err := b.callJSON(hctx, http.MethodPost, "/api/leases/current/heartbeat", token, []byte("{}"), &out)
+	return out, err
+}
+
+// beat sends one heartbeat for l and writes the notice file. When the server does not know
+// the lease, beat gets a new lease and sends the heartbeat again. It returns an error only
+// when l ends (endsLease). Each other failure does not stop the bridge: the next call or
+// heartbeat tries again.
+func (b *Bridge) beat(ctx context.Context, l *lease) error {
+	token := l.current()
+	out, err := b.heartbeat(ctx, token)
 	if ctx.Err() != nil {
 		return nil
 	}
 	if isLeaseUnknown(err) {
-		b.logf("the server does not know the lease of the session %s; the bridge asks for a new lease", l.session())
-		rerr := b.renew(ctx, l, token)
-		var ae *apiError
-		if rerr != nil && l.handle != "" && !errors.As(rerr, &ae) && !errors.Is(rerr, errEnded) {
-			// A network error does not end a named session. The next heartbeat tries again.
-			b.logf("the new lease failed: %v", rerr)
+		b.logf("the server does not know the lease of %s; the bridge asks for a new lease", l.describe())
+		if rerr := b.renew(ctx, l, token); rerr != nil {
+			if endsLease(l, rerr) {
+				return rerr
+			}
+			b.logf("the new lease failed: %v. The next call or heartbeat tries again.", rerr)
 			return nil
 		}
-		return rerr
+		token = l.current()
+		out, err = b.heartbeat(ctx, token)
+		if ctx.Err() != nil {
+			return nil
+		}
 	}
 	if err != nil {
-		// A network error does not stop the bridge. The next heartbeat tries again.
+		// A network error or a server error does not stop the bridge. The next heartbeat
+		// tries again.
 		b.logf("the heartbeat failed: %v", err)
 		return nil
 	}
+	b.record(l, token, out)
+	return nil
+}
+
+// record keeps the session and the count of new mail of a heartbeat answer, and writes the
+// notice file. A pool lease that gets a session after a bind records it.
+func (b *Bridge) record(l *lease, token string, out beatAnswer) {
 	l.mu.Lock()
 	if l.ended || l.token != token {
 		l.mu.Unlock()
-		return nil
+		return
 	}
-	if out.Session != "" {
-		l.login = out.Session
+	before := l.login
+	switch {
+	case out.Session != nil && *out.Session != "":
+		l.setLogin(*out.Session)
+	case l.handle == "":
+		l.setLogin("")
 	}
-	l.newMail, l.updatedAt = out.NewMail, time.Now().UTC().Format(time.RFC3339)
+	if out.NewMail != nil {
+		l.newMail, l.updatedAt = *out.NewMail, time.Now().UTC().Format(time.RFC3339)
+	}
+	after := l.login
 	l.mu.Unlock()
+	if l.handle == "" && after != before {
+		if after == "" {
+			b.logNoPool()
+		} else {
+			b.logf("the pool lease has the session %s", after)
+		}
+	}
 	b.writeNotice()
-	return nil
 }
 
 // drop removes a named lease that ended on the server and that the bridge cannot renew.
@@ -295,7 +433,7 @@ func (b *Bridge) deleteLease(token string) {
 	}
 }
 
-// leases gives the pool lease and the named leases in login order.
+// leases gives the pool lease and the named leases, sorted by login.
 func (b *Bridge) leases() (*lease, []*lease) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -310,7 +448,9 @@ func (b *Bridge) leases() (*lease, []*lease) {
 func (b *Bridge) noticePath() string { return hook.NoticePath(b.StateDir, b.AppPID, b.Agent) }
 
 // writeNotice writes the notice file of the bridge with mode 0600 in a folder with mode
-// 0700. The file has the pool session and each named session, and holds no secret.
+// 0700. The file has the pool session and each named session, sorted by login, and holds
+// no secret. While the pool lease has no session, the file has no pool entry. When the
+// bridge has no session, it removes the file.
 func (b *Bridge) writeNotice() {
 	b.noticeMu.Lock()
 	defer b.noticeMu.Unlock()
@@ -323,12 +463,18 @@ func (b *Bridge) writeNotice() {
 	}
 	n := pool.notice()
 	if n.Session == "" {
-		return
+		n = hook.Notice{}
 	}
 	for _, l := range named {
 		if e := l.notice(); e.Session != "" && !l.isEnded() {
 			n.Named = append(n.Named, e)
 		}
+	}
+	if n.Session == "" && len(n.Named) == 0 {
+		if err := os.Remove(b.noticePath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			b.logf("the removal of the notice file failed: %v", err)
+		}
+		return
 	}
 	dir := hook.NoticeDir(b.StateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -379,7 +525,7 @@ func (b *Bridge) endAll() {
 			continue
 		}
 		if err := b.callJSON(ctx, http.MethodDelete, "/api/leases/current", token, nil, nil); err != nil && !isLeaseUnknown(err) {
-			b.logf("the end of the lease of the session %s failed: %v", l.session(), err)
+			b.logf("the end of the lease of %s failed: %v", l.describe(), err)
 		}
 	}
 }

@@ -33,14 +33,14 @@ func TestHeartbeatGetsANewLeaseAfterAnExpiry(t *testing.T) {
 	}
 }
 
-func TestHeartbeatStopsTheBridgeWhenNoNewLeaseIsAvailable(t *testing.T) {
+func TestHeartbeatStopsTheBridgeWhenThePoolRenewGivesBadKey(t *testing.T) {
 	h := newHarness(t, memoryWithKey())
-	h.srv.mu.Lock()
-	h.srv.refuseNew = true
-	h.srv.mu.Unlock()
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"ping"}`)
 	h.recv(t)
+	h.srv.mu.Lock()
+	h.srv.refuseKey = true
+	h.srv.mu.Unlock()
 	h.srv.expire()
 	a := h.recv(t)
 	if a["id"] != nil || a["error"] == nil {
