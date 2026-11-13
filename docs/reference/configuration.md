@@ -35,7 +35,6 @@ missing file or a missing field gets the default.
 | `port` | The port on `127.0.0.1` for the HTTP endpoint of the container. | `8765` |
 | `image` | The image of the container. | `ghcr.io/monorithm/mai:<version of the CLI>` |
 | `data_dir` | A folder on the host for `/data`. Empty gives the volume `<instance>3-data`. `mai start --data-dir PATH` sets it. | Empty |
-| `approval` | The approval rule of a new lease: `each-bridge` or `app-instance`. | `each-bridge` |
 
 Example:
 
@@ -44,8 +43,7 @@ Example:
   "instance": "mai",
   "port": 8765,
   "image": "ghcr.io/monorithm/mai:3.0.0",
-  "data_dir": "",
-  "approval": "each-bridge"
+  "data_dir": ""
 }
 ```
 
@@ -57,8 +55,9 @@ Example:
 | Linux | `$XDG_CONFIG_HOME/mai` | `$XDG_STATE_HOME/mai` | `$XDG_CACHE_HOME/mai` |
 | Windows | `%AppData%\mai` | `%LocalAppData%\mai\state` | `%LocalAppData%\mai\cache` |
 
-The state folder holds the manifest `manifest.json` and the notice files of
-the bridges. No folder holds a secret.
+The state folder holds the manifest `manifest.json`, the notice files of the
+bridges, and the key file `keys.json`. Only the key file holds a secret: the
+owner key and the agent keys. Refer to [Key file](cli.md#key-file).
 
 The Postfix queue is always on the volume `<instance>3-spool`, at
 `/var/lib/mai/spool` in the container. A host folder on macOS or Windows can

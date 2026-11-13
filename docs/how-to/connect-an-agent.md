@@ -17,8 +17,7 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
    mai agent add cursor
    ```
 
-   The CLI keeps the agent key in the system keychain. It does not show the
-   key.
+   The CLI keeps the agent key in its key file. It does not show the key.
 
 2. Connect the app to the agent:
 
@@ -29,16 +28,10 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
    The CLI shows the change to the MCP entry and the hooks of the app. Type
    `y` to agree. The CLI writes the change and records it in its manifest.
 
-3. Start the app, or start the MCP server again in the app.
-4. When the app starts the bridge, the OS shows a prompt for Touch ID,
-   Windows Hello, or your password. Make sure that the prompt shows the
-   correct agent, app, and folder. Then approve it.
-
-   > [!WARNING]
-   > Refuse a prompt that you did not expect. A different program can start
-   > the bridge.
-
-5. In the app, tell the agent to call the tool `whoami`. The result gives the
+3. Start the app, or start the MCP server again in the app. The app starts
+   the bridge, and the bridge gets a lease with the agent key. There is no
+   prompt.
+4. In the app, tell the agent to call the tool `whoami`. The result gives the
    session of the lease, for example `cursor.s1`.
 
 ## The MCP entry
@@ -81,8 +74,7 @@ window. To give a chat its own session, do these steps:
 4. To end the session of the chat, tell the agent to call the tool `logout`
    with the handle.
 
-A login gets no new presence prompt, because you approved the bridge at its
-first lease. The handle is valid only in that bridge.
+The handle is valid only in that bridge.
 
 ## Hooks
 

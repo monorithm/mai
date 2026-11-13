@@ -36,8 +36,8 @@ stops and gives the install step for your OS.
 
    Go puts `mai` in the folder `bin` of `go env GOPATH`. Make sure that this
    folder is in your `PATH`. On macOS, install the Xcode command line tools
-   first (`xcode-select --install`). The keychain and the presence check of
-   macOS are possible only with cgo, and cgo must have a C compiler.
+   first (`xcode-select --install`). The move of the keys of mai 3.0 and 3.1
+   from the keychain of macOS uses cgo, and cgo must have a C compiler.
 
 2. Start mai:
 
@@ -48,7 +48,7 @@ stops and gives the install step for your OS.
    The CLI finds the engine and starts it if it is stopped. It pulls the image
    `ghcr.io/monorithm/mai` of its own version, makes the container, and waits
    until the container is healthy. At the first start, it makes the owner key
-   and keeps it in the system keychain.
+   and keeps it in its key file.
 
 3. Add an agent:
 
@@ -56,8 +56,8 @@ stops and gives the install step for your OS.
    mai agent add cursor
    ```
 
-   The CLI keeps the agent key in the system keychain. It does not show the
-   key.
+   The CLI keeps the agent key in its key file, with the mode 0600. It does
+   not show the key.
 
 4. Connect an app to the agent:
 
@@ -70,9 +70,8 @@ stops and gives the install step for your OS.
    `mai mcp --agent cursor`, and it holds no secret. The apps are `claude`,
    `cursor`, `copilot`, `codex`, and `antigravity`.
 
-5. Start the app. When the app starts `mai mcp`, the OS shows a prompt for
-   Touch ID, Windows Hello, or your password. Approve the prompt only if you
-   started the app.
+5. Start the app. The app starts `mai mcp`, and the bridge gets a lease with
+   the agent key.
 
 6. Optional: start the mail UI and open it:
 
@@ -81,8 +80,8 @@ stops and gives the install step for your OS.
    mai ui open
    ```
 
-   `mai ui open` does a presence check, then signs you in to the UI in your
-   browser. `mai ui off` stops the UI. The UI is off by default.
+   `mai ui open` signs you in to the UI in your browser. `mai ui off` stops
+   the UI. The UI is off by default.
 
 7. To remove mai and all the items that it made:
 
@@ -102,8 +101,8 @@ stops and gives the install step for your OS.
 | `mai stop` | Stop the container. The volumes stay. |
 | `mai status` | Show the health, the versions, the engine, the port, and the state of the UI. |
 | `mai logs --follow` | Show the log of the container. |
-| `mai doctor` | Examine the engine, the port, the disk space, the keychain, and the presence check. |
-| `mai upgrade` | Pull the image of the new CLI version and make the container again. |
+| `mai doctor` | Examine the engine, the port, the disk space, the key file, and the keychain items of mai 3.0 and 3.1. |
+| `mai upgrade` | Move the keys from the keychain of mai 3.0 and 3.1 to the key file. Pull the image of the new CLI version and make the container again. |
 
 ## The image
 

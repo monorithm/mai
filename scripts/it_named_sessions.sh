@@ -5,14 +5,13 @@
 # MAI_IT_NAME sets the instance (default mai-wf-ns-e2e), and MAI_IT_PORT sets
 # the host port (default 18990).
 #
-# The script builds mai with the tag presencefake into a scratch folder. Thus
-# the presence check always agrees and shows no prompt. MAI_HOME is a scratch
-# folder, and the keys go to the keychain service dev.mai.test.e2e, not to the
-# service of the user. The script refuses the instance "mai" and the port 8765.
-# It never pulls an image and never prints a key. At the end, mai uninstall
-# removes the instance, and the script does a check that no object stays.
-# It needs Go, Python 3, a container engine, and a keychain: macOS, or Linux
-# with a Secret Service.
+# The script builds mai into a scratch folder. MAI_HOME is a scratch folder,
+# thus the key file is in that folder. With MAI_HOME, the CLI uses no item of
+# the keychain. The script refuses the instance "mai" and the port 8765. It
+# never pulls an image and never prints a key. At the end, mai uninstall
+# removes the instance, and the script does a check that no object stays and
+# that the key file has no key of the instance. It needs Go, Python 3, and a
+# container engine.
 set -eu
 image=${1:-mai:wf-ns-e2e}
 instance=${MAI_IT_NAME:-mai-wf-ns-e2e}
@@ -30,8 +29,7 @@ docker image inspect "$image" >/dev/null 2>&1 || fail "the image $image is not l
 work=$(mktemp -d "${TMPDIR:-/tmp}/mai-it-ns.XXXXXX")
 mai="$work/bin/mai"
 export MAI_HOME="$work/home"
-export MAI_TEST_KEYCHAIN_SERVICE=dev.mai.test.e2e
-unset MAI_TEST_PRESENCE
+keyfile="$MAI_HOME/state/keys.json"
 
 cleanup() {
   code=$?
@@ -50,8 +48,37 @@ if docker container inspect "$instance" >/dev/null 2>&1; then
   fail "a container $instance exists. Remove it first"
 fi
 
-(cd "$root/cli" && go build -tags presencefake -o "$mai" ./cmd/mai) || fail "go build"
-echo "ok: build mai with the tag presencefake"
+(cd "$root/cli" && go build -o "$mai" ./cmd/mai) || fail "go build"
+echo "ok: build mai"
+
+# keyfile_check MODE ACCOUNT...: with MODE "has", the key file has each account,
+# the mode 0600, and a folder with the mode 0700. With MODE "none", the key
+# file does not exist or has no account of the instance. It prints no key.
+keyfile_check() {
+  python3 -I - "$keyfile" "$instance" "$@" <<'PY'
+import json, os, stat, sys
+
+path, instance, mode, accounts = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+if mode == "none":
+    if not os.path.exists(path):
+        sys.exit(0)
+    with open(path) as f:
+        names = list(json.load(f).get("keys", {}))
+    left = [a for a in names if a.rsplit("@", 1)[-1] == instance]
+    if left:
+        sys.exit("the key file has keys of the instance: " + ", ".join(left))
+    sys.exit(0)
+for p, want in ((path, 0o600), (os.path.dirname(path), 0o700)):
+    got = stat.S_IMODE(os.stat(p).st_mode)
+    if got != want:
+        sys.exit(f"{p} has the mode {got:04o}, not {want:04o}")
+with open(path) as f:
+    names = set(json.load(f).get("keys", {}))
+missing = [a for a in accounts if a not in names]
+if missing:
+    sys.exit("the key file has no key for " + ", ".join(missing))
+PY
+}
 
 "$mai" start --instance "$instance" --port "$port" --image "$image" --no-pull >"$work/start.log" 2>&1 ||
   { tail -20 "$work/start.log" >&2; fail "mai start"; }
@@ -59,6 +86,8 @@ echo "ok: mai start --instance $instance --port $port --image $image --no-pull"
 
 [ "$("$mai" agent add cursor)" = cursor ] || fail "mai agent add cursor"
 echo "ok: mai agent add cursor"
+keyfile_check has "owner@$instance" "agent:cursor@$instance" || fail "the key file"
+echo "ok: the key file has the owner key and the key of cursor, with the mode 0600 in a folder with the mode 0700"
 
 for label in lane-a lane-b lane-c; do
   out=$("$mai" session new cursor --label "$label") || fail "mai session new cursor --label $label"
@@ -508,13 +537,11 @@ if docker container inspect "$instance" >/dev/null 2>&1; then fail "the containe
 for v in "${instance}3-data" "${instance}3-spool"; do
   if docker volume inspect "$v" >/dev/null 2>&1; then fail "the volume $v stays"; fi
 done
-if [ "$(uname)" = Darwin ]; then
-  for a in "owner@$instance" "agent:cursor@$instance"; do
-    if security find-generic-password -s "$MAI_TEST_KEYCHAIN_SERVICE" -a "$a" >/dev/null 2>&1; then
-      fail "the keychain item $a stays"
-    fi
-  done
-fi
+for a in "owner@$instance" "agent:cursor@$instance"; do
+  grep -q "^gone     key $a\$" "$work/uninstall.log" || fail "mai uninstall did not remove the key $a from the key file"
+done
+keyfile_check none || fail "the key file after mai uninstall"
 docker image inspect "$image" >/dev/null 2>&1 || fail "mai uninstall removed the image $image, which it did not pull"
-echo "ok: no container, volume, keychain item, folder, or binary of $instance stays, and the image $image stays"
+echo "ok: mai uninstall removed the keys of $instance from the key file"
+echo "ok: no container, volume, key, folder, or binary of $instance stays, and the image $image stays"
 echo "all named session tests passed"

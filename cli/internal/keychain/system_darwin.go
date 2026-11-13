@@ -36,47 +36,8 @@ static OSStatus maiDelete(const char *service, const char *account) {
 	return st;
 }
 
-// maiSet removes the old item and adds a new item. The access list of the new item holds
-// only the executable of this process. Other programs get a prompt of macOS.
-static OSStatus maiSet(const char *service, const char *account, const char *label,
-		const void *data, long len) {
-	OSStatus st = maiDelete(service, account);
-	if (st != errSecSuccess && st != errSecItemNotFound) {
-		return st;
-	}
-
-	SecTrustedApplicationRef self = NULL;
-	st = SecTrustedApplicationCreateFromPath(NULL, &self);
-	if (st != errSecSuccess) {
-		return st;
-	}
-	const void *apps[] = { self };
-	CFArrayRef trusted = CFArrayCreate(NULL, apps, 1, &kCFTypeArrayCallBacks);
-	CFRelease(self);
-
-	CFStringRef desc = maiString(label);
-	SecAccessRef access = NULL;
-	st = SecAccessCreate(desc, trusted, &access);
-	CFRelease(trusted);
-	if (st != errSecSuccess) {
-		CFRelease(desc);
-		return st;
-	}
-
-	CFMutableDictionaryRef q = maiQuery(service, account);
-	CFDataRef value = CFDataCreate(NULL, (const UInt8 *)data, (CFIndex)len);
-	CFDictionarySetValue(q, kSecAttrLabel, desc);
-	CFDictionarySetValue(q, kSecValueData, value);
-	CFDictionarySetValue(q, kSecAttrAccess, access);
-	st = SecItemAdd(q, NULL);
-	CFRelease(value);
-	CFRelease(access);
-	CFRelease(desc);
-	CFRelease(q);
-	return st;
-}
-
-// maiGet copies the secret of the item into out. The caller releases out.
+// maiGet copies the secret of the item into out. The caller releases out. When the access
+// list of the item does not hold this program, macOS shows a prompt, unless noUI is 1.
 static OSStatus maiGet(const char *service, const char *account, int noUI, CFDataRef *out) {
 	CFMutableDictionaryRef q = maiQuery(service, account);
 	CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
@@ -100,6 +61,18 @@ static OSStatus maiGet(const char *service, const char *account, int noUI, CFDat
 	return errSecSuccess;
 }
 
+// maiHas finds the item and reads no secret. Thus macOS shows no prompt.
+static OSStatus maiHas(const char *service, const char *account) {
+	SecKeychainItemRef item = NULL;
+	OSStatus st = SecKeychainFindGenericPassword(NULL,
+		(UInt32)strlen(service), service, (UInt32)strlen(account), account,
+		NULL, NULL, &item);
+	if (item != NULL) {
+		CFRelease(item);
+	}
+	return st;
+}
+
 // maiDefaultUnlocked returns 1 when the default keychain is unlocked and writable.
 static int maiDefaultUnlocked(void) {
 	SecKeychainRef kc = NULL;
@@ -113,52 +86,6 @@ static int maiDefaultUnlocked(void) {
 		return 0;
 	}
 	return (status & kSecUnlockStateStatus) && (status & kSecWritePermStatus) ? 1 : 0;
-}
-
-// maiDecryptApps examines the access list of an item and reads no secret. It returns the
-// number of trusted applications of the smallest entry that permits decrypt, 0 when an
-// entry lets each application decrypt, and -1 when the item or its access list does not exist.
-static int maiDecryptApps(const char *service, const char *account) {
-	SecKeychainItemRef item = NULL;
-	OSStatus st = SecKeychainFindGenericPassword(NULL,
-		(UInt32)strlen(service), service, (UInt32)strlen(account), account,
-		NULL, NULL, &item);
-	if (st != errSecSuccess || item == NULL) {
-		return -1;
-	}
-	SecAccessRef access = NULL;
-	st = SecKeychainItemCopyAccess(item, &access);
-	CFRelease(item);
-	if (st != errSecSuccess || access == NULL) {
-		return -1;
-	}
-	CFArrayRef acls = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
-	CFRelease(access);
-	if (acls == NULL) {
-		return -1;
-	}
-	int result = -1;
-	for (CFIndex i = 0; i < CFArrayGetCount(acls); i++) {
-		SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acls, i);
-		CFArrayRef apps = NULL;
-		CFStringRef desc = NULL;
-		SecKeychainPromptSelector prompt = 0;
-		if (SecACLCopyContents(acl, &apps, &desc, &prompt) != errSecSuccess) {
-			continue;
-		}
-		int n = apps == NULL ? 0 : (int)CFArrayGetCount(apps);
-		if (apps != NULL) {
-			CFRelease(apps);
-		}
-		if (desc != NULL) {
-			CFRelease(desc);
-		}
-		if (result < 0 || n < result) {
-			result = n;
-		}
-	}
-	CFRelease(acls);
-	return result;
 }
 
 // maiErrorMessage writes the text of a status into buf.
@@ -179,38 +106,25 @@ import (
 	"unsafe"
 )
 
-// errSecItemNotFound is the status of the Security framework for an item that does not exist.
-const errSecItemNotFound = -25300
+// Status codes of the Security framework.
+const (
+	errSecItemNotFound      = -25300
+	errSecNoSuchKeychain    = -25294
+	errSecNoDefaultKeychain = -25307
+)
 
-// system returns the keychain of the OS. On macOS it is the Security framework. Each item
-// that it writes has an access list that holds only the mai executable.
-func system() Store { return securityStore{} }
+// system returns the keychain of the OS for service. On macOS it is the Security framework.
+func system(service string) Store { return securityStore{service: service} }
 
-// securityStore is a Store on the Security framework of macOS. When noUI is true, a read
-// that needs a prompt fails and macOS shows no prompt.
-type securityStore struct{ noUI bool }
-
-func (s securityStore) Set(service, account, secret string) error {
-	cs, ca := C.CString(service), C.CString(account)
-	defer C.free(unsafe.Pointer(cs))
-	defer C.free(unsafe.Pointer(ca))
-	cl := C.CString(service + " " + account)
-	defer C.free(unsafe.Pointer(cl))
-
-	data := []byte(secret)
-	defer clear(data)
-	var ptr unsafe.Pointer
-	if len(data) > 0 {
-		ptr = unsafe.Pointer(&data[0])
-	}
-	if st := C.maiSet(cs, ca, cl, ptr, C.long(len(data))); st != C.errSecSuccess {
-		return statusError("set", st)
-	}
-	return nil
+// securityStore is a Store on the Security framework of macOS for one service. When noUI is
+// true, a read that needs a prompt fails and macOS shows no prompt.
+type securityStore struct {
+	service string
+	noUI    bool
 }
 
-func (s securityStore) Get(service, account string) (string, error) {
-	cs, ca := C.CString(service), C.CString(account)
+func (s securityStore) Get(account string) (string, error) {
+	cs, ca := C.CString(s.service), C.CString(account)
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(ca))
 	noUI := C.int(0)
@@ -219,9 +133,6 @@ func (s securityStore) Get(service, account string) (string, error) {
 	}
 	var out C.CFDataRef
 	if st := C.maiGet(cs, ca, noUI, &out); st != C.errSecSuccess {
-		if st == errSecItemNotFound {
-			return "", ErrNotFound
-		}
 		return "", statusError("get", st)
 	}
 	defer C.CFRelease(C.CFTypeRef(out))
@@ -232,26 +143,29 @@ func (s securityStore) Get(service, account string) (string, error) {
 	return C.GoStringN((*C.char)(unsafe.Pointer(C.CFDataGetBytePtr(out))), C.int(n)), nil
 }
 
-func (s securityStore) Delete(service, account string) error {
-	cs, ca := C.CString(service), C.CString(account)
+func (s securityStore) Has(account string) (bool, error) {
+	cs, ca := C.CString(s.service), C.CString(account)
+	defer C.free(unsafe.Pointer(cs))
+	defer C.free(unsafe.Pointer(ca))
+	st := C.maiHas(cs, ca)
+	if st == C.errSecSuccess {
+		return true, nil
+	}
+	err := statusError("find", st)
+	if err == ErrNotFound {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s securityStore) Delete(account string) error {
+	cs, ca := C.CString(s.service), C.CString(account)
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(ca))
 	if st := C.maiDelete(cs, ca); st != C.errSecSuccess {
-		if st == errSecItemNotFound {
-			return ErrNotFound
-		}
 		return statusError("delete", st)
 	}
 	return nil
-}
-
-// decryptApps returns the number of applications in the access list of an item that can
-// read the secret. 0 means each application. -1 means no item. It reads no secret.
-func decryptApps(service, account string) int {
-	cs, ca := C.CString(service), C.CString(account)
-	defer C.free(unsafe.Pointer(cs))
-	defer C.free(unsafe.Pointer(ca))
-	return int(C.maiDecryptApps(cs, ca))
 }
 
 // defaultUnlocked tells if the default keychain is unlocked and writable.
@@ -271,7 +185,15 @@ func (e *statusErr) Error() string {
 	return fmt.Sprintf("keychain: %s: %s (status %d)", e.op, e.message, e.status)
 }
 
+// statusError gives the error of this package for a status: ErrNotFound for an item that
+// does not exist, ErrUnavailable when the user has no keychain, and else a statusErr.
 func statusError(op string, st C.OSStatus) error {
+	switch int(st) {
+	case errSecItemNotFound:
+		return ErrNotFound
+	case errSecNoSuchKeychain, errSecNoDefaultKeychain:
+		return fmt.Errorf("%w: status %d", ErrUnavailable, int(st))
+	}
 	buf := make([]byte, 256)
 	C.maiErrorMessage(st, (*C.char)(unsafe.Pointer(&buf[0])), C.long(len(buf)))
 	msg := C.GoString((*C.char)(unsafe.Pointer(&buf[0])))

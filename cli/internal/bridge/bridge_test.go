@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 )
 
 const agentKey = "mai1:cursor:abcdefghijklmnopqrstuvwxyz234567"
@@ -228,7 +228,7 @@ type harness struct {
 	in       *io.PipeWriter
 	out      *bufio.Reader
 	stderr   *syncBuffer
-	checks   atomic.Int32
+	keys     *testKeys
 	done     chan int
 	stateDir string
 }
@@ -297,19 +297,18 @@ func writeProblem(w http.ResponseWriter) {
 	_, _ = w.Write([]byte(`{"type":"about:blank","title":"Internal Server Error","status":500,"detail":"Internal server error"}`))
 }
 
-func newHarness(t *testing.T, store keychain.Store) *harness {
+func newHarness(t *testing.T, k *testKeys) *harness {
 	t.Helper()
-	h := &harness{srv: newFakeServer(), stderr: &syncBuffer{}, stateDir: t.TempDir()}
+	h := &harness{srv: newFakeServer(), stderr: &syncBuffer{}, stateDir: t.TempDir(), keys: k}
 	ts := httptest.NewServer(h.srv)
 	t.Cleanup(ts.Close)
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	h.in, h.out = inW, bufio.NewReader(outR)
 	h.b = &Bridge{
-		Agent: "cursor", Instance: "mai", Endpoint: ts.URL, Store: store, Client: ts.Client(),
+		Agent: "cursor", Instance: "mai", Endpoint: ts.URL, Keys: k, Client: ts.Client(),
 		StateDir: h.stateDir, App: "Cursor", AppPID: 4242, PID: os.Getpid(), Folder: "/work/project",
 		Stdin: inR, Stdout: outW, Stderr: h.stderr,
-		Presence: func(reason string) error { h.checks.Add(1); return nil },
 	}
 	h.done = make(chan int, 1)
 	t.Cleanup(func() { _ = inW.Close(); _ = outW.Close() })
@@ -355,10 +354,41 @@ func (h *harness) wait(t *testing.T) int {
 	}
 }
 
-func memoryWithKey() keychain.Store {
-	m := keychain.NewMemory()
-	_ = m.Set(keychain.Service, keychain.AgentAccount("mai", "cursor"), agentKey)
-	return m
+// testKeys is a key source in memory. It counts the reads.
+type testKeys struct {
+	mu    sync.Mutex
+	keys  map[string]string
+	reads atomic.Int32
+}
+
+func newTestKeys() *testKeys { return &testKeys{keys: map[string]string{}} }
+
+func (k *testKeys) Get(account string) (string, error) {
+	k.reads.Add(1)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	key, ok := k.keys[account]
+	if !ok {
+		return "", keys.ErrNotFound
+	}
+	return key, nil
+}
+
+// set writes the key of the account, as "mai agent rotate" does. An empty key removes it.
+func (k *testKeys) set(account, key string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if key == "" {
+		delete(k.keys, account)
+		return
+	}
+	k.keys[account] = key
+}
+
+func memoryWithKey() *testKeys {
+	k := newTestKeys()
+	k.set(keys.AgentAccount("mai", "cursor"), agentKey)
+	return k
 }
 
 func noticePath(h *harness) string {
@@ -428,12 +458,12 @@ func TestBridgeLeasesBridgesAndEnds(t *testing.T) {
 	if req["app"] != "Cursor" || req["folder"] != "/work/project" || req["pid"] != float64(os.Getpid()) {
 		t.Fatalf("lease request = %v", req)
 	}
-	if h.checks.Load() != 1 {
-		t.Fatalf("presence checks = %d, want 1", h.checks.Load())
+	if h.keys.reads.Load() != 1 {
+		t.Fatalf("reads of the agent key = %d, want 1", h.keys.reads.Load())
 	}
 }
 
-func TestBridgeGetsANewLeaseWithNoNewPresenceCheck(t *testing.T) {
+func TestBridgeReadsTheAgentKeyAtEachLeaseRequest(t *testing.T) {
 	h := newHarness(t, memoryWithKey())
 	h.start(context.Background())
 	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
@@ -453,8 +483,8 @@ func TestBridgeGetsANewLeaseWithNoNewPresenceCheck(t *testing.T) {
 	if len(h.srv.leaseReqs) != 2 {
 		t.Fatalf("lease requests = %v", h.srv.leaseReqs)
 	}
-	if h.checks.Load() != 1 {
-		t.Fatalf("presence checks = %d, want 1", h.checks.Load())
+	if h.keys.reads.Load() != 2 {
+		t.Fatalf("reads of the agent key = %d, want 2", h.keys.reads.Load())
 	}
 }
 
@@ -505,7 +535,7 @@ func (h *harness) recvAll(t *testing.T) []map[string]any {
 }
 
 func TestBridgeNamesTheAgentAddCommandWhenTheKeyIsNotThere(t *testing.T) {
-	h := newHarness(t, keychain.NewMemory())
+	h := newHarness(t, newTestKeys())
 	h.start(context.Background())
 	if code := h.wait(t); code != ExitError {
 		t.Fatalf("exit = %d", code)
@@ -536,16 +566,6 @@ func TestBridgeEndsTheLeaseWhenTheContextEnds(t *testing.T) {
 	}
 }
 
-func TestReasonNamesTheAgentAppFolderAndPID(t *testing.T) {
-	b := &Bridge{Agent: "cursor", App: "Cursor", Folder: "/work/p", PID: 99}
-	r := b.Reason()
-	for _, want := range []string{"cursor", "Cursor", "/work/p", "99"} {
-		if !strings.Contains(r, want) {
-			t.Errorf("reason %q has no %q", r, want)
-		}
-	}
-}
-
 func TestLoadConfigGivesTheDefaults(t *testing.T) {
 	dir := t.TempDir()
 	c, err := LoadConfig(dir)
@@ -556,7 +576,7 @@ func TestLoadConfigGivesTheDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err = LoadConfig(dir)
-	if err != nil || c.Instance != "dev" || c.Port != 18790 || c.Approval != "each-bridge" {
+	if err != nil || c.Instance != "dev" || c.Port != 18790 {
 		t.Fatalf("config = %+v, %v", c, err)
 	}
 }

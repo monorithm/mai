@@ -152,7 +152,7 @@ func loginError(agent string, err error) map[string]any {
 	var ae *apiError
 	switch {
 	case errors.Is(err, errNoKey):
-		return toolError("BAD_KEY", "The keychain has no key for the agent "+agent+". Run mai agent add "+agent+".")
+		return toolError("BAD_KEY", noKeyMessage(agent))
 	case errors.As(err, &ae) && ae.Code != "":
 		safe := ae.Status >= 500
 		if !safe && ae.RetrySafe != nil {

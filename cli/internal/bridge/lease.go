@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/monorithm/mai/cli/v3/internal/hook"
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
+	"github.com/monorithm/mai/cli/v3/internal/keys"
 )
 
 // lease is one lease of the bridge: the pool lease, or the lease of a named session that a
@@ -152,10 +152,15 @@ func (l *lease) waitRenew() {
 	defer l.renewMu.Unlock()
 }
 
-// errNoKey means that the keychain has no key for the agent.
+// errNoKey means that the key file has no key for the agent.
 var errNoKey = errors.New("no agent key")
 
-// isBadKey is true when the agent key is not valid or not in the keychain. Then no lease
+// noKeyMessage is the message of BAD_KEY when the key file has no key for the agent.
+func noKeyMessage(agent string) string {
+	return "The key file has no key for the agent " + agent + ". Run mai agent add " + agent + "."
+}
+
+// isBadKey is true when the agent key is not valid or not in the key file. Then no lease
 // request can succeed.
 func isBadKey(err error) bool {
 	var ae *apiError
@@ -215,8 +220,8 @@ func (b *Bridge) logNoPool() {
 const leaseRequestTimeout = 30 * time.Second
 
 // request sends a lease request for the named session name, or for a pool session when
-// name is "". The presence check occurs only before the first lease request of the
-// process. A subsequent request gets no prompt, because the user approved this bridge.
+// name is "". It reads the agent key from the key file for each request. Thus a new key of
+// "mai agent rotate" applies at the next lease request, with no restart of the bridge.
 //
 // When ctx ends before the request starts, request sends no request. When ctx ends after the
 // request starts, the request continues until the answer or leaseRequestTimeout. The server
@@ -224,23 +229,17 @@ const leaseRequestTimeout = 30 * time.Second
 // that the server made, and can end it: a logout or a stop of the bridge leaves no lease on
 // the server.
 func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) {
-	b.approveMu.Lock()
-	defer b.approveMu.Unlock()
-	if !b.approved {
-		if b.Presence == nil {
-			return leaseAnswer{}, errors.New("no presence check")
-		}
-		if err := b.Presence(b.Reason()); err != nil {
-			return leaseAnswer{}, fmt.Errorf("the presence check failed: %w", err)
-		}
-		b.approved = true
+	b.requestMu.Lock()
+	defer b.requestMu.Unlock()
+	if b.Keys == nil {
+		return leaseAnswer{}, errNoKey
 	}
-	key, err := b.Store.Get(keychain.Service, keychain.AgentAccount(b.Instance, b.Agent))
-	if errors.Is(err, keychain.ErrNotFound) {
+	key, err := b.Keys.Get(keys.AgentAccount(b.Instance, b.Agent))
+	if errors.Is(err, keys.ErrNotFound) {
 		return leaseAnswer{}, errNoKey
 	}
 	if err != nil {
-		return leaseAnswer{}, fmt.Errorf("the keychain read failed: %w", err)
+		return leaseAnswer{}, fmt.Errorf("the read of the agent key failed: %w", err)
 	}
 	in := map[string]any{"app": b.App, "folder": b.Folder, "pid": b.PID}
 	if name != "" {
@@ -264,7 +263,7 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 
 // renew gets a new lease for l when old is still the token of l: the same named session,
 // or a new pool lease for the pool lease. When a different call renewed l before, renew
-// does nothing. There is no new presence check.
+// does nothing.
 //
 // When the request is not successful, l keeps its token. Thus the next call or heartbeat
 // gets LEASE_UNKNOWN again and tries again. The pool lease then has no session.

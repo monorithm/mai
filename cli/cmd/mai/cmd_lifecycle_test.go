@@ -12,7 +12,6 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/monorithm/mai/cli/v3/internal/engine"
-	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
@@ -35,12 +34,6 @@ func TestLegacyMessageNamesTheCommand(t *testing.T) {
 	}
 }
 
-func TestKeychainRoundTripWithMemory(t *testing.T) {
-	if err := lcKeychainRoundTrip(keychain.NewMemory()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestLifecycleWithEngine runs the lifecycle on a real engine. It runs only when
 // MAI_IT_ENGINE is 1.
 func TestLifecycleWithEngine(t *testing.T) {
@@ -52,7 +45,6 @@ func TestLifecycleWithEngine(t *testing.T) {
 	t.Setenv("MAI_HOME", home)
 	var out, errs bytes.Buffer
 	lcOut, lcErr = &out, &errs
-	lcOwnerStore = func() keychain.Store { return keychain.NewMemory() }
 	t.Cleanup(func() {
 		ctx := context.Background()
 		e, err := engine.ConnectSystem(ctx, &errs)

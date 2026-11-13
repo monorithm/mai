@@ -18,7 +18,6 @@ const FileName = "config.json"
 const (
 	DefaultInstance = "mai"
 	DefaultPort     = 8765
-	DefaultApproval = "each-bridge"
 	ImageRepository = "ghcr.io/monorithm/mai"
 )
 
@@ -28,7 +27,6 @@ type Config struct {
 	Port     int    `json:"port"`
 	Image    string `json:"image"`
 	DataDir  string `json:"data_dir"`
-	Approval string `json:"approval"`
 }
 
 // DefaultImage is the image of the version of the CLI.
@@ -41,7 +39,6 @@ func Defaults() Config {
 		Port:     DefaultPort,
 		Image:    DefaultImage(),
 		DataDir:  "",
-		Approval: DefaultApproval,
 	}
 }
 
@@ -59,9 +56,6 @@ func (c *Config) fill() {
 	}
 	if c.Image == "" {
 		c.Image = d.Image
-	}
-	if c.Approval == "" {
-		c.Approval = d.Approval
 	}
 }
 

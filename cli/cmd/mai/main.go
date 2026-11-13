@@ -1,6 +1,6 @@
-// Command mai is the host CLI of mai 3.0. It runs the container of the mail server through
-// the Engine API, keeps the keys of the owner and of the agents in the system keychain, and
-// bridges the MCP stdio of an agent app to the HTTP endpoint of the server.
+// Command mai is the host CLI of mai 3. It runs the container of the mail server through the
+// Engine API, keeps the keys of the owner and of the agents in its key file, and bridges the
+// MCP stdio of an agent app to the HTTP endpoint of the server.
 //
 // Each command registers itself in a file cmd_<area>.go with register().
 package main

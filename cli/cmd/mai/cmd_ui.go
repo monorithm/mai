@@ -9,7 +9,6 @@ import (
 	"runtime"
 
 	"github.com/monorithm/mai/cli/v3/internal/api"
-	"github.com/monorithm/mai/cli/v3/internal/presence"
 )
 
 // uiOpenBrowser opens the URL in the default browser. The tests replace it.
@@ -68,9 +67,6 @@ func runUI(args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintln(out, "ui", onOff(on))
 	case "open":
-		if err := presence.Check("open the mail UI of mai"); err != nil {
-			return fail(errOut, err)
-		}
 		t, err := c.UITicket(ctx)
 		if err != nil {
 			if api.Code(err) == "UI_OFF" {

@@ -16,7 +16,7 @@ func TestLoadMissingFileGivesDefaults(t *testing.T) {
 	if c != Defaults() {
 		t.Fatalf("got %+v, want %+v", c, Defaults())
 	}
-	if c.Instance != "mai" || c.Port != 8765 || c.Approval != "each-bridge" || c.DataDir != "" {
+	if c.Instance != "mai" || c.Port != 8765 || c.DataDir != "" {
 		t.Fatalf("defaults are wrong: %+v", c)
 	}
 	if c.Image != "ghcr.io/monorithm/mai:"+version.Version {
@@ -33,14 +33,14 @@ func TestLoadMissingFieldGivesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Port != 18765 || c.Instance != "mai" || c.Approval != "each-bridge" || c.Image != DefaultImage() {
+	if c.Port != 18765 || c.Instance != "mai" || c.Image != DefaultImage() {
 		t.Fatalf("got %+v", c)
 	}
 }
 
 func TestSaveThenLoad(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
-	want := Config{Instance: "x", Port: 1, Image: "img:1", DataDir: "/d", Approval: "app-instance"}
+	want := Config{Instance: "x", Port: 1, Image: "img:1", DataDir: "/d"}
 	if err := Save(dir, want); err != nil {
 		t.Fatal(err)
 	}

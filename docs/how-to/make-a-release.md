@@ -37,7 +37,7 @@ The CLI is a Go module in the folder `cli`. Users install it with
 | Tag | `cli/vX.Y.Z`. Go finds the version of a module in a folder by the tag with the folder as a prefix. |
 | Install | `go install github.com/monorithm/mai/cli/v3/cmd/mai@vX.Y.Z` |
 | Version | The CLI reads `vX.Y.Z` from the build information of Go. A local build shows a version that ends in `-dev`. |
-| cgo | On macOS, the keychain and the presence check need cgo, thus a C compiler. The builds for Linux and Windows use no C compiler. |
+| cgo | On macOS, the move of the keys of 3.0 and 3.1 from the keychain uses cgo, thus a C compiler. The builds for Linux and Windows use no C compiler. |
 | Signature | None. On Apple silicon, the linker gives each binary an ad-hoc signature. |
 
 After the push of the tags, make sure that the Go module proxy has the

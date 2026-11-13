@@ -1,104 +1,106 @@
-// Package keychain keeps the keys of mai in the system keychain: the macOS Keychain, the
-// Windows Credential Manager, or the Linux Secret Service.
+// Package keychain reads and deletes the legacy items of mai in the system keychain: the
+// macOS Keychain, the Windows Credential Manager, or the Linux Secret Service.
 //
-// Service is "dev.mai". The accounts are "owner@<instance>" and "agent:<name>@<instance>".
+// mai 3.0 and 3.1 kept the owner key and the agent keys in the keychain. The CLI now keeps
+// them in its key file. This package is only for the move of the legacy items to the key
+// file and for the removal of the legacy items. It never writes an item.
+//
+// The service is "dev.mai". The accounts are "owner@<instance>" and
+// "agent:<name>@<instance>".
 package keychain
 
-import "errors"
+import (
+	"errors"
+	"sort"
+	"sync"
+)
 
-// Service is the keychain service of each item that mai writes.
+// Service is the keychain service of each legacy item of mai.
 const Service = "dev.mai"
 
 // ErrNotFound means that the item does not exist.
 var ErrNotFound = errors.New("keychain: item not found")
 
-// Store reads and writes secrets. An implementation never prints or logs a secret.
+// ErrUnavailable means that this system has no keychain that the CLI can use, for example a
+// Linux host with no Secret Service. Such a keychain holds no item of mai.
+var ErrUnavailable = errors.New("keychain: not available")
+
+// Store gives access to the legacy items of Service. An implementation never prints or logs
+// a secret.
 type Store interface {
-	Set(service, account, secret string) error
-	Get(service, account string) (string, error)
-	Delete(service, account string) error
+	// Get reads the secret of the item of account.
+	Get(account string) (string, error)
+	// Has tells if the item of account exists. When it can, it reads no secret and shows no
+	// prompt.
+	Has(account string) (bool, error)
+	// Delete removes the item of account. It gives ErrNotFound when the item does not exist.
+	Delete(account string) error
 }
 
-// System returns the keychain of the OS. In a test build, the variable
-// MAI_TEST_KEYCHAIN_SERVICE can move each item of Service to a test service (movedService).
-// A release build always uses Service.
-func System() Store {
-	s := system()
-	if t := movedService(); t != "" {
-		return testStore{Store: s, service: t}
-	}
-	return s
+// System returns the keychain of the OS, with the items of Service.
+func System() Store { return system(Service) }
+
+// Memory is a Store in memory, for tests. When Err is not nil, each call gives Err.
+type Memory struct {
+	mu    sync.Mutex
+	items map[string]string
+	Err   error
 }
-
-// testStore keeps each item of Service in the test service. Thus a test of the mai binary
-// does not change the items of the user.
-type testStore struct {
-	Store
-	service string
-}
-
-func (t testStore) name(service string) string {
-	if service == Service {
-		return t.service
-	}
-	return service
-}
-
-func (t testStore) Set(service, account, secret string) error {
-	return t.Store.Set(t.name(service), account, secret)
-}
-
-func (t testStore) Get(service, account string) (string, error) {
-	return t.Store.Get(t.name(service), account)
-}
-
-func (t testStore) Delete(service, account string) error {
-	return t.Store.Delete(t.name(service), account)
-}
-
-// ServiceFor gives the service in which the store keeps the items of service.
-func (t testStore) ServiceFor(service string) string { return t.name(service) }
-
-// ServiceOf gives the service in which store keeps the items of service. For the store of a
-// test build with a test service, it gives the test service for Service. Use it to show the
-// service of an item.
-func ServiceOf(store Store, service string) string {
-	if m, ok := store.(interface{ ServiceFor(string) string }); ok {
-		return m.ServiceFor(service)
-	}
-	return service
-}
-
-// OwnerAccount is the account of the owner key of an instance.
-func OwnerAccount(instance string) string { return "owner@" + instance }
-
-// AgentAccount is the account of the key of one agent of an instance.
-func AgentAccount(instance, agent string) string { return "agent:" + agent + "@" + instance }
-
-// Memory is a Store in memory, for tests.
-type Memory struct{ items map[string]string }
 
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{items: map[string]string{}} }
 
-func (m *Memory) Set(service, account, secret string) error {
-	m.items[service+"\x00"+account] = secret
-	return nil
+// Put adds or replaces the item of account. Only a test writes an item.
+func (m *Memory) Put(account, secret string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.items[account] = secret
 }
 
-func (m *Memory) Get(service, account string) (string, error) {
-	s, ok := m.items[service+"\x00"+account]
+// Accounts gives the account of each item, sorted.
+func (m *Memory) Accounts() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, 0, len(m.items))
+	for a := range m.items {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (m *Memory) Get(account string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return "", m.Err
+	}
+	s, ok := m.items[account]
 	if !ok {
 		return "", ErrNotFound
 	}
 	return s, nil
 }
 
-func (m *Memory) Delete(service, account string) error {
-	k := service + "\x00" + account
-	if _, ok := m.items[k]; !ok {
+func (m *Memory) Has(account string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return false, m.Err
+	}
+	_, ok := m.items[account]
+	return ok, nil
+}
+
+func (m *Memory) Delete(account string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return m.Err
+	}
+	if _, ok := m.items[account]; !ok {
 		return ErrNotFound
 	}
-	delete(m.items, k)
+	delete(m.items, account)
 	return nil
 }

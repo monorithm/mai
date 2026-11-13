@@ -97,7 +97,8 @@ jobs:
 
   cli:
     # The Go CLI on the host: build, vet, and tests on each OS. The macOS build uses cgo for the
-    # Security framework and LocalAuthentication. The cross builds on Linux use no cgo.
+    # Security framework, which reads and removes the legacy keychain items. The cross builds on
+    # Linux use no cgo.
     name: CLI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -119,8 +120,6 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
-      # The fake presence check. The tests make no Touch ID, Windows Hello, or password prompt.
-      - run: go test -tags presencefake ./...
       - name: Cross builds with no cgo
         if: runner.os == 'Linux'
         env:

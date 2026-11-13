@@ -15,7 +15,7 @@ const (
 	Container   = "container"
 	Volume      = "volume"
 	Image       = "image"
-	KeychainKey = "keychain"
+	KeychainKey = "keychain"  // a legacy keychain item of mai 3.0 or 3.1; the CLI adds no new record
 	AppEntry    = "app-entry" // a change that mai connect wrote in a file of an app
 	Folder      = "folder"
 	File        = "file"
@@ -24,7 +24,7 @@ const (
 // Item is one thing that mai made.
 type Item struct {
 	Type    string `json:"type"`
-	Name    string `json:"name"`              // container, volume, or keychain account; the app for an app entry
+	Name    string `json:"name"`              // container, volume, or account of a key; the app for an app entry
 	ID      string `json:"id,omitempty"`      // engine ID
 	Path    string `json:"path,omitempty"`    // file of an app, folder, or file
 	Pointer string `json:"pointer,omitempty"` // JSON pointer of the entry in the file of an app

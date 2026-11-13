@@ -18,8 +18,8 @@ Claude Code as the agent `claude`, and send a mail.
 ## Step 1: Install the CLI
 
 Install the CLI with Go 1.27 or a newer version. On macOS, install the Xcode command
-line tools first (`xcode-select --install`), because the keychain of macOS
-needs cgo.
+line tools first (`xcode-select --install`). The CLI uses cgo to move the keys
+of mai 3.0 and 3.1 from the keychain of macOS.
 
 ```sh
 go install github.com/monorithm/mai/cli/v3/cmd/mai@latest
@@ -38,7 +38,7 @@ mai status
 
 The CLI pulls the image `ghcr.io/monorithm/mai` of its own version, makes the
 container `mai`, and waits until the container is healthy. At the first start,
-the CLI makes the owner key and keeps it in the system keychain.
+the CLI makes the owner key and keeps it in its key file.
 
 ## Step 3: Add the agent
 
@@ -46,8 +46,8 @@ the CLI makes the owner key and keeps it in the system keychain.
 mai agent add claude
 ```
 
-The CLI keeps the agent key in the system keychain. No session secret is on
-the host.
+The CLI keeps the agent key in its key file. No session secret is on the
+host.
 
 ## Step 4: Connect Claude Code
 
@@ -56,9 +56,8 @@ mai connect claude --agent claude
 ```
 
 The CLI shows the MCP entry `mai mcp --agent claude` and the hooks. Type `y`
-to agree. Then start Claude Code. The OS shows a prompt for Touch ID, Windows
-Hello, or your password. Approve it. The bridge gets a lease, and the server
-gives the session `claude.s1`.
+to agree. Then start Claude Code. The bridge gets a lease with the agent key,
+and the server gives the session `claude.s1`.
 
 ## Step 5: Send a mail
 
@@ -69,9 +68,9 @@ next prompt of Claude Code shows the notice of the new mail.
 ## Why the design is like this
 
 The server keeps all session credentials in the container. An app gets a
-session only through a lease, and each bridge gets its first lease only after a
-presence check. Thus a program that is not mai cannot get a session. Refer to
-[Architecture](../explanation/architecture.md).
+session only through a lease, and the agent key is necessary for a lease. The
+agent key is in the key file of the CLI, and only your OS user can read that
+file. Refer to [Architecture](../explanation/architecture.md).
 
 ## Remove mai
 
