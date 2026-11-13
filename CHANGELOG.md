@@ -218,7 +218,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mount at `/data`, or the instance of `config.json` with that `data_dir`.
   When no instance is known, the folder stays, and `mai uninstall` tells
   this. `mai uninstall` never removes a folder that a container of a
-  different instance mounts. Before, the uninstall of the instance of the
+  different instance mounts. The recorded data folder of a different
+  instance also stays when no container has it as a mount. The remove of a folder
+  of the CLI keeps each data folder that stays in it. Before, the remove of
+  the configuration folder deleted such a folder, also when the report told
+  that it stayed. Before, the uninstall of the instance of the
   file removed the data folder of a different instance.
 - When the bridge gets no new pool lease, a tool call with no argument
   `session` gets a tool error with no path. Examples are `MAIL_SERVER_DOWN`

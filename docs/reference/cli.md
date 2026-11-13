@@ -308,7 +308,10 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   folder of mai 3.0 or 3.1 has no instance. The container with the folder as
   its mount at `/data`, or `config.json` with that `data_dir`, tells its
   instance. When no instance is known, the folder stays. The uninstall never
-  removes a folder that a container of a different instance mounts. While a
+  removes a folder that a container of a different instance mounts. The
+  data folder of a different instance also stays when no container has it
+  as a mount. A data folder that stays is kept also when it is in a folder of the
+  CLI, for example in the configuration folder. While a
   different instance has keys in the key file or records in the manifest,
   some files stay. The key file stays, and the manifest stays with the
   records of the other instances. The configuration file of such an instance

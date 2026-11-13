@@ -102,6 +102,10 @@ type Plan struct {
 	// Unowned holds each data folder of a record of mai 3.0 or 3.1 whose instance is not
 	// known. It stays.
 	Unowned []string
+	// keptData holds each data folder that stays: a folder of Unowned, and each data folder of
+	// a different instance. The remove of a folder of the CLI that holds such a folder keeps
+	// it.
+	keptData []keptPath
 	// mounted holds each folder of the instance that a container of a different instance
 	// mounts. It stays, and it is not in Paths.
 	mounted  []keptFolder
@@ -211,6 +215,16 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 			man.Assign(it, inst)
 		case "":
 			p.Unowned = appendNew(p.Unowned, it.Path)
+			p.keptData = append(p.keptData, keptPath{it.Path, "the data folder " + it.Path + " of mai 3.0 or 3.1, whose instance is not known"})
+		default:
+			p.keptData = append(p.keptData, keptPath{it.Path, dataText(it.Path, owner)})
+		}
+	}
+	// A data folder of a different instance stays, also when no container mounts it at this
+	// time, for example after a start that did not make the container.
+	for _, it := range man.Of(manifest.Folder) {
+		if it.Name == manifest.DataFolder && it.Instance != "" && it.Instance != inst {
+			p.keptData = append(p.keptData, keptPath{it.Path, dataText(it.Path, it.Instance)})
 		}
 	}
 	for _, it := range man.OfInstance(inst, manifest.Folder) {
@@ -259,6 +273,11 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 		}
 	}
 	return p, nil
+}
+
+// dataText tells that a folder is the data folder of an instance.
+func dataText(dir, instance string) string {
+	return "the data folder " + dir + " of the instance " + instance
 }
 
 // dataOwner gives the instance of a data folder: the instance of the container that mounts the
@@ -756,6 +775,7 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 				" of the instance " + m.Instance + " mounts"})
 		}
 	}
+	keep = append(keep, p.keptData...)
 	paths := make([]string, 0, len(keep))
 	for _, k := range keep {
 		paths = append(paths, k.path)
