@@ -207,9 +207,20 @@ func (b *Bridge) logNoPool() {
 		"A call with no session gets NO_FREE_SESSION until a pool session is free.", b.Agent)
 }
 
+// leaseRequestTimeout is the longest time that the bridge waits for the answer of a lease
+// request. The server logs in to the mail server before it answers, thus the answer can
+// take some seconds.
+const leaseRequestTimeout = 30 * time.Second
+
 // request sends a lease request for the named session name, or for a pool session when
 // name is "". The presence check occurs only before the first lease request of the
 // process. A subsequent request gets no prompt, because the user approved this bridge.
+//
+// When ctx ends before the request starts, request sends no request. When ctx ends after the
+// request starts, the request continues until the answer or leaseRequestTimeout. The server
+// makes the lease before it answers. Thus the caller always gets the token of each lease
+// that the server made, and can end it: a logout or a stop of the bridge leaves no lease on
+// the server.
 func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) {
 	b.approveMu.Lock()
 	defer b.approveMu.Unlock()
@@ -234,8 +245,13 @@ func (b *Bridge) request(ctx context.Context, name string) (leaseAnswer, error) 
 		in["session"] = name
 	}
 	body, _ := json.Marshal(in)
+	if err := ctx.Err(); err != nil {
+		return leaseAnswer{}, err
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseRequestTimeout)
+	defer cancel()
 	var out leaseAnswer
-	if err := b.callJSON(ctx, http.MethodPost, "/api/leases", key, body, &out); err != nil {
+	if err := b.callJSON(rctx, http.MethodPost, "/api/leases", key, body, &out); err != nil {
 		return leaseAnswer{}, err
 	}
 	if !strings.HasPrefix(out.Lease, "lease_") {
@@ -357,6 +373,10 @@ func (b *Bridge) beat(ctx context.Context, l *lease) error {
 	if isLeaseUnknown(err) {
 		b.logf("the server does not know the lease of %s; the bridge asks for a new lease", l.describe())
 		if rerr := b.renew(ctx, l, token); rerr != nil {
+			if ctx.Err() != nil {
+				// A logout or the stop of the bridge ends l.
+				return nil
+			}
 			if endsLease(l, rerr) {
 				return rerr
 			}

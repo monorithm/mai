@@ -248,6 +248,9 @@ func (b *Bridge) login(ctx context.Context, id json.RawMessage, c toolCall) {
 // the argument session, and then removes the handle. A login waits for the logout (loginMu).
 // Thus a login to the same session never gets SESSION_BUSY from the lease that the logout
 // ends.
+//
+// When the heartbeat loop waits for the answer of a lease request, the logout waits for that
+// answer, and then ends the new lease also (request).
 func (b *Bridge) logout(id json.RawMessage, c toolCall) {
 	handle, _ := c.session()
 	b.loginMu.Lock()
