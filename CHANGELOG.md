@@ -25,6 +25,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The migration 420 gives a state to each retry key from 3.0.1. A key whose
   mail has an envelope record gets the state `sent`. Each other key gets the
   state `failed`, thus a retry of the key sends the mail.
+- `DELETE /api/agents/{name}` removes the agent. In 3.0.1, the removal deleted
+  the row of the agent key, but the app role has no DELETE right. Thus the
+  request gave HTTP 500 and the agent stayed. The removal keeps the row and
+  removes the hash of the key from it. The migration 211 lets the column
+  `key_hash` have no value.
 
 ## [3.0.1] - 2026-11-12
 
