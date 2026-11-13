@@ -15,7 +15,7 @@ mai has two command lines with the name `mai`:
 | `mai pause`, `mai resume` | Freezes and resumes the container. |
 | `mai status` | Shows the health, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI. |
 | `mai logs [--follow]` | Shows the log of the container. |
-| `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It reads no key and shows no prompt. |
+| `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It shows no key. On macOS, it reads no key and shows no prompt. |
 | `mai upgrade` | Moves the keys of the instance from the keychain of mai 3.0 and 3.1 to the key file. Then pulls the image of the new CLI version and makes the container again. |
 | `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes all items of the manifest, the keys of the instance in the key file, and each keychain item of the instance. `--legacy` removes a 2.x install. |
 | `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |

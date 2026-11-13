@@ -80,7 +80,8 @@ stops and gives the install step for your OS.
    mai ui open
    ```
 
-   `mai ui open` signs you in to the UI in your browser. `mai ui off` stops the UI. The UI is off by default.
+   `mai ui open` signs you in to the UI in your browser. `mai ui off` stops
+   the UI. The UI is off by default.
 
 7. To remove mai and all the items that it made:
 
