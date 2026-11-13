@@ -727,7 +727,7 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 	for _, it := range p.KeptEntries {
 		rs = append(rs, Result{Item: "app entry " + it.Name + " in " + it.Path, State: Kept,
 			Detail: "it stays, because the instances " + strings.Join(p.Others, ", ") + " have keys or records. " +
-				"The entry names no instance, thus its bridge uses the instance of config.json. To remove it, run mai disconnect " + it.Name})
+				p.entryText() + " To remove it, run mai disconnect " + it.Name})
 	}
 	for _, it := range p.KeptFiles {
 		rs = append(rs, Result{Item: "app file " + it.Path, State: Kept, Detail: "it holds an app entry that stays"})
@@ -1074,6 +1074,19 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	}
 	sort.Strings(others)
 	return rs, others
+}
+
+// entryText tells which instance the bridge of an app entry that stays uses after the
+// uninstall. An entry names no instance, thus its bridge uses the instance of config.json.
+// config.json stays only when its instance stays. Else the bridge uses the default instance,
+// and the text gives the step that makes EntryOwner the instance of config.json.
+func (p *Plan) entryText() string {
+	if holds(p.Others, p.Config.Instance) {
+		return "The entry names no instance, thus its bridge uses the instance of config.json, which is " + p.Config.Instance + "."
+	}
+	return "The entry names no instance, thus its bridge uses the instance of config.json. config.json goes, thus its bridge then uses " +
+		"the default instance " + DefaultInstance + " on the default port. Run mai start --instance " + p.EntryOwner + " to make " +
+		p.EntryOwner + " the instance of config.json, with the port of its container."
 }
 
 // again gives the command that does the uninstall of the instance again. A command with no

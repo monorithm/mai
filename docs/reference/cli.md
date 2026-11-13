@@ -319,7 +319,10 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   records of the other instances. The configuration file of such an instance
   and the binary also stay. The entries that `mai connect` wrote in the files
   of the apps also stay, because an entry names no instance. Its bridge uses
-  the instance of `config.json`. Then run `mai uninstall --instance NAME` for
+  the instance of `config.json`. When `config.json` goes with the instance,
+  the line of each entry gives the step `mai start --instance NAME`. It
+  makes NAME the instance of `config.json`, with the port of its container.
+  Then run `mai uninstall --instance NAME` for
   each of these instances. The uninstall of the last instance removes the
   entries. It removes the key file only when the file holds no key. It holds
   the lock of the file for the check and the remove. Thus a key that a
