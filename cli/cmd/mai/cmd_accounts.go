@@ -90,7 +90,11 @@ func runAgent(args []string, out, errOut io.Writer) int {
 			}
 			account := keys.AgentAccount(cfg.Instance, a.Name)
 			if err := kf.Set(account, a.AgentKey); err != nil {
-				_ = c.RemoveAgent(ctx, a.Name)
+				if rerr := c.RemoveAgent(ctx, a.Name); rerr != nil {
+					return fail(errOut, fmt.Errorf("keep the agent key: %w. The remove of the agent %s on the server also failed: %v. "+
+						"Thus the agent %s stays on the server with a key that no file holds. "+
+						"Step: correct the key file, and then run mai agent rotate %s", err, a.Name, rerr, a.Name, a.Name))
+				}
 				return fail(errOut, fmt.Errorf("keep the agent key: %w; the agent %s is removed again", err, a.Name))
 			}
 			// The agent is new on the server, and the server accepts only its new key. Thus a
