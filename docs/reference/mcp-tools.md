@@ -52,8 +52,9 @@ with the path `session`. The code is the same as the code of `login`:
 | The mail server or the store does not reply | `MAIL_SERVER_DOWN` or `STORE_UNAVAILABLE` | true |
 | A network error, or an error with no code | `SERVER_UNAVAILABLE` | true |
 
-A refusal keeps no lease. Thus the next call with the label sends a new lease
-request. A value that is not a label, a login, or a handle gives
+Calls at the same time for the same session get the error of one lease
+request. A refusal keeps no lease. Thus the next call with the label sends a
+new lease request. A value that is not a label, a login, or a handle gives
 `INVALID_ARGUMENT` with the path `session`, and no lease request.
 
 ### Pool labels

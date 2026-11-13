@@ -250,16 +250,57 @@ func (b *Bridge) sessionResult(handle, login string) map[string]any {
 	return toolResult(map[string]any{"session": handle, "login": login, "agent": b.Agent}, false)
 }
 
+// opening is an open of one session that runs. The other calls for the same session wait for
+// done, and then use l or fail.
+type opening struct {
+	done chan struct{}
+	l    *lease
+	fail map[string]any
+}
+
 // open gives the named lease of the session name, a label or a login of the agent of the
 // bridge. When the bridge has no lease for that session, open sends one lease request for
 // it, and keeps the lease with a new handle and a heartbeat loop. When the request is not
 // successful, fail is the tool error of the call, with the path session.
 //
-// One open or logout at a time (loginMu). Thus calls at the same time for the same session
-// make one lease request, and get the same lease. An open also waits until a logout of the
-// same session ends the lease.
-func (b *Bridge) open(ctx context.Context, name string) (l *lease, fail map[string]any) {
+// Calls at the same time for the same session make one lease request. Each of them gets the
+// result of that request: the same lease, or the same tool error. Thus a server that does
+// not reply does not make each call wait for the lease request of each call before it.
+func (b *Bridge) open(ctx context.Context, name string) (*lease, map[string]any) {
 	login := b.loginOf(name)
+	for {
+		b.mu.Lock()
+		o := b.opens[login]
+		if o == nil {
+			if b.opens == nil {
+				b.opens = map[string]*opening{}
+			}
+			o = &opening{done: make(chan struct{})}
+			b.opens[login] = o
+			b.mu.Unlock()
+			o.l, o.fail = b.openOnce(ctx, name, login)
+			b.mu.Lock()
+			delete(b.opens, login)
+			b.mu.Unlock()
+			close(o.done)
+			return o.l, o.fail
+		}
+		b.mu.Unlock()
+		<-o.done
+		if o.fail != nil {
+			return nil, o.fail
+		}
+		if !o.l.isEnded() {
+			return o.l, nil
+		}
+		// A logout ended the lease after the open. Get a new lease, as the first call does.
+	}
+}
+
+// openOnce does the steps of open for the login of name. One openOnce or logout at a time
+// (loginMu). Thus an open waits until a logout of the same session ends the lease, and then
+// it does not get SESSION_BUSY from that lease.
+func (b *Bridge) openOnce(ctx context.Context, name, login string) (l *lease, fail map[string]any) {
 	b.loginMu.Lock()
 	defer b.loginMu.Unlock()
 	b.mu.Lock()

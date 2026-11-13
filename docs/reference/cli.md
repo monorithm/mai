@@ -67,7 +67,8 @@ example `cursor.lane-1`, is also correct. No `login` call is necessary:
    keeps the lease with a handle and a heartbeat, and then sends the call.
 2. Each subsequent call with the same label, login, or handle uses the same
    lease. Calls at the same time for the same session wait for the first
-   lease request, thus they make one lease request.
+   lease request, thus they make one lease request. Each of these calls gets
+   the result of that request: the lease or the tool error.
 3. When the lease request is not successful, the call gets the tool error of
    `login` with the path `session`. Examples are `BAD_LABEL` for a label of
    the pool, `SESSION_BUSY`, and `SERVER_UNAVAILABLE`. A refusal keeps no

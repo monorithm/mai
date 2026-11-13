@@ -69,11 +69,12 @@ type Bridge struct {
 	approveMu sync.Mutex
 	approved  bool
 
-	// mu guards pool, named, and byLogin.
+	// mu guards pool, named, byLogin, and opens.
 	mu      sync.Mutex
 	pool    *lease
-	named   map[string]*lease // handle -> lease
-	byLogin map[string]string // login -> handle
+	named   map[string]*lease   // handle -> lease
+	byLogin map[string]string   // login -> handle
+	opens   map[string]*opening // login -> the open that runs
 
 	loginMu     sync.Mutex
 	noticeMu    sync.Mutex
