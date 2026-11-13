@@ -159,7 +159,16 @@ func (u *Uninstaller) MakePlan() (*Plan, error) {
 			return nil, fmt.Errorf("read the key file: %w", err)
 		}
 		p.Legacy, p.LegacyErr = u.Keys.LegacyItems(candidates)
-		if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+		switch {
+		case errors.Is(p.LegacyErr, keychain.ErrUnavailable):
+			// mai 3.0 and 3.1 did not operate with no keychain. Thus only a recorded item can
+			// exist. The remove cannot delete it, and tells about it.
+			for _, a := range recorded {
+				if keys.InstanceOf(a) == inst {
+					p.Legacy = appendNew(p.Legacy, a)
+				}
+			}
+		case p.LegacyErr != nil:
 			// The examination failed, thus each candidate can have an item. The remove
 			// deletes the item of each candidate and does a check of it.
 			for _, a := range candidates {
@@ -209,7 +218,10 @@ func (u *Uninstaller) Show(ctx context.Context, p *Plan) {
 		fmt.Fprintf(w, "  key        %s (in %s)\n", k, u.Keys.Path())
 	}
 	note := "an item of mai 3.0 or 3.1"
-	if p.LegacyErr != nil && !errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+	switch {
+	case errors.Is(p.LegacyErr, keychain.ErrUnavailable):
+		note = "the manifest records it, and the keychain is not available"
+	case p.LegacyErr != nil:
 		note = "if the item exists"
 	}
 	for _, k := range p.Legacy {
@@ -323,7 +335,12 @@ func (u *Uninstaller) Run(ctx context.Context) int {
 	fmt.Fprintln(w, EndLeases(ctx, u.HTTP, u.baseURL(p), ks, p.Instance))
 	rs := u.Remove(ctx, p)
 	rs = append(rs, u.Search(ctx, p.Instance)...)
-	if u.Binary != nil {
+	switch {
+	case u.Binary != nil && legacyStays(rs):
+		// A subsequent uninstall removes the keychain items that stay, thus the CLI stays.
+		rs = append(rs, Result{Item: "binary " + u.Binary.Path, State: Kept,
+			Detail: "it stays, because keychain items stay. Do the step of each keychain item, and then run mai uninstall again"})
+	case u.Binary != nil:
 		rs = append(rs, u.Binary.Remove())
 	}
 	Report(w, rs)
@@ -456,26 +473,37 @@ func (u *Uninstaller) Remove(ctx context.Context, p *Plan) []Result {
 			rs = append(rs, Result{Item: item, State: Gone})
 		}
 	}
-	var keep []string
+	var keep, kept []string
 	if u.Keys != nil {
 		var others []string
 		rs, others = u.removeKeys(rs, p)
 		if len(others) > 0 {
 			keep = []string{u.Keys.Path(), u.Keys.Path() + ".lock"}
+			kept = append(kept, "the key file with the keys of a different instance")
 			fmt.Fprintf(u.out(), "The key file %s stays, because it holds the keys of the instances: %s\n",
 				u.Keys.Path(), strings.Join(others, ", "))
+		}
+		if stay := legacyStay(rs); len(stay) > 0 {
+			if err := keepRecords(p.Manifest, stay); err != nil {
+				rs = append(rs, Result{Item: "manifest " + p.Manifest.Path(), State: Failure, Detail: err.Error()})
+			} else {
+				keep = append(keep, p.Manifest.Path())
+				kept = append(kept, "the manifest with the records of the keychain items")
+				fmt.Fprintf(u.out(), "The manifest %s stays with the record of the keychain items %s. "+
+					"Thus a subsequent mai uninstall can remove them.\n", p.Manifest.Path(), strings.Join(stay, ", "))
+			}
 		}
 	}
 	for _, f := range p.Paths {
 		if f == "" {
 			continue
 		}
-		if len(keep) > 0 && within(f, keep[0]) {
+		if holdsAny(f, keep) {
 			if _, err := removeExcept(f, keep); err != nil {
 				rs = append(rs, Result{Item: "folder " + f, State: Failure, Detail: err.Error()})
 				continue
 			}
-			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: "only the key file with the keys of a different instance stays"})
+			rs = append(rs, Result{Item: "folder " + f, State: Kept, Detail: "only " + strings.Join(kept, " and ") + " stays"})
 			continue
 		}
 		err := os.RemoveAll(f)
@@ -509,9 +537,20 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	for _, k := range extra {
 		rs = append(rs, Result{Item: "key " + k, State: Gone})
 	}
+	again := "mai uninstall"
+	if p.Instance != "mai" {
+		// The configuration goes, thus a subsequent uninstall must get the instance.
+		again += " --instance " + p.Instance
+	}
 	for _, k := range p.Legacy {
+		item := legacyPrefix + k
+		if errors.Is(p.LegacyErr, keychain.ErrUnavailable) {
+			rs = append(rs, Result{Item: item, State: Failure, Detail: "the keychain is not available (" + p.LegacyErr.Error() +
+				"). Make the keychain available, for example in a desktop session of the user, and then run " + again + " again"})
+			continue
+		}
 		err := u.Keys.DeleteLegacy(k)
-		rs = append(rs, check("keychain "+keychain.Service+" / "+k, err, func() (bool, error) { return u.Keys.HasLegacyItem(k) }))
+		rs = append(rs, check(item, err, func() (bool, error) { return u.Keys.HasLegacyItem(k) }))
 	}
 	rest, err := u.Keys.Accounts()
 	if err != nil {
@@ -526,6 +565,56 @@ func (u *Uninstaller) removeKeys(rs []Result, p *Plan) ([]Result, []string) {
 	}
 	sort.Strings(others)
 	return rs, others
+}
+
+// legacyPrefix is the start of the name of the result of a legacy keychain item.
+const legacyPrefix = "keychain " + keychain.Service + " / "
+
+// legacyStay gives the account of each legacy keychain item that the remove did not remove.
+func legacyStay(rs []Result) []string {
+	var out []string
+	for _, r := range rs {
+		if r.State == Failure && strings.HasPrefix(r.Item, legacyPrefix) {
+			out = appendNew(out, strings.TrimPrefix(r.Item, legacyPrefix))
+		}
+	}
+	return out
+}
+
+// legacyStays tells if a legacy keychain item stays after the remove.
+func legacyStays(rs []Result) bool { return len(legacyStay(rs)) > 0 }
+
+// keepRecords changes the manifest to hold only the record of each legacy keychain item of
+// stay. A subsequent uninstall reads the records, and removes the items.
+func keepRecords(m *manifest.Manifest, stay []string) error {
+	want := map[string]bool{}
+	for _, a := range stay {
+		want[a] = true
+	}
+	for _, it := range append([]manifest.Item(nil), m.Items...) {
+		if it.Type == manifest.KeychainKey && want[it.Name] {
+			continue
+		}
+		if err := m.Remove(it); err != nil {
+			return err
+		}
+	}
+	for _, a := range stay {
+		if err := m.Add(manifest.Item{Type: manifest.KeychainKey, Name: a}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// holdsAny tells if a path of keep is root or is in the folder root.
+func holdsAny(root string, keep []string) bool {
+	for _, k := range keep {
+		if within(root, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // within tells if path is root or is in the folder root.

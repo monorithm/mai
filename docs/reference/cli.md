@@ -198,10 +198,16 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   accepts.
 - `mai agent rotate NAME` deletes the keychain item of the agent, because the
   server then accepts only the new key.
-- `mai doctor` tells about each keychain item of the instance.
+- `mai doctor` tells about each keychain item of the instance. When no
+  keychain is available and the manifest records keychain items of the
+  instance, `mai doctor` gives a warning with a step.
 - `mai uninstall` removes the keys of the instance from the key file and each
   keychain item of the instance. When the key file holds the keys of a
-  different instance, the key file stays.
+  different instance, the key file stays. When a keychain item of the
+  instance stays, for example because no keychain is available,
+  `mai uninstall` gives a step and the exit code 1. Then the manifest stays
+  with the record of each such item, and the binary also stays. Thus a
+  subsequent `mai uninstall` can remove the items.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 

@@ -336,3 +336,24 @@ func TestAgentRotateRemovesTheKeychainItemOfTheAgent(t *testing.T) {
 		t.Fatalf("the manifest records %+v", items)
 	}
 }
+
+// When the keychain is not available, "mai doctor" cannot examine the recorded items. They
+// can hold the keys of the instance, thus doctor does not tell that the keychain holds no key.
+func TestDoctorWarnsAboutTheRecordedItemsWhenTheKeychainIsNotAvailable(t *testing.T) {
+	t.Setenv("MAI_HOME", t.TempDir())
+	legacy := &downKeychain{Memory: keychain.NewMemory()}
+	legacy.Put(keys.AgentAccount("mai", "cursor"), "mai1:cursor:legacy")
+	legacy.down.Store(true)
+	useLegacy(t, legacy)
+	testManifest(t, manifest.Item{Type: manifest.KeychainKey, Name: keys.AgentAccount("mai", "cursor")})
+	ok, bad := doctorRun(t)
+	for _, line := range ok {
+		if strings.HasPrefix(line, "legacy: ") {
+			t.Errorf("doctor tells %q, but the manifest records a keychain item of the instance", line)
+		}
+	}
+	if len(bad) != 1 || !strings.HasPrefix(bad[0], "warning legacy: ") || !strings.Contains(bad[0], "agent:cursor@mai") ||
+		!strings.Contains(bad[0], "make the keychain available") || !strings.Contains(bad[0], "mai upgrade") {
+		t.Fatalf("doctor: bad %v", bad)
+	}
+}

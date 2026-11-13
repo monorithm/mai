@@ -29,6 +29,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keychain item of the agent.
 - `mai doctor` examines the key file and tells about each keychain item of the
   instance. It shows no key. On macOS, it reads no key and shows no prompt.
+  When no keychain is available and the manifest records keychain items of
+  the instance, `mai doctor` gives a warning with a step.
 - MCP contract 3.2.0: the argument `session` of each tool other than `login`
   and `logout` takes the label of a named session, for example `lane-1`. It
   also takes the login of the session, for example `cursor.lane-1`, or a
@@ -51,7 +53,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the key file has no key for the agent, the result is `BAD_KEY`, as before.
 - `mai uninstall` removes the keys of the instance from the key file and each
   keychain item of the instance. When the key file holds the keys of a
-  different instance, only the key file and its lock file stay.
+  different instance, only the key file and its lock file stay. When a
+  keychain item of the instance stays, for example because no keychain is
+  available, `mai uninstall` gives a step and the exit code 1. Then the
+  manifest stays with the record of each such item, and the binary also
+  stays. Thus a subsequent `mai uninstall` can remove the items.
 - With `MAI_HOME`, the CLI keeps all its files in that folder, and it uses no
   keychain item.
 - On macOS, cgo is necessary only for the Security framework, which reads and

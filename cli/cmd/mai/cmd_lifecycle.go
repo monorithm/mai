@@ -766,8 +766,12 @@ func runDoctor(args []string) int {
 	if err != nil {
 		return lcFail("%v", err)
 	}
-	problems := 0
+	problems, warnings := 0, 0
 	ok := func(k, v string) { fmt.Fprintf(lcOut, "ok      %-9s %s\n", k, v) }
+	warn := func(k, v, step string) {
+		warnings++
+		fmt.Fprintf(lcOut, "warning %-9s %s\n        step: %s\n", k, v, step)
+	}
 	bad := func(k, v, step string) {
 		problems++
 		fmt.Fprintf(lcOut, "problem %-9s %s\n        step: %s\n", k, v, step)
@@ -803,12 +807,18 @@ func runDoctor(args []string) int {
 			ok("disk", fmt.Sprintf("%d GB free", free>>30))
 		}
 	}
-	lcDoctorKeys(s, ok, bad)
+	lcDoctorKeys(s, ok, warn, bad)
+	summary := "no problems"
 	if problems > 0 {
-		fmt.Fprintf(lcOut, "%d problem(s)\n", problems)
+		summary = fmt.Sprintf("%d problem(s)", problems)
+	}
+	if warnings > 0 {
+		summary += fmt.Sprintf(", %d warning(s)", warnings)
+	}
+	fmt.Fprintln(lcOut, summary)
+	if problems > 0 {
 		return 1
 	}
-	fmt.Fprintln(lcOut, "no problems")
 	return 0
 }
 
@@ -819,7 +829,7 @@ func (s *lcSession) portIsMai(ctx context.Context) bool {
 
 // lcDoctorKeys examines the key file and the legacy keychain items of the instance. It reads
 // no key, and macOS shows no prompt.
-func lcDoctorKeys(s *lcSession, ok func(k, v string), bad func(k, v, step string)) {
+func lcDoctorKeys(s *lcSession, ok func(k, v string), warn, bad func(k, v, step string)) {
 	inst := s.cfg.Instance
 	kf, err := openKeys()
 	if err != nil {
@@ -855,9 +865,21 @@ func lcDoctorKeys(s *lcSession, ok func(k, v string), bad func(k, v, step string
 		bad("legacy", err.Error(), "correct the key file "+kf.Path())
 		return
 	}
+	var recorded []string
+	for _, a := range lcRecordedKeys(m) {
+		if keys.InstanceOf(a) == inst {
+			recorded = append(recorded, a)
+		}
+	}
 	items, err := kf.LegacyItems(candidates)
 	switch {
+	case errors.Is(err, keychain.ErrUnavailable) && len(recorded) > 0:
+		// The items can exist, but no check is possible.
+		warn("legacy", fmt.Sprintf("the keychain is not available, and the manifest records %d keychain item(s) of mai 3.0 or 3.1 for the instance %s: %s",
+			len(recorded), inst, strings.Join(recorded, ", ")),
+			"make the keychain available, for example in a desktop session of the user, and then run: mai upgrade")
 	case errors.Is(err, keychain.ErrUnavailable):
+		// mai 3.0 and 3.1 did not operate with no keychain. Thus with no record, no item exists.
 		ok("legacy", "no keychain is available, thus it holds no key of mai")
 	case err != nil:
 		bad("legacy", "the examination of the keychain failed: "+err.Error(), "unlock the login keychain, then run mai doctor again")

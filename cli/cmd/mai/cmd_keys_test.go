@@ -32,7 +32,8 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// doctorRun runs the key checks of doctor and gives the lines of the result.
+// doctorRun runs the key checks of doctor and gives the lines of the result. bad holds each
+// problem and each warning. The line of a warning starts with "warning ".
 func doctorRun(t *testing.T) (ok, bad []string) {
 	t.Helper()
 	dirs, err := paths.Default()
@@ -42,6 +43,7 @@ func doctorRun(t *testing.T) (ok, bad []string) {
 	s := &lcSession{dirs: dirs, cfg: config.Defaults()}
 	lcDoctorKeys(s,
 		func(k, v string) { ok = append(ok, k+": "+v) },
+		func(k, v, step string) { bad = append(bad, "warning "+k+": "+v+" | "+step) },
 		func(k, v, step string) { bad = append(bad, k+": "+v+" | "+step) })
 	return ok, bad
 }

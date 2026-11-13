@@ -15,7 +15,7 @@ const (
 	Container   = "container"
 	Volume      = "volume"
 	Image       = "image"
-	KeychainKey = "keychain"  // a legacy keychain item of mai 3.0 or 3.1; the CLI adds no new record
+	KeychainKey = "keychain"  // a legacy keychain item of mai 3.0 or 3.1; only mai uninstall adds a record, for an item that stays
 	AppEntry    = "app-entry" // a change that mai connect wrote in a file of an app
 	Folder      = "folder"
 	File        = "file"

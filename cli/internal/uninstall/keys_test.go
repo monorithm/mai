@@ -12,6 +12,7 @@ import (
 
 	"github.com/monorithm/mai/cli/v3/internal/keychain"
 	"github.com/monorithm/mai/cli/v3/internal/keys"
+	"github.com/monorithm/mai/cli/v3/internal/manifest"
 )
 
 func names(t *testing.T, dir string) string {
@@ -61,8 +62,19 @@ func TestUninstallKeepsTheKeysOfADifferentInstance(t *testing.T) {
 	}
 }
 
+// mai 3.0 and 3.1 did not operate with no keychain. Thus with no record in the manifest, a
+// keychain that is not available holds no item of mai.
 func TestUninstallWithNoKeychainRemovesTheKeysOfTheKeyFile(t *testing.T) {
 	e := setup(t)
+	m, err := manifest.Load(filepath.Join(e.dirs.State, manifest.FileName), "mai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range m.Of(manifest.KeychainKey) {
+		if err := m.Remove(it); err != nil {
+			t.Fatal(err)
+		}
+	}
 	e.kc.Err = keychain.ErrUnavailable
 	var out bytes.Buffer
 	if code := e.uninstaller(&out).Run(context.Background()); code != 0 {

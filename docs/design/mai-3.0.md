@@ -575,7 +575,12 @@ binary that wrote it.
 - `mai doctor` tells about each keychain item of the instance. It reads no
   key, thus macOS shows no prompt.
 - `mai uninstall` removes the keys of the instance from the key file and each
-  keychain item of the instance.
+  keychain item of the instance. When a keychain item stays, for example
+  because no keychain is available, `mai uninstall` gives a step and the exit
+  code 1. The manifest stays with the record of each such item, and the binary
+  also stays. Thus a subsequent `mai uninstall` can remove the items.
+- When no keychain is available and the manifest records keychain items of
+  the instance, `mai doctor` gives a warning with a step.
 - With `MAI_HOME`, the CLI uses no keychain item, because the items are of
   the home of the user.
 
