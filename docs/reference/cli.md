@@ -271,8 +271,8 @@ mai 3.0 and 3.1 kept the keys in the system keychain, with the service
   `BAD_KEY` and the step `Run mai agent add NAME`. Do not do that step,
   because `mai agent add` gives `AGENT_EXISTS` for an agent that exists.
   Start the app again.
-- `mai agent rotate NAME` deletes the keychain item of the agent, because the
-  server then accepts only the new key.
+- `mai agent add NAME` and `mai agent rotate NAME` delete the keychain item of
+  the agent, because the server then accepts only the new key.
 - `mai doctor` tells about each keychain item of the instance. When no
   keychain is available and the manifest records keychain items of the
   instance, `mai doctor` gives a warning with a step.

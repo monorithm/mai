@@ -93,6 +93,12 @@ func runAgent(args []string, out, errOut io.Writer) int {
 				_ = c.RemoveAgent(ctx, a.Name)
 				return fail(errOut, fmt.Errorf("keep the agent key: %w; the agent %s is removed again", err, a.Name))
 			}
+			// The agent is new on the server, and the server accepts only its new key. Thus a
+			// legacy keychain item of the agent, for example of a server whose data is gone,
+			// holds a key that is not valid, and it goes.
+			if err := removeLegacyItem(kf, m, account, errOut); err != nil {
+				return fail(errOut, err)
+			}
 			fmt.Fprintln(out, a.Name)
 		}
 		return 0

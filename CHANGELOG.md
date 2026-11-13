@@ -28,7 +28,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   server accepts only the key of the key file, `mai upgrade` deletes the
   keychain item. When the server accepts only the key of the keychain item,
   `mai upgrade` writes that key to the key file and deletes the keychain
-  item. `mai agent rotate` also deletes the keychain item of the agent.
+  item. `mai agent add` and `mai agent rotate` also delete the keychain item
+  of the agent, because the server then accepts only the new key.
 - After `mai upgrade`, start each app that runs `mai mcp` again, or start
   its MCP server again. `mai upgrade` also gives this step when it deletes
   the keychain item of an agent. It also gives the step when the manifest
