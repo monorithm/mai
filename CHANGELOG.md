@@ -128,6 +128,11 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `mai status --instance NAME` and `mai doctor --instance NAME` use the port
+  of the container of that instance. Before, they used the port of the
+  instance of `config.json`. Thus `mai status` showed the port and the
+  version of a different server, and it sent the owner key of the instance
+  to that server.
 - `mai upgrade --instance NAME` does the check of the owner keys on the port
   of the container of that instance. When that port is not known, it does no
   check. The new container gets the port and the data folder of the

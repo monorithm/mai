@@ -48,6 +48,10 @@ var (
 	lcErr           io.Writer = os.Stderr
 	lcHealthWait              = engine.StartWait
 	lcConnectEngine           = engine.ConnectSystem
+	// lcFindEngine finds an engine that runs, and does not start an engine.
+	lcFindEngine = func(ctx context.Context) (*engine.Engine, error) {
+		return engine.Find(ctx, engine.Discover(engine.SystemEnv(runtime.GOOS)))
+	}
 )
 
 // lcOwnerKeyExists is the exit code of "mai owner set-key" when the server has a key.
@@ -492,6 +496,9 @@ func runStatus(args []string) int {
 	}
 	defer s.close()
 	ctx := context.Background()
+	// For an instance that config.json does not name, the container gives the port and the
+	// data folder. Thus the status shows them, and sends the owner key only to that port.
+	c, ok, ownErr := s.owned(ctx)
 	p := func(k, v string) { fmt.Fprintf(lcOut, "%-10s %s\n", k+":", v) }
 	p("cli", version.Version)
 	p("engine", s.eng.Describe(ctx))
@@ -501,9 +508,8 @@ func runStatus(args []string) int {
 	} else {
 		p("data", "volume "+engine.DataVolume(s.cfg.Instance))
 	}
-	c, ok, err := s.owned(ctx)
-	if err != nil {
-		return lcFail("%v", err)
+	if ownErr != nil {
+		return lcFail("%v", ownErr)
 	}
 	if !ok {
 		p("container", "none. Run: "+lcCommand(s.cfg.Instance, "start"))
@@ -967,12 +973,14 @@ func runDoctor(args []string) int {
 	}
 	ctx := context.Background()
 	g := runtime.GOOS
-	eng, err := engine.Find(ctx, engine.Discover(engine.SystemEnv(g)))
+	eng, err := lcFindEngine(ctx)
 	switch {
 	case err == nil:
 		s.eng = eng
 		defer s.close()
 		ok("engine", eng.Describe(ctx))
+		// For an instance that config.json does not name, the container gives the port.
+		_, _, _ = s.owned(ctx)
 	case len(engine.Launchers(g)) == 0:
 		bad("engine", "no container engine is installed", engine.InstallHint(g))
 	default:

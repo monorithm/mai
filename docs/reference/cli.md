@@ -66,6 +66,8 @@ the CLI does not use these values of `config.json`:
 - After a successful start, `config.json` names the instance of the start,
   with its port and its data folder. A start that is not successful does not
   change `config.json`.
+- `mai status` and `mai doctor` show and examine the port of the container
+  of the instance. `mai status` sends the owner key only to that port.
 - `mai upgrade` does the check of the owner keys only on the port of the
   server of the instance. When the CLI does not know that port, it does no
   check, and the keychain item stays. The new container gets the port and
