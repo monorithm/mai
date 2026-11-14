@@ -133,7 +133,9 @@ func Prepare(home, app, agent string) (*Plan, error) { return PrepareWith(home, 
 // entry of mai at an earlier place. An earlier version of mai wrote the entry there, and the
 // app does not read that place. The manifest gives the record of that entry and of its file.
 // With these records, the removal is the same as at mai disconnect. The containers that mai
-// made for the entry go too. A file that mai made goes when no content stays in it.
+// made for the entry go too. A file that mai made goes when no content stays in it. When a
+// symbolic link makes the file of the earlier place the same file as a file where the plan
+// writes, the file does not change, and only the record of the earlier place goes.
 // PrepareWith writes nothing.
 func PrepareWith(home, app, agent string, m *manifest.Manifest) (*Plan, error) {
 	if agent == "" {
@@ -152,20 +154,24 @@ func PrepareWith(home, app, agent string, m *manifest.Manifest) (*Plan, error) {
 	}
 	p := &Plan{App: app, Agent: agent}
 	byPath := map[string][]change{}
-	var order []string
+	var order, writes []string
 	for _, c := range cs {
 		if _, ok := byPath[c.path]; !ok {
 			order = append(order, c.path)
+			if !c.drop {
+				writes = append(writes, c.path)
+			}
 		}
 		byPath[c.path] = append(byPath[c.path], c)
 	}
+	written := writtenFiles(writes)
 	for _, path := range order {
 		before, existed, err := readFile(path)
 		if err != nil {
 			return nil, err
 		}
 		if byPath[path][0].drop {
-			if fc := planDrop(path, before, existed, byPath[path], app, m); fc != nil {
+			if fc := planDrop(path, before, existed, byPath[path], app, m, written[linkTarget(path)]); fc != nil {
 				p.Files = append(p.Files, fc)
 			}
 			continue
@@ -263,18 +269,32 @@ func planFile(path string, before []byte, existed bool, cs []change, app string)
 	return fc, nil
 }
 
+// writtenFiles returns the real file of each path where the plan writes entries. A symbolic
+// link can make a path of earlier places and such a path one file.
+func writtenFiles(paths []string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range paths {
+		out[linkTarget(p)] = true
+	}
+	return out
+}
+
 // planDrop computes the change of a file that holds only earlier places of entries
 // (change.drop). It removes each entry of mai at such a place, as mai disconnect does. Each
 // other byte of the file stays, and planDrop adds nothing. An entry that is not of mai stays,
 // and gets a note. The result is nil when the file does not change and m has no record of an
 // entry at the place.
-func planDrop(path string, before []byte, existed bool, cs []change, app string, m *manifest.Manifest) *FileChange {
+//
+// When written is true, a symbolic link makes the path the same file as a path where the plan
+// writes the new entry. Then the entry of mai at the earlier place is the new entry: the file
+// does not change, and only the record of the earlier place goes.
+func planDrop(path string, before []byte, existed bool, cs []change, app string, m *manifest.Manifest, written bool) *FileChange {
 	fc := &FileChange{Path: path, Before: before, After: before, Existed: existed, app: app, changes: cs, drop: true, kept: map[string]bool{}}
 	recorded := false
 	for _, c := range cs {
 		it, ok := recordedEntry(m, app, path, c.pointer)
 		recorded = recorded || ok
-		if !existed {
+		if !existed || written {
 			continue
 		}
 		out, note := dropEntry(fc.After, c, it, ok)
@@ -284,7 +304,7 @@ func planDrop(path string, before []byte, existed bool, cs []change, app string,
 			fc.kept[c.pointer] = true
 		}
 	}
-	if existed && m != nil && len(fc.Notes) == 0 && noContent(fc.After) {
+	if existed && !written && m != nil && len(fc.Notes) == 0 && noContent(fc.After) {
 		for _, f := range m.Of(manifest.File) {
 			if f.Name == app && f.Path == path && madeFile(f) {
 				fc.Delete = true
@@ -732,9 +752,22 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 	// The folders that mai makes, for each new file, before the first write: two files of an
 	// app can be in one new folder.
 	dirsOf := map[string][]string{}
+	var writes []string
 	for _, f := range p.Files {
+		if !f.drop {
+			writes = append(writes, f.Path)
+		}
 		if _, existed, err := readFile(f.Path); err == nil && !existed && !f.drop {
 			dirsOf[f.Path] = missingDirs(filepath.Dir(linkTarget(f.Path)))
+		}
+	}
+	// A file of earlier places that is also a file where the plan writes (a symbolic link), from
+	// the real files before the first write: a write can make the file of a dangling link.
+	written := writtenFiles(writes)
+	shared := map[string]bool{}
+	for _, f := range p.Files {
+		if f.drop {
+			shared[f.Path] = written[linkTarget(f.Path)]
 		}
 	}
 	for i, f := range p.Files {
@@ -744,7 +777,7 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 		}
 		if f.drop {
 			// Plan the file again, from its current text and the records of m.
-			if f = planDrop(f.Path, cur, existed, f.changes, f.app, m); f != nil {
+			if f = planDrop(f.Path, cur, existed, f.changes, f.app, m, shared[f.Path]); f != nil {
 				p.Files[i] = f
 				if err := applyDrop(f, m); err != nil {
 					return err
