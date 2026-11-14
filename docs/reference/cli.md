@@ -62,10 +62,10 @@ container, pulls no image, and shows no key. It reads only these items:
 - `config.json`, the key file, and the manifest. It reads no keychain item.
 - The engine, when it runs: the container of the instance and the image.
   All the calls to the engine have a time limit of 6 seconds.
-- The server, only while the container of the instance runs, with a time
-  limit of 3 seconds for each call: `GET /api/version`, and
-  `GET /api/agents` with the owner key. The CLI sends these requests only
-  to the host port of the container.
+- The server, only while the container of the instance runs:
+  `GET /api/version`, and `GET /api/agents` with the owner key. Each call
+  has a time limit of 3 seconds. The CLI sends these requests only to the
+  host port of the container.
 - The files of the app, as `mai connect --dry-run` reads them.
 
 | Flag | Function |
