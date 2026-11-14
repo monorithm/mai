@@ -168,6 +168,16 @@ of the files of the app. Then it shows the prompt `Write these changes?
   reads the response to the prompt from the input. An empty input gives no
   change and the exit code 1.
 
+For Antigravity, `mai connect` writes the MCP entry in
+`~/.gemini/config/mcp_config.json`, the file that `agy mcp add` writes. It
+writes the hook in `~/.gemini/config/hooks.json`. mai 3.3.0 and earlier
+wrote the MCP entry in `~/.gemini/antigravity/mcp_config.json`, which
+Antigravity does not read. When that file has an entry of mai,
+`mai connect antigravity` removes it, and the diff shows the removal. The
+other content of that file stays. When mai made that file, and no other
+content stays in it, the file goes. An entry `mai` in that file that is not
+an entry of mai stays, and the CLI tells you in one line.
+
 ### Instances
 
 The lifecycle commands take `--instance NAME`. The default is the instance
