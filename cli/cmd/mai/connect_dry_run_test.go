@@ -16,14 +16,19 @@ import (
 
 // treeState gives the type, the mode, the size, the time of the last change, and the hash of
 // each file and folder in root.
+//
+// The data of each path comes from os.Lstat, not from DirEntry.Info. On Windows, DirEntry.Info
+// gives the data of the folder listing of the parent folder. NTFS updates that copy after the
+// record of the file or folder itself, thus two snapshots of a folder that did not change can
+// give different times.
 func treeState(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		fi, err := d.Info()
+		fi, err := os.Lstat(p)
 		if err != nil {
 			return err
 		}
