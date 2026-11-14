@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
@@ -30,15 +31,21 @@ func register(name, summary string, run func(args []string) int) {
 	commands[name] = command{name: name, summary: summary, run: run}
 }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, "mai %s\n\nusage: mai COMMAND [ARGS]\n\ncommands:\n", version.Version)
+// agentLine is the first line of the usage. An AI agent that runs mai with no command finds
+// the command for it.
+const agentLine = "An AI agent: run mai guide."
+
+func usage() { writeUsage(os.Stderr) }
+
+func writeUsage(w io.Writer) {
+	fmt.Fprintf(w, "%s\nmai %s\n\nusage: mai COMMAND [ARGS]\n\ncommands:\n", agentLine, version.Version)
 	names := make([]string, 0, len(commands))
 	for n := range commands {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		fmt.Fprintf(os.Stderr, "  %-12s %s\n", n, commands[n].summary)
+		fmt.Fprintf(w, "  %-12s %s\n", n, commands[n].summary)
 	}
 }
 

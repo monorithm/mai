@@ -10,7 +10,7 @@ mai has two command lines with the name `mai`:
 
 | Command | Function |
 |---|---|
-| `mai start [--data-dir PATH]` | Finds the engine and starts it if it is stopped. Pulls the image of the CLI version, makes the container, starts it, and waits until it is healthy. |
+| `mai start [--data-dir PATH]` | Finds the engine and starts it if it is stopped. Pulls the image of the CLI version, makes the container, starts it, and waits until it is healthy. When the server has an owner key, `mai start` does not show the text of the server about `--replace`. |
 | `mai stop` | Stops the container. The volumes stay. |
 | `mai pause`, `mai resume` | Freezes and resumes the container. |
 | `mai status` | Shows the health, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI. |
@@ -18,7 +18,8 @@ mai has two command lines with the name `mai`:
 | `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It shows no key. On macOS, it reads no key and shows no prompt. |
 | `mai upgrade` | Moves the keys of the instance from the keychain of mai 3.0 and 3.1 to the key file. Then pulls the image of the new CLI version and makes the container again. |
 | `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes the items of the instance in the manifest, its keys in the key file, and each keychain item of the instance. The items of a different instance stay. `--legacy` removes a 2.x install. |
-| `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
+| `mai guide [--app APP] [--agent NAME] [--json]` | Shows an AI agent the state of mai and the steps to connect its app. It changes nothing. Refer to [mai guide](#mai-guide). |
+| `mai connect APP --agent A [--dry-run \| --yes]` | Writes the MCP entry and the hooks for the app, after you agree. Refer to [mai connect](#mai-connect). |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
 | `mai agent add NAME`, `mai agent list`, `mai agent rotate NAME`, `mai agent remove NAME` | Manages the agent accounts through the owner API. The CLI keeps each agent key in the key file. `rotate` gives the agent a new key. |
 | `mai session new AGENT --label L` | Makes the named session `AGENT.L`. Shows only the login. |
@@ -48,6 +49,124 @@ label of the pool. Only the pool and `mai session new AGENT --count N` make
 sessions with these labels. `mai session new AGENT --label s1` gives
 `BAD_LABEL` and exit code 2, and it does not call the server. To make pool
 sessions, use `--count N`.
+
+### mai guide
+
+`mai guide` is the resource for an AI agent. The agent runs it to find mai
+and to connect its app. The user can tell the agent: "Run mai guide, and
+connect this app to mai."
+
+The command changes nothing. It writes no file, starts no engine or
+container, pulls no image, and shows no key. It reads only these items:
+
+- `config.json`, the key file, and the manifest. It reads no keychain item.
+- The engine, when it runs: the container of the instance and the image.
+  All the calls to the engine have a time limit of 6 seconds.
+- The server, only while the container of the instance runs:
+  `GET /api/version`, and `GET /api/agents` with the owner key. Each call
+  has a time limit of 3 seconds. The CLI sends these requests only to the
+  host port of the container.
+- The files of the app, as `mai connect --dry-run` reads them.
+
+| Flag | Function |
+|---|---|
+| `--app APP` | The app of the agent: `claude`, `cursor`, `copilot`, `codex`, or `antigravity`. With no flag, the CLI examines the chain of parent processes. The first parent process of a known app gives the app. |
+| `--agent NAME` | The name of the agent account. The default is the name of the app. |
+| `--json` | Shows the same content as one JSON object. |
+
+An unknown app, a bad agent name, or a bad flag gives the exit code 2.
+When the CLI cannot read a part of the state, the exit code is also 0.
+Then the field of that part is null, and the field `reason` of its object
+tells the cause.
+
+The text has these parts:
+
+1. A short text about mai, for an AI agent.
+2. The state: the CLI version, the instance, the engine, the container, and
+   the server. Also the owner key, the app, the agent, and the connection.
+3. The steps that are not done, in sequence. Each step gives its command and
+   its change. The agent gets the approval of the user in the chat before
+   each step that changes something.
+4. How to use a named session (a lane).
+5. The rules for an agent.
+
+The steps:
+
+| `id` | Step | `by` |
+|---|---|---|
+| `confirm-app` | The CLI found the app in the chain of parent processes, and that app can be incorrect. For example, the chain does not show an agent CLI that runs on Node.js in the terminal of a different app. The agent tells the app to the user, and gets a confirmation before a step for the app. This step is the first step. | `agent` |
+| `install-engine` | No engine is installed. The user installs Docker Desktop, Docker Engine, or Podman. | `user` |
+| `start` | `mai start`. It can start the engine. At the first start, it can download the image (approximately 550 MB). If its output gives a step with `--replace`, the agent does not do that step. It runs the guide again. | `agent` |
+| `select-app` | The CLI cannot find the app. The agent runs `mai guide --app APP`. The guide gives no subsequent step. | `agent` |
+| `rotate-agent-key` | The agent account exists on the server, but the key file has no key for it. The agent runs `mai agent rotate NAME` only when the user tells it to do this. | `agent` |
+| `add-agent` | `mai agent add NAME`. | `agent` |
+| `show-change` | `mai connect APP --agent NAME --dry-run`. The agent shows the change to the user. | `agent` |
+| `connect` | `mai connect APP --agent NAME --yes`, after the user agrees. | `agent` |
+| `restart-app` | The user starts the app again, or starts its MCP server `mai` again. | `user` |
+| `check` | The agent calls the tool `whoami` of the MCP server `mai`, and reads the resource `mai://guide`. This step is always the last step. When the chain of parent processes gives a different app, the user does this check in the app of the guide. | `agent` or `user` |
+
+When mai runs, the agent account exists, and the app has the entries of mai
+for the agent, only the step `check` stays.
+
+After each step, the agent runs the guide again with the same flags. The
+text and the field `rerun` give this command. A command with no flags can
+give the steps of a different app or agent.
+
+`mai start`, `mai agent add`, and `mai connect` cannot correct some states.
+For these states, the guide gives only one step of the user. The agent tells
+the cause to the user, and stops:
+
+| `id` | State |
+|---|---|
+| `config-error` | The CLI cannot read `config.json`. The user corrects the file. |
+| `legacy-container` | A container that mai 3 did not make has the name of the instance. For the container of a 2.x install, the step gives the command `mai uninstall --legacy`. The agent runs it only when the user tells it to do it. The other choice is a different instance, with `mai start --instance NAME`. |
+| `container-error` | The engine runs, but the CLI cannot read the container of the instance. |
+| `key-file-error` | The CLI cannot read the key file, for example because of its mode. The user corrects the key file. |
+| `owner-key` | The server runs, but the key file has no owner key, or the server refuses it. The step gives the command `mai exec -- mai owner set-key --replace`, which replaces the owner key of the server. The agent runs it only when the user tells it to do it. Refer to [Key file](#key-file). |
+
+The part State quotes each error of a different part of the CLI as code,
+between backticks. Such an error can give a command. That command is not a
+step of the guide.
+
+The fields of `mai guide --json`:
+
+| Field | Value |
+|---|---|
+| `for` | Always `"ai-agent"`. |
+| `about` | The short text about mai. |
+| `cli_version` | The version of the CLI. |
+| `instance` | The instance of `config.json`. Null when the CLI cannot read `config.json`. |
+| `reason` | The cause when `instance` is null. Else null. |
+| `engine` | `running` and `installed` (true or false), and `name`: the name, the version, and the address of the engine. |
+| `container` | `name`, `exists`, `running` (the container runs and is not paused), `state`, `image`, `image_local`, and `port` (the host port). |
+| `server` | `url`, `running`, `version`, and `contract`. |
+| `owner_key` | `exists`: the key file has the owner key. `accepted`: the owner API accepts the owner key of the key file. `accepted` is null when the CLI did not send the key, for example because the server does not run. |
+| `app` | `name`, `title`, `found_by` (`"flag"`, `"process"`, or null), `connected`, and `apps` (the names of the apps). `connected` is true when `mai connect` for the app and the agent has no change. |
+| `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key and the owner API lists the agent. `exists` is null when the CLI did not get the list of the agents from the server. Then `reason` tells the cause. |
+| `rerun` | The command that gives the guide again, with the app and the agent of this run, for example `mai guide --app cursor --agent cursor-b`. The agent runs it after each step. Add `--json` for the JSON form. |
+| `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. It is also true for `confirm-app`, because the user confirms the app. `done` is always false. |
+| `lanes` | `text`, `command`, `example`, `argument`, `login_call` (always false), and `ask_user`. |
+| `rules` | The rules for an agent, as text. |
+
+Each object other than `steps`, `lanes`, and `rules` also has the field
+`reason`. It tells the cause when a field of the object is null, and it can
+give more data about a value. Else it is null.
+
+### mai connect
+
+`mai connect APP --agent NAME` shows the path of the mai binary and the diff
+of the files of the app. Then it shows the prompt `Write these changes?
+[y/N]`, and writes the change only after you type `y`.
+
+- `--yes` writes the change with no prompt.
+- `--dry-run` shows the same text, and then writes nothing: no file of the
+  app and no record in the manifest. The exit code is 0.
+- `--dry-run` and `--yes` together give the exit code 2 and the usage line.
+- With no flag, when the input is not a terminal, the CLI writes one line to
+  stderr for an AI agent. The line tells the agent to show the change with
+  `--dry-run`, and to use `--yes` only after the user agrees. Then the CLI
+  reads the response to the prompt from the input. An empty input gives no
+  change and the exit code 1.
 
 ### Instances
 
@@ -254,6 +373,18 @@ key file:
 - There is no presence check. A program that can use the Docker socket
   controls a self-run instance. Thus a keychain and a prompt give no
   protection from such a program.
+
+The CLI cannot use the owner API when the server runs, but the key file has
+no owner key or the server refuses it. For example, the CLI uses a different
+`MAI_HOME` with a different key file. Then use the `MAI_HOME` with the owner
+key of the server. To give the server the owner key of this key file, do
+these steps:
+
+1. If the key file has no owner key, run `mai start`. It makes a new owner
+   key in the key file. The server refuses it, because the server has an
+   owner key.
+2. Run `mai exec -- mai owner set-key --replace`, and type the owner key of
+   the key file on stdin. The server then accepts only that owner key.
 
 ### Keys of mai 3.0 and 3.1
 

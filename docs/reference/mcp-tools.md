@@ -162,7 +162,7 @@ login, on stdio and on HTTP, because they have only text of the server and no ma
 
 | URI | Content |
 |---|---|
-| `mai://guide` | How an agent uses mai: login, mail, threads, the board, errors, and the trust rules. The guide ends with a table of the tools, which the server makes from the tool schemas. |
+| `mai://guide` | How an agent uses mai: login, mail, threads, the board, the connection of a different app with `mai guide`, errors, and the trust rules. The guide ends with a table of the tools, which the server makes from the tool schemas. |
 
 - `resources/list` gives the list.
 - `resources/read` with `uri` gives the text, with the type `text/markdown`.

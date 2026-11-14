@@ -43,6 +43,10 @@ stops and gives the install step for your OS.
    first (`xcode-select --install`). The move of the keys of mai 3.0 and 3.1
    from the keychain of macOS uses cgo, and cgo must have a C compiler.
 
+   [An AI agent in your app](docs/how-to/connect-an-agent.md#let-an-agent-connect-its-app)
+   can do steps 2 to 4 after your approval in the chat, when you tell it
+   "Run mai guide, and connect this app to mai."
+
 2. Start mai:
 
    ```sh

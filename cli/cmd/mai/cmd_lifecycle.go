@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
@@ -300,7 +301,14 @@ func (s *lcSession) setOwner(ctx context.Context, id string) error {
 	} else if err != nil {
 		return fmt.Errorf("read the owner key: %w", err)
 	}
-	code, err := s.eng.Exec(ctx, id, []string{"mai", "owner", "set-key"}, strings.NewReader(key+"\n"), io.Discard, lcErr)
+	// The server writes a step with --replace to stderr when it has an owner key. A start of
+	// a container with an owner key is a normal restart, and the step replaces the owner key
+	// of the server. Thus the CLI shows the text of the server only for a different result.
+	var serverErr bytes.Buffer
+	code, err := s.eng.Exec(ctx, id, []string{"mai", "owner", "set-key"}, strings.NewReader(key+"\n"), io.Discard, &serverErr)
+	if err != nil || code != lcOwnerKeyExists {
+		_, _ = lcErr.Write(serverErr.Bytes())
+	}
 	switch {
 	case err != nil:
 		return fmt.Errorf("mai owner set-key: %w", err)

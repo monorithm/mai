@@ -22,13 +22,16 @@ import (
 )
 
 // execFake adds the exec calls of the Engine API to engineFake. "mai health" gives exit 0,
-// and "mai owner set-key" gives exit 3: the server has an owner key.
+// and "mai owner set-key" gives exit 3: the server has an owner key. The maps codes and
+// stderr can give the exit code of a command and the text that it writes to stderr.
 type execFake struct {
 	*engineFake
-	mu    sync.Mutex
-	n     int
-	execs map[string][]string
-	stdin map[string]bool
+	mu     sync.Mutex
+	n      int
+	execs  map[string][]string
+	stdin  map[string]bool
+	codes  map[string]int
+	stderr map[string]string
 }
 
 func (f *execFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,10 +62,16 @@ func (f *execFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = buf.Flush()
 		f.mu.Lock()
 		in := f.stdin[parts[1]]
+		text := f.stderr[strings.Join(f.execs[parts[1]], " ")]
 		f.mu.Unlock()
 		if in {
 			// Read stdin to its end, thus the close sends no reset to the client.
 			_, _ = io.Copy(io.Discard, buf)
+		}
+		if text != "" {
+			// A frame of the stream stderr: the stream 2, three zero bytes, and the size.
+			n := len(text)
+			_, _ = conn.Write(append([]byte{2, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}, text...))
 		}
 		_ = conn.Close()
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "exec" && parts[2] == "json":
@@ -72,6 +81,9 @@ func (f *execFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		code := 0
 		if len(cmd) >= 3 && cmd[1] == "owner" && cmd[2] == "set-key" {
 			code = lcOwnerKeyExists
+		}
+		if c, ok := f.codes[strings.Join(cmd, " ")]; ok {
+			code = c
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ID": parts[1], "Running": false, "ExitCode": code})

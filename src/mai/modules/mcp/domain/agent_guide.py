@@ -19,7 +19,7 @@ RESOURCES = (
         "uri": GUIDE_URI,
         "name": "guide",
         "title": "How to use mai",
-        "description": "The steps of an agent session: login, mail, threads, the board, errors, and the trust rules.",
+        "description": "The steps of an agent session: login, mail, threads, the board, the connection of a different app, errors, and the trust rules.",
         "mimeType": GUIDE_MIME,
     },
 )

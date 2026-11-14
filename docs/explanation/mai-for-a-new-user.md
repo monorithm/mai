@@ -94,6 +94,21 @@ you type commands. The [tutorial](../tutorial/start-and-connect.md) gives the
 steps 1 to 3 in full. [Connect an agent](../how-to/connect-an-agent.md) gives
 the steps 4 and 5.
 
+After the step 1, your assistant can also do the steps 2 to 4 for you. Type
+this text in a chat of the app:
+
+> Run mai guide, and connect this app to mai.
+
+The assistant runs the command `mai guide`. That command tells the assistant
+the steps, and it changes nothing. Before each change, the assistant tells
+you the change. It does the change only after you agree in the chat. When it
+tells you to, close the app and open it again. To get lanes, tell the
+assistant their names, for example `lane-1` to `lane-5`.
+[Let an agent connect its app](../how-to/connect-an-agent.md#let-an-agent-connect-its-app)
+gives the full procedure.
+
+The steps:
+
 1. Install Docker Desktop and Go 1.27 or a newer version. On macOS, also
    install the Xcode command line tools. Then use Go to install the program
    `mai`. Docker Desktop runs the closed box of mai on your computer. Docker

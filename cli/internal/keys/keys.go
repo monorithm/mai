@@ -310,6 +310,21 @@ func (f *File) Has(account string) (bool, error) {
 	return ok, err
 }
 
+// Peek gives the key of the account in the key file, for a command that changes nothing. It
+// does not read the legacy keychain, and it makes no file and no folder. It gives ErrNotFound
+// when the key file has no key for the account.
+func (f *File) Peek(account string) (string, error) {
+	d, err := f.peek()
+	if err != nil {
+		return "", err
+	}
+	key, ok := d.Keys[account]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return key, nil
+}
+
 // Accounts gives each account of the key file, sorted.
 func (f *File) Accounts() ([]string, error) {
 	var out []string

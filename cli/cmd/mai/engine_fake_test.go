@@ -25,6 +25,7 @@ type fakeCtr struct {
 	Port     int    // The host port of the HTTP port; 0 for no binding.
 	Data     string // The host folder of /data; "" for a volume.
 	Running  bool
+	Labels   map[string]string // More labels, for example the labels of a 2.x install.
 }
 
 // engineFake is the part of the Engine API that the lifecycle commands use, in memory. It
@@ -62,10 +63,14 @@ func (f *engineFake) find(idOrName string) (fakeCtr, bool) {
 }
 
 func (c fakeCtr) labels() map[string]string {
-	if c.Instance == "" {
-		return map[string]string{}
+	l := map[string]string{}
+	if c.Instance != "" {
+		l = engine.Labels(c.Instance)
 	}
-	return engine.Labels(c.Instance)
+	for k, v := range c.Labels {
+		l[k] = v
+	}
+	return l
 }
 
 func (c fakeCtr) mounts() []map[string]any {
