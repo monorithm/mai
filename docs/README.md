@@ -1,6 +1,6 @@
 # mai (Mail for AI) documentation
 
-The documentation has four parts and a design. If you are new to mai, start
+The documentation has four parts and the designs. If you are new to mai, start
 with [mai for a new user](explanation/mai-for-a-new-user.md).
 
 | Part | Page | Use |
@@ -17,3 +17,4 @@ with [mai for a new user](explanation/mai-for-a-new-user.md).
 | Explanation | [mai for a new user](explanation/mai-for-a-new-user.md) | The functions of mai and why mai is safe, in words that are not technical. |
 | Explanation | [Architecture](explanation/architecture.md) | The parts of mai and their relations. |
 | Design | [mai 3.0](design/mai-3.0.md) | The design of the host CLI, the leases, and the copies. |
+| Design | [mai projects](design/mai-projects.md) | A proposal: sessions in different apps that do the work of one project. |
