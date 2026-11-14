@@ -78,9 +78,13 @@ func (f *File) update(fn func(d *doc) bool) error {
 }
 
 // lock takes the lock of the key file. It waits a maximum of lockTimeout.
-func (f *File) lock() (func(), error) {
+func (f *File) lock() (func(), error) { return f.lockWith(os.O_RDWR | os.O_CREATE) }
+
+// lockWith takes the lock of the key file, and opens the lock file with the flags flag. With
+// no os.O_CREATE, a lock file that does not exist gives an error that wraps os.ErrNotExist.
+func (f *File) lockWith(flag int) (func(), error) {
 	procMu.Lock()
-	lf, err := os.OpenFile(f.lockPath(), os.O_RDWR|os.O_CREATE, 0o600)
+	lf, err := os.OpenFile(f.lockPath(), flag, 0o600)
 	if err != nil {
 		procMu.Unlock()
 		return nil, fmt.Errorf("keys: open the lock file: %w", err)
@@ -203,4 +207,19 @@ func (f *File) write(d *doc) error {
 // does not exist. "mai doctor" uses it.
 func (f *File) Check() error {
 	return f.view(func(*doc) {})
+}
+
+// peek reads the key file for a command that changes nothing. It makes no file and no
+// folder. When the lock file does not exist, it reads the key file with no lock. A write
+// replaces the key file with one rename, thus that read also gets a full file.
+func (f *File) peek() (*doc, error) {
+	release, err := f.lockWith(os.O_RDWR)
+	if errors.Is(err, os.ErrNotExist) {
+		return f.read()
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return f.read()
 }
