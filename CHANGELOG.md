@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-14
+
 ### Added
 
 - `mai guide [--app APP] [--agent NAME] [--json]`, the resource for an AI
@@ -37,6 +39,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- MCP contract 3.3.0. The tools are the same as in 3.2.0. Only the resource
+  `mai://guide` has a new section.
 - The usage of `mai` starts with the line "An AI agent: run mai guide."
 - The usage line of `mai connect` is
   `mai connect APP --agent NAME [--dry-run | --yes]`. The flags `--dry-run`

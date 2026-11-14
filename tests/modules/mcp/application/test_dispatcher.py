@@ -60,7 +60,7 @@ def test_initialize_both_revisions():
         )[1]["result"]
         assert r["protocolVersion"] == rev and r["serverInfo"] == {
             "name": "mai",
-            "version": "3.2.0",
+            "version": "3.3.0",
         }
         assert (
             r["capabilities"]

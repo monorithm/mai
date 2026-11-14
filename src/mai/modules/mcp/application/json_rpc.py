@@ -13,7 +13,7 @@ import sys
 from mai.platform.contract import ToolError
 
 # The version of the MCP contract, not of the package: a release with no contract change keeps it.
-SERVER_INFO = {"name": "mai", "version": "3.2.0"}
+SERVER_INFO = {"name": "mai", "version": "3.3.0"}
 MODERN_VERSION = "2026-07-28"
 INITIALIZE_VERSIONS = ("2025-11-25",)
 SUPPORTED = (MODERN_VERSION,) + INITIALIZE_VERSIONS

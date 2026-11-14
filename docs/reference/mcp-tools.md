@@ -1,6 +1,6 @@
 # Reference: MCP tools
 
-The server name is `mai`. The contract version is `3.2.0`.
+The server name is `mai`. The contract version is `3.3.0`.
 
 On HTTP, `tools/list` gives all 22 tools. For each tool call, the lease token
 of the bridge `mai mcp` is necessary as the bearer token.
