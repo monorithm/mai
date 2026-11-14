@@ -6,6 +6,22 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `mai connect antigravity` wrote the MCP entry of mai in
+  `~/.gemini/antigravity/mcp_config.json`, a file that Antigravity does not
+  read. This version writes the entry in `~/.gemini/config/mcp_config.json`,
+  the file that `agy mcp add` writes. It also moves the entry of an earlier
+  version of mai: it removes the entry of mai from
+  `~/.gemini/antigravity/mcp_config.json`, and the diff shows the removal.
+  The other content of that file stays. An entry `mai` in that file that is
+  not an entry of mai stays, and the CLI tells you in one line. When that
+  file is not plain JSON, `mai connect` does not change it, and the CLI tells
+  you in one line. Then `mai connect` writes the entries in the other files.
+  `mai disconnect antigravity` and `mai uninstall` remove the new entry.
+- `mai uninstall --legacy` also examines
+  `~/.gemini/config/mcp_config.json` for an MCP entry of mai 2.x.
+
 ## [3.3.0] - 2026-11-14
 
 ### Added

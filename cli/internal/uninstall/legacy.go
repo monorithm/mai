@@ -297,6 +297,7 @@ func LegacyAppFiles(home, goos string) []string {
 		filepath.Join(home, ".cursor", "mcp.json"),
 		filepath.Join(codexHome(home), "config.toml"),
 		filepath.Join(home, ".gemini", "settings.json"),
+		filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 		filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
 		filepath.Join(home, ".copilot", "mcp-config.json"),
 	}

@@ -133,3 +133,22 @@ func TestLegacyWantsTheTypedWord(t *testing.T) {
 		t.Fatalf("removed %v with no agreement", e.removed)
 	}
 }
+
+func TestLegacyFindsA2xEntryInTheMCPFileOfAntigravity(t *testing.T) {
+	home := t.TempDir()
+	file := filepath.Join(home, ".gemini", "config", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := `{"mcpServers":{"mai":{"command":"` + filepath.ToSlash(home) + `/.mai/bin/mai","args":["mcp"]},"user-server":{"command":"/usr/bin/true"}}}`
+	if err := os.WriteFile(file, []byte(entry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, f := range LegacyAppFiles(home, "linux") {
+		found = append(found, FindLegacyEntries(f)...)
+	}
+	if len(found) != 1 || found[0] != file+" /mcpServers/mai" {
+		t.Fatalf("the legacy scan found %q, want the entry in %s", found, file)
+	}
+}

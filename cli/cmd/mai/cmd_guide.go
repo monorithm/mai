@@ -614,7 +614,13 @@ func (g *guideRun) connected() {
 		r.App.Reason = ptr("the CLI cannot find the home folder: " + guideErr(err))
 		return
 	}
-	p, err := connect.Prepare(home, *r.App.Name, *r.Agent.Name)
+	// mai connect plans with the manifest of the instance, thus the guide plans with it too.
+	// The load only reads the file. When the CLI cannot load it, the plan has no manifest.
+	m, err := appManifest()
+	if err != nil {
+		m = nil
+	}
+	p, err := connect.PrepareWith(home, *r.App.Name, *r.Agent.Name, m)
 	if err != nil {
 		r.App.Reason = ptr("the CLI cannot read the files of the app: " + guideErr(err))
 		return

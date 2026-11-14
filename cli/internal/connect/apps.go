@@ -30,6 +30,10 @@ type change struct {
 	mcp      bool
 	format   string
 	event    string
+	// drop marks an earlier place of the MCP entry, which the app does not read. mai writes
+	// nothing there. It removes an entry of mai from that place. An entry that is not of mai
+	// stays.
+	drop bool
 	// inner is the hook object of a hook group, for an app that puts hooks in groups
 	// {"hooks": [...]} (Claude Code, Codex). A group can hold hooks of the user too, thus mai
 	// changes only its own hook object in a group that holds more.
@@ -224,16 +228,28 @@ func changes(home, app, agent, bin, goos string) ([]change, error) {
 			})
 		}
 	case "antigravity":
+		// Antigravity reads its MCP servers only from the file of "agy mcp add",
+		// ~/.gemini/config/mcp_config.json. The versions 3.3.0 and earlier of mai wrote the
+		// entry in ~/.gemini/antigravity/mcp_config.json. Antigravity does not read that file.
+		// Thus mai connect moves the entry: it writes the new entry, and it removes the entry
+		// of mai from the earlier file.
+		gemini := filepath.Join(home, ".gemini")
 		out = append(out, change{
-			path:    filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
+			path:    filepath.Join(gemini, "config", "mcp_config.json"),
 			pointer: "/mcpServers/mai",
 			value:   obj("command", bin, "args", mcpArgs(agent)),
 			mcp:     true,
 		})
+		out = append(out, change{
+			path:    filepath.Join(gemini, "antigravity", "mcp_config.json"),
+			pointer: "/mcpServers/mai",
+			mcp:     true,
+			drop:    true,
+		})
 		// The hook of mai is one element of the array PreInvocation of the hook set "mai", thus
 		// a hook of the user in the same array stays.
 		out = append(out, change{
-			path:    filepath.Join(home, ".gemini", "config", "hooks.json"),
+			path:    filepath.Join(gemini, "config", "hooks.json"),
 			pointer: "/mai/PreInvocation/-",
 			value:   obj("type", "command", "command", hookCommand("antigravity", "PreInvocation"), "timeout", 10),
 			format:  "antigravity",
