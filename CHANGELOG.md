@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-11-14
+
 ### Fixed
 
 - `mai connect antigravity` wrote the MCP entry of mai in
@@ -21,6 +23,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mai disconnect antigravity` and `mai uninstall` remove the new entry.
 - `mai uninstall --legacy` also examines
   `~/.gemini/config/mcp_config.json` for an MCP entry of mai 2.x.
+- When a symbolic link makes the two MCP files of Antigravity one file,
+  `mai connect antigravity` keeps the entry, and a second connect gives no
+  change.
+- `mai guide` plans the connect of the app with the manifest. Thus it tells
+  that the app is connected only when `mai connect` has no change.
+
+### Changed
+
+- The MCP contract stays 3.3.0. Only the host CLI and the docs changed.
 
 ## [3.3.0] - 2026-11-14
 

@@ -56,7 +56,7 @@ func TestTheDocsTellAboutAnEarlierMCPFileOfAntigravityThatIsNotPlainJSON(t *test
 	text := regexp.MustCompile(`(?s)not plain JSON[^.]*\bdoes not change\b[^.]*\bone line\b`)
 	for name, doc := range map[string]string{
 		"docs/reference/cli.md, mai connect": section(t, readDoc(t, "docs", "reference", "cli.md"), "### mai connect"),
-		"CHANGELOG.md, [Unreleased]":         section(t, readDoc(t, "CHANGELOG.md"), "## [Unreleased]"),
+		"CHANGELOG.md, [3.3.1]":              section(t, readDoc(t, "CHANGELOG.md"), "## [3.3.1] - 2026-11-14"),
 	} {
 		if !text.MatchString(strings.Join(strings.Fields(doc), " ")) {
 			t.Errorf("%s does not tell that mai connect does not change an earlier file that is not plain JSON, and tells it in one line", name)
