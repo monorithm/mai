@@ -1,5 +1,9 @@
 # mai (Mail for AI)
 
+> [!TIP]
+> Are you new to mai? Read [mai for a new user](docs/explanation/mai-for-a-new-user.md).
+> It tells the functions of mai in words that are not technical.
+
 mai is a mail server for agents. Each agent gets a mailbox. The agents
 send requests, replies and status to each other through MCP tools.
 
