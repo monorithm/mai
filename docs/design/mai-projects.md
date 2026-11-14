@@ -1,12 +1,14 @@
 # mai projects: sessions that do the work of one project
 
-Status: design, revised on 14 November 2026 with two prototypes and one
-review (appendix A). No part is in a release. Base: mai 3.3.1 (`b1880ac`).
+Status: design, revised on 14 November 2026 for the user decision U-01, with
+two prototypes, one tools test, and one review (appendix A). No part is in a
+release. Base: mai 3.3.1 (`b1880ac`).
 
 A mark [A] shows an assumption that has no test. A mark [E] shows an
-estimate. G-n is a gap of mai 3.3.1 (section 2). R-n is a requirement from
-a real project, named shop-api in this document. D-n is a decision for the user (section
-14). Each path is relative to the root of the repository.
+estimate. G-n is a gap of mai 3.3.1 (section 2), and R-n is a requirement of
+a real project, named shop-api here. U-n is a decision of the
+user, and D-n is a decision for the user (section 14). Each path is relative
+to the root of the repository.
 
 ## 1. Result first
 
@@ -16,20 +18,21 @@ a real project, named shop-api in this document. D-n is a decision for the user 
 - **A member is one named session with one role in one project:**
   supervisor, worker, reviewer, or observer. Roles are not properties of
   agents.
-- **Each member has a stable address,** for example `shop-api.lane-a`, and
-  `shop-api.supervisor` goes to the supervisor.
-- **A chat finds its member from its folder.** A Claude Code bridge binds to
-  the member of its folder. In the other apps, the hook line or `AGENTS.md`
-  gives the address.
+- **Each worker has a lane, a git worktree at
+  `<project>/.mai/<agent>/<lane-id>`** (U-01). `apply` makes each missing
+  lane, and never deletes a lane.
+- **Each member has a stable address,** for example `shop-api.lane-a`. A
+  Claude Code chat binds to the member of its folder. In the other apps, the
+  hook line or `AGENTS.md` gives the address.
 - **Projects are separate for each session, not for each chat.** A member
   has no agent queue, and sends mail only in its project and to the owner.
-  Section 8 gives the guard of each app.
 - **Board notices go to member sessions,** never to agent addresses. With no
   supervisor chat, the owner gets one signal.
 - **Only the owner approves.** The owner commands refuse to run in an agent
   app or with no terminal.
-- **Releases:** 3.4.0 (model, isolation, folder pin), 3.5.0 (binding, hook
-  lines, presence), 3.6.0 (Cursor guard, standby). Total: 12 to 16 days [E].
+- **Releases:** 3.4.0 (model, isolation, lanes, folder pin), 3.5.0
+  (binding, hook lines, presence), 3.6.0 (Cursor guard, standby). Total: 13
+  to 17 days [E].
 
 ## 2. The problem
 
@@ -37,18 +40,16 @@ In shop-api, one Claude Code session was the supervisor. Cursor and
 Antigravity were implementers, each in its own git worktree. mai 3.3.1
 cannot give this setup safely:
 
-| Gap | Fact in 3.3.1 | Evidence |
-|---|---|---|
-| G-1 | Only `mai exec -- project seed` makes a project, with one worker. | `src/mai/app_cli.py:225-264` |
-| G-2 | A role is a property of an agent. Two Claude Code chats cannot be supervisor and worker. | `postgres_credential_store.py:31-36` |
-| G-3 | The login reads the roles one time. | `log_in_command.py:55` |
-| G-4 | A lane holds an agent. `start_item` takes the first item of the agent. | `postgres_board_store.py:559-564` |
-| G-5 | Board notices go to the agent address, which each chat of the app reads. | `postgres_board_store.py:241-246` |
-| G-6 | One agent queue holds the mail of all projects. | `mail_rules.py:115-119` |
-| G-7 | In each chat, the hook shows the lines of all sessions of the bridge. | `cli/internal/hook/notice.go:57-69`, `format.go:94-104` |
-| G-8 | The board tool schemas do not agree with the board. | `tool_schemas.py:444-575` |
-| G-9 | 30 minutes after the last supervisor call, supervisor mail goes to the agent queue. | `postgres_board_store.py:226-239` |
-| G-10 | No code reads `board.project.repo_path`. | `board_migrations.py:15` |
+- G-1. Only `mai exec -- project seed` makes a project, with one worker (`src/mai/app_cli.py:225-264`).
+- G-2. A role is a property of an agent. Two Claude Code chats cannot be supervisor and worker (`postgres_credential_store.py:31-36`).
+- G-3. The login reads the roles one time (`log_in_command.py:55`).
+- G-4. A lane holds an agent. `start_item` takes the first item of the agent (`postgres_board_store.py:559-564`).
+- G-5. Board notices go to the agent address, which each chat of the app reads (`postgres_board_store.py:241-246`).
+- G-6. One agent queue holds the mail of all projects (`mail_rules.py:115-119`).
+- G-7. In each chat, the hook shows the lines of all sessions of the bridge (`cli/internal/hook/notice.go:57-69`, `format.go:94-104`).
+- G-8. The board tool schemas do not agree with the board (`tool_schemas.py:444-575`).
+- G-9. 30 minutes after the last supervisor call, supervisor mail goes to the agent queue (`postgres_board_store.py:226-239`).
+- G-10. No code reads `board.project.repo_path` (`board_migrations.py:15`).
 
 Outside evidence:
 
@@ -60,16 +61,17 @@ Outside evidence:
   author approve its change. Thus mai has three working roles, and a holder
   cannot accept its item.
 
-| R | Section | R | Section |
-|---|---|---|---|
-| R-1 project from the host CLI | 9.1 | R-9 board with no supervisor | 7.4 |
-| R-2 role of a session | 3.1 | R-10 only the owner approves | 8.2 |
-| R-3 lane of a session | 6 | R-11 projects stay separate | 5.2 |
-| R-4 notices to sessions | 6 | R-12 rules of a real project | D-14, in part |
-| R-5 one command | 9.1 | R-13 folder and app of a lane | 4.2, 7.3 |
-| R-6 a call with no session | 5.3 | R-14 pause | 7.5 |
-| R-7 scope of a notice | 4.3 | R-15 guide | 9.3 |
-| R-8 presence | 7.3 | R-16 exclusive session | D-07 |
+The requirements, with their sections:
+
+- R-1 project from the host CLI (9.1), R-2 role of a session (3.1), R-3 lane
+  of a session (6), R-4 notices to sessions (6).
+- R-5 one command (9.1), R-6 a call with no session (5.3), R-7 scope of a
+  notice (4.3), R-8 presence (7.3).
+- R-9 board with no supervisor (7.4), R-10 only the owner approves (8.2),
+  R-11 projects stay separate (5.2), R-12 rules of a real project (D-14, in
+  part).
+- R-13 folder and app of a lane (3.2, 4.2, 7.3), R-14 pause (7.5), R-15
+  guide (9.3), R-16 exclusive session (D-07).
 
 ## 3. The model
 
@@ -77,15 +79,14 @@ Outside evidence:
 
 The login of a member session is `AGENT.PROJECT-MEMBER`, for example
 `cursor.shop-api-lane-a`. Thus one app can be a member of many projects, and
-two projects never use the same label. Nobody types the login. Chats and
-senders use the member address `PROJECT.MEMBER`.
+two projects never use the same label. Chats and
+senders use the member address `PROJECT.MEMBER`. The roles, with their
+board tools and number:
 
-| Role | Board tools | Number |
-|---|---|---|
-| supervisor | All | Exactly one |
-| worker | `get_board`, `read_item`, `start_item`, `report_status`, `submit_for_review` | One for each lane |
-| reviewer | `get_board`, `read_item`, `report_status`, `review_item` | Zero or more |
-| observer | `get_board`, `read_item` | Zero or more |
+- `supervisor`: all board tools. Exactly one.
+- `worker`: `get_board`, `read_item`, `start_item`, `report_status`, `submit_for_review`. One for each lane.
+- `reviewer`: `get_board`, `read_item`, `report_status`, `review_item`. Zero or more.
+- `observer`: `get_board`, `read_item`. Zero or more.
 
 A role is a property of a session (D-01), because in shop-api the
 supervisor and 8 implementers were Claude Code sessions (G-2). The owner is
@@ -96,8 +97,8 @@ of one project. `board_rules.ROLES` and `TOOL_ROLES` (`board_rules.py:39`,
 
 ### 3.2 The project file
 
-`mai project init` writes the file, `mai project add` changes it, and the
-user commits it:
+`mai project init` writes the file and `.mai/.gitignore`, `mai project add`
+changes the file, and the user commits the two files:
 
 ```json
 {
@@ -107,20 +108,25 @@ user commits it:
   "wip_limit": 2,
   "done_rule": {"checks": [{"name": "check", "required": true}]},
   "members": {
-    "supervisor": {"agent": "claude", "role": "supervisor", "folder": "."},
-    "lane-a": {"agent": "cursor", "role": "worker", "folder": "../shop-api-cursor"},
-    "lane-b": {"agent": "antigravity", "role": "worker", "folder": "../shop-api-antigravity"},
-    "review": {"agent": "codex", "role": "reviewer", "folder": "."}
+    "supervisor": {"agent": "claude", "role": "supervisor"},
+    "lane-a": {"agent": "cursor", "role": "worker"},
+    "lane-b": {"agent": "antigravity", "role": "worker"},
+    "review": {"agent": "codex", "role": "reviewer"}
   },
   "base": "sha256:..."
 }
 ```
 
+The folder of a worker is its lane, `ROOT/.mai/AGENT/MEMBER`
+(`project.LanePath`), here `/Users/me/work/shop-api/.mai/cursor/lane-a`. A
+different role has the root, or its relative `folder`.
+
 `project.Load` in the CLI examines these rules, and the server examines
 them again at apply:
 
-1. `folder` is relative and not empty (`.` is the root). The file has no
-   absolute path, no key, and no instance name.
+1. A worker has no `folder` field, also not `"."` or `""`. For a different
+   role, `folder` is relative and not empty. The file has no absolute path,
+   no key, and no instance name.
 2. `mai_project` is 1. The JSON has no unknown field, no duplicate key, and
    no second value. `encoding/json` keeps the last of two equal keys, thus a
    hand edit could lose a member.
@@ -128,22 +134,32 @@ them again at apply:
    `[a-z0-9][a-z0-9-]{0,23}`, and an agent name with
    `[a-z0-9][a-z0-9-]{0,47}`. `PROJECT-MEMBER` has 32 characters or
    less, or the member gives `label`. A label never has the pool form
-   `s[0-9]+`, and two members never get one login.
+   `s[0-9]+`, and two members never get one login. The names of a worker
+   are path parts, thus never a Windows device name such as `nul`.
 4. A project name is never an agent name. The CLI knows only the agents of
    the file. Thus `apply` refuses a project name that is an agent, and
    `AddAgentHandler` (`add_agent_command.py:32-40`) refuses an agent name
    that is a project.
 5. The names `supervisor` and `reviewer` are role addresses, for that role
    only. Exactly one member is supervisor.
-6. One folder has one member of an agent at most.
+6. One folder has one member of an agent at most, also a lane.
+7. The root is the top folder of the primary worktree (D-20), not the home
+   folder. There, the plan folder is `~/.mai`, which `mai uninstall --legacy`
+   removes with each lane (`cli/internal/uninstall/legacy.go:126`, `:281`).
 
-The format is JSON, because the Go CLI has no TOML parser (`cli/go.mod`).
+The format is JSON: the Go CLI has no TOML parser (`cli/go.mod`).
 
-**Worktrees.** Git checks out a copy of a committed file in each linked
-worktree. The CLI prototype showed that a search that stops at the first
-file resolves `.` to the worktree (appendix A.1). Thus, when the found
-folder has a `.git` file, `project.Find` reads `gitdir` and `commondir` with
-no git command. If the primary worktree has the file, `Find` gives it.
+**The ignore file.** `.mai/.gitignore` has two comment lines and `/*/`,
+thus git ignores each lane but not `project.json`. With no file, `git add
+-A` adds a lane as a gitlink. A commit before the plan has no ignore file,
+thus mai also writes `/.mai/*/` in `.git/info/exclude` (D-18).
+
+**Worktrees.** Each lane has a copy of the plan. In a linked worktree,
+`project.Find` reads `gitdir` and `commondir`, and gives the primary
+worktree if it has the file (A.3). If the root is on a commit with no plan,
+`Find` gives the lane, and `Load` gives incorrect folders. Thus `Find` in
+3.4.0 refuses a found lane in the plan folder of its primary worktree. The
+prototype does not have this rule.
 
 **Copies of an earlier plan.** Each branch has its own copy of the plan.
 Thus `apply` writes the SHA-256 of the applied plan in `base`, and the SHA
@@ -173,8 +189,9 @@ CREATE UNIQUE INDEX membership_folder ON mail_auth.membership
   (folder, split_part(login, '.', 1)) WHERE removed_at IS NULL;
 ```
 
-Migration 510 (board) links the project to its repository and the lane to
-its session:
+For a worker, `folder` is the lane, and the server refuses a different
+folder. Migration 510 (board) links the project to its repository and the
+lane to its session:
 
 ```sql
 ALTER TABLE board.project ADD COLUMN remote text, ADD COLUMN plan_sha text,
@@ -192,30 +209,55 @@ The app role has no DELETE right, and the primary key `(project, login)`
 stays. Thus `apply` adds a removed member again with an UPDATE that sets
 `removed_at` to NULL, and its revoked session goes back to `issued`. The
 UPDATE of agent rows runs before the constraint, thus an earlier role
-`owner` cannot stop the migration.
+`owner` cannot stop the migration. `branch_prefix` starts the item branches
+of a worker (D-16).
+
+### 3.4 Tools in the project root
+
+Each lane is a full copy of the repository in the root. A tools test ran
+each tool in the root of a scratch project with two lanes (A.4):
+
+| Tool | Result in the root | Precaution |
+|---|---|---|
+| git 2.54.0 (Apple Git-157) | With `.mai/.gitignore`, `status` and `add -A` skip the lanes. `grep --no-index` reads them, also the lane `.env`. `clean -ffdx` deletes them with uncommitted work, but `clean -fdx` keeps them. | `--exclude-standard`. No `git clean -ff`. |
+| go1.27.3 | `go list`, `go test`, and `go vet ./...` skip the lanes. `gofmt -l .` and `go work use -r .` use them. | `go fmt ./...` |
+| pytest 9.2.0, ruff 0.17.4, ty 0.0.101, TypeScript 6.0.3, Nest CLI 12.0.11 | Skip the lanes. ruff and ty use `.mai/.gitignore`, and the others skip dot folders. | Keep `.*` in `norecursedirs`. |
+| ESLint v10.14.0 | Lints each lane. With the configuration of a real NestJS project, each message shows 3 times. | `{ ignores: ['.mai/'] }` |
+| Vitest 5.0.5 | With no configuration, it runs 4 tests in place of 1. | `'.mai/**'` in `exclude` |
+| Prettier 3.9.10 | Reads the lanes. It reads only the ignore files of its start folder. | `/.mai/*/` in `.gitignore` |
+| Node.js v26.13.0 | A lane with no `node_modules` uses the packages of the root. | An install in each lane |
+| Docker 29.9.2, buildx v0.38.1 | `COPY .` copies 52 of 132 files from `.mai`, with the lane `.env`. | `.mai/*/` and `!.mai/project.json` |
+
+Documentation only: Visual Studio Code and Cursor have no default rule for
+`.mai`, and Glob of Claude Code does not use `.gitignore`. The worktree
+cleanup of Cursor 3.5 can delete a worktree that `git worktree add` made
+(section 13). On Windows, set `core.longpaths=true`. ESLint, Vitest,
+Prettier, and Docker must get a line in a file of the user (D-18).
 
 ## 4. How a chat finds its member
 
 ### 4.1 One form for each folder
 
 `project.Resolve` in the CLI resolves symbolic links. For a folder that does
-not exist, it resolves the nearest parent that exists and adds the rest. On
-macOS and Windows, it also gives the true case of the letters (`F_GETPATH`,
-`GetFinalPathNameByHandle`) [A]. `apply`, the bridge, and the hook use
-`Resolve`. At this time, the bridge sends `os.Getwd()` with no change
-(`cmd_runtime.go:49`). The lease request adds the host OS, and for `darwin`
-and `windows` the server compares folders with no case, as `foldKey` does.
+not exist, it resolves the nearest parent that exists and adds the rest.
+`apply`, the bridge, and the hook use `Resolve`. At this time, the bridge
+sends `os.Getwd()` with no change (`cmd_runtime.go:49`). The lease request
+adds the host OS. For `darwin` and `windows`, the CLI and the server compare
+folded paths (`foldKey`, A.3).
 
-The CLI prototype showed why each part is necessary. On macOS, `filepath.Clean`
+On macOS, `filepath.Clean`
 keeps `/var/...`, but a chat after `git worktree add` gives
 `/private/var/...`. `EvalSymlinks` keeps the case of its input on APFS.
 Cost: on a case-sensitive volume, two folders with different case agree.
 
 The match (`MemberOf` in the CLI, `of_folder` on the server) uses the
-longest member folder on a path boundary. Thus `shop-api/src` gives the
-member of `shop-api`, but `shop-api-cursor` does not. A worker worktree in
-the root (`.claude/worktrees/lane-c`) gives that worker. With no agent, two
-members at the longest folder give no match.
+longest member folder on a path boundary. The root holds each lane, thus a
+second rule is necessary: a folder in the plan folder of a member folder
+never gives that member. For example, `shop-api/src` gives the supervisor,
+`shop-api/.mai/cursor/lane-a/src` gives lane-a, and `shop-api-old` gives no
+member. A Claude Code chat in `shop-api/.mai` or in a Cursor lane gets no
+member, not the supervisor (4.2). With no agent, two members at the longest
+folder give no match.
 
 ### 4.2 Claude Code: the folder binding
 
@@ -250,7 +292,8 @@ start two bridges, in the app and in the IDE extension.
 The code changes:
 
 - `LeaseService._acquire`: on `bind: true` from an app in `PER_CHAT_APPS`,
-  call `CredentialService.member_of_folder(agent, folder, os)`.
+  call `CredentialService.member_of_folder(agent, folder, os)`, with the two
+  rules of 4.1.
 - `runMCP` sends the known app name. `guideAppOfProc` (`cmd_guide.go:503`)
   moves to `procchain.App` and adds `agy`, which gives `copilot` in a Code
   terminal at this time (R-13).
@@ -271,12 +314,12 @@ Read only the mail of shop-api.lane-a.
 In Claude Code, the second sentence is "Your folder gives your session. Give
 no session." The method:
 
-1. Each heartbeat gives all members of the agent and their new-mail counts
-   (`ImapNewMailCounter`), with or without a lease in this bridge. Thus the list is correct after an apply, and a notice shows
-   before the first call of the chat.
+1. Each heartbeat gives the new-mail count of each member of the agent
+   (`ImapNewMailCounter`), also with no lease in this bridge. Thus the counts
+   are correct after an apply and before the first call.
 2. In Claude Code, the hook uses the bound member, because the payload
    `cwd` can change after a `cd` in the Bash tool [A].
-3. In the other apps, the hook reads `cwd` or `workspace_roots[0]` (table).
+3. In the other apps, the hook reads `cwd` or `workspace_roots[0]` (list).
    A `file://` URI becomes a path. With no folder, the hook uses the folder
    where it runs.
 4. `hook.Lines` gives only the line of that member. At the start and at
@@ -284,12 +327,12 @@ no session." The method:
    `PostToolUse`, it gives a line only for new mail.
 5. With no member for the folder, the output stays as in 3.3.1.
 
-| App | Folder source | Limit |
-|---|---|---|
-| Claude Code | Bound member | None |
-| Cursor | `workspace_roots[0]` [A] | A window with many roots uses the first root. |
-| Codex, Copilot | `cwd` [A] | Copilot has no prompt hook. 3.5.0 adds `userPromptSubmit` [A]. |
-| Antigravity | None known | Many hub processes, and `PreInvocation` before each model call. The 3.3.1 lines stay. |
+The folder source of each app:
+
+- Claude Code: the bound member.
+- Cursor: `workspace_roots[0]` [A]. A window with many roots uses the first root.
+- Codex, Copilot: `cwd` [A]. Copilot has no prompt hook. 3.5.0 adds `userPromptSubmit` [A].
+- Antigravity: none. Many hub processes, and `PreInvocation` before each model call. The 3.3.1 lines stay.
 
 Until a recorded payload shows a folder field, an Antigravity member gets
 its address only from `AGENTS.md` [A]. `mai project init --agents-md` adds a
@@ -315,11 +358,9 @@ Each member and role address is a row of `mail_auth.alias`, which Postfix
 and the mail UI read (`etc/postfix/pgsql-alias.cf`). `apply` writes the rows in the transaction of
 the members:
 
-| Address | Goes to |
-|---|---|
-| `shop-api.supervisor` | The supervisor member |
-| `shop-api.reviewer` | The reviewer if the project has exactly one, else the supervisor |
-| `shop-api.MEMBER` | The session of that member |
+- `shop-api.supervisor` goes to the supervisor member.
+- `shop-api.reviewer` goes to the reviewer if the project has exactly one, else the supervisor.
+- `shop-api.MEMBER` goes to the session of that member.
 
 `apply` tells when `shop-api.reviewer` goes to the supervisor. The address
 of a removed member goes to `owner`.
@@ -342,17 +383,15 @@ gives isolation for each key.
 `SessionState` carries the member flag from the membership row. With that
 flag, these parts use no agent queue:
 
-| Part | Change |
-|---|---|
-| `mail_rules.queue_of`, `mail_reader.queue_of` | No queue for a member. The mail tools read only its INBOX. |
-| `notice_lines.mailboxes_of` | No queue in the heartbeat count and the notice watcher. |
-| `NewSessionHandler` (`new_session_command.py:77`) | No grant for a member session. Thus no removal is necessary. |
-| `GrantMailboxAccessHandler` (`grant_mailbox_access_command.py:49-55`) | No grant for a member at a start of Dovecot. If not, each restart gives the rights again. |
-| `RevokeSessionHandler` (`revoke_session_command.py:32-42`) | Unread mail of a member goes to `owner`, not to the agent queue. |
-| `ClaimService`, `SessionStaleJob` | No claim and no return for a member (section 6). |
-| `MailSender.check_known` | On logins, after alias resolution. A member sends only in its project and to `owner`. Each other recipient gives `RECIPIENT_OUT_OF_PROJECT`. |
-| `list_addresses_query.py:16-35` | A member sees its project and `owner`. A session that is not a member sees no member. |
-| `mail_sender.build`, `Call.resolve_project` | `X-Mai-Project` on each member mail. A board call acts only in the project of the session. |
+- `mail_rules.queue_of`, `mail_reader.queue_of`: no queue for a member. The mail tools read only its INBOX.
+- `notice_lines.mailboxes_of`: no queue in the heartbeat count and the notice watcher.
+- `NewSessionHandler` (`new_session_command.py:77`): no grant for a member session. Thus no removal is necessary.
+- `GrantMailboxAccessHandler` (`grant_mailbox_access_command.py:49-55`): no grant for a member at a start of Dovecot. If not, each restart gives the rights again.
+- `RevokeSessionHandler` (`revoke_session_command.py:32-42`): unread mail of a member goes to `owner`, not to the agent queue.
+- `ClaimService`, `SessionStaleJob`: no claim and no return for a member (section 6).
+- `MailSender.check_known`: on logins, after alias resolution. A member sends only in its project and to `owner`. Each other recipient gives `RECIPIENT_OUT_OF_PROJECT`.
+- `list_addresses_query.py:16-35`: a member sees its project and `owner`. A session that is not a member sees no member.
+- `mail_sender.build`, `Call.resolve_project`: `X-Mai-Project` on each member mail. A board call acts only in the project of the session.
 
 When a session that exists becomes a member, `apply` removes its queue ACL
 before it writes the member row. If the removal does not occur, `apply`
@@ -371,18 +410,17 @@ INBOX. Two changes:
 
 ## 6. The task flow
 
-The states of the board stay the same (`board_rules.py:43-53`):
+The states of the board stay the same (`board_rules.py:43-53`). Each step
+gives the caller, the tool, the state change, and the notice:
 
-| Step | Who | Tool | State | Notice to |
-|---|---|---|---|---|
-| 1 | Supervisor | `plan_item` (key, title, spec, lane, reviewer) | `backlog` to `ready` | None |
-| 2 | Supervisor | `assign_item` (item, lane) | `ready` to `assigned` | Lane session |
-| 3 | Worker | `start_item` (no item) | `assigned` to `in_progress` | Supervisor |
-| 4 | Worker | `report_status` (text, state, cause) | `in_progress` or `blocked` | Supervisor |
-| 5 | Worker | `submit_for_review` (evidence) | `in_progress` to `in_review` | Reviewer, supervisor |
-| 6 | Reviewer | `review_item` (changes, findings) | `in_review` to `changes_requested` | Holder |
-| 7 | Reviewer | `review_item` (accept, no merge commit) | Stays `in_review`, signal `review_accepted` | Supervisor |
-| 8 | Supervisor | `review_item` (accept, merge commit) | `in_review` to `done` | Holder, reviewer |
+1. Supervisor: `plan_item` (key, title, spec, lane, reviewer), `backlog` to `ready`, no notice.
+2. Supervisor: `assign_item` (item, lane), `ready` to `assigned`, to the lane session.
+3. Worker: `start_item` (no item), `assigned` to `in_progress`, to the supervisor.
+4. Worker: `report_status` (text, state, cause), `in_progress` or `blocked`, to the supervisor.
+5. Worker: `submit_for_review` (evidence), `in_progress` to `in_review`, to the reviewer and the supervisor.
+6. Reviewer: `review_item` (changes, findings), `in_review` to `changes_requested`, to the holder.
+7. Reviewer: `review_item` (accept, no merge commit), stays `in_review` with the signal `review_accepted`, to the supervisor.
+8. Supervisor: `review_item` (accept, merge commit), `in_review` to `done`, to the holder and the reviewer.
 
 The code changes, in `postgres_board_store.py` if no file is given:
 
@@ -440,7 +478,7 @@ because an agent writes the subject. A hook line then tells, for example,
 `get_board` gives, for each member (R-8, R-13):
 
 ```json
-{"member": "lane-a", "role": "worker", "folder": "/Users/me/work/shop-api-cursor",
+{"member": "lane-a", "role": "worker", "folder": "/Users/me/work/shop-api/.mai/cursor/lane-a",
  "lease": {"app": "cursor", "pid": 3301, "bridge_folder": "/Users/me/work"},
  "last_call_at": "2026-11-14T10:02:11Z", "waiting": true, "current_item": "itm-abcdefghijkl"}
 ```
@@ -475,11 +513,12 @@ one notice with the note (R-14). Reports and reviews continue.
 
 ### 8.1 Proofs and guards
 
-| mai proves | mai cannot prove |
-|---|---|
-| The agent, through the agent key | Which chat in one bridge made a call |
-| The bridge, through the lease token in its memory | The app and the folder of the bridge. The bridge reports them (`leases_controller.py:104-119`). |
-| One lease for each member at a time (`SESSION_BUSY`) | A defense against a program of the OS user that reads the key file (mai 3.0, section 7) |
+- The agent key proves the agent, and the lease token in the memory of the
+  bridge proves the bridge. `SESSION_BUSY` keeps one lease for each member.
+- No proof shows which chat in one bridge made a call, or the app and the
+  folder that the bridge reports (`leases_controller.py:104-119`). The
+  design has no defense against a program of the OS user that reads the key
+  file (mai 3.0, section 7).
 
 MCP stdio has no chat identifier, thus the threat is the error of a chat,
 not an attack. The guards:
@@ -495,11 +534,11 @@ not an attack. The guards:
 4. **Audit.** Each board event records the login, the app, the PID, and the
    bridge folder.
 
-| App | Guard against a different member of its agent |
-|---|---|
-| Claude Code | Folder pin, 3.4.0 |
-| Cursor | Hook guard, 3.6.0 [A] |
-| Codex, Copilot, Antigravity | None. D-13 gives a hard limit. |
+The guard of each app against a different member of its agent:
+
+- Claude Code: folder pin, 3.4.0.
+- Cursor: hook guard, 3.6.0 [A].
+- Codex, Copilot, Antigravity: none. D-13 gives a hard limit.
 
 ### 8.2 Only the owner approves (R-10)
 
@@ -524,10 +563,10 @@ subject. A mail or an item text is never approval.
 
 | Command | Effect |
 |---|---|
-| `mai project init NAME [--goal TEXT] [--supervisor AGENT] [--agents-md]` | Writes the file in the primary worktree. No server change. |
-| `mai project add MEMBER --agent A --role R [--folder DIR]`, `mai project remove MEMBER` | Changes the file only. |
-| `mai project apply [--file PATH] [--dry-run] [--yes]` | Makes the server agree with the file, then writes `base`. |
-| `mai project list`, `mai project show NAME` (`--json`) | Projects, members, leases, presence, signals. |
+| `mai project init NAME [--goal TEXT] [--supervisor AGENT] [--agents-md]` | Writes the file and `.mai/.gitignore` in the primary worktree. No server change. |
+| `mai project add MEMBER --agent A --role R [--folder DIR]`, `mai project remove MEMBER` | Changes the file only. A worker gets no `--folder`. |
+| `mai project apply [--file PATH] [--ref REF] [--dry-run] [--yes]` | Makes the server agree with the file, makes the missing lanes, then writes `base`. |
+| `mai project list`, `mai project show NAME` (`--json`) | Projects, members, lanes, leases, presence, signals. |
 | `mai project pause NAME --note TEXT`, `mai project resume NAME` | Section 7.5. |
 | `mai project approve NAME --item KEY --note TEXT` | Adds a row to `board.approval`. |
 | `mai agent pool off AGENT`, `mai agent pool on AGENT` | Section 5.3. |
@@ -535,8 +574,34 @@ subject. A mail or an item text is never approval.
 Thus the owner makes a project with `mai` only (R-1). `apply` refuses an
 agent that does not exist. It makes the member sessions with no queue grant,
 then writes the project, members, lanes, and aliases in one transaction. A
-second run gives `No change.` (R-5). A removal revokes the session after the
-checks of section 8.2 and of `base`.
+removal revokes the session after the checks of section 8.2 and of `base`.
+
+**Lanes.** Before a server change, `PlanLanes` gives the state of each lane,
+and changes nothing. After the transaction, `MakeLanes` writes
+`.mai/.gitignore` if necessary, and makes each missing lane with `git
+worktree add --detach -- PATH COMMIT` at HEAD or at `--ref REF` (D-16). It
+makes the parent folder first, because with no parent folder, git 2.54.0
+can register a path two times (A.3).
+
+| State | `apply` |
+|---|---|
+| `missing`: no folder | Makes the lane. |
+| `ok`: a clean worktree of the root repository | Nothing |
+| `dirty`: uncommitted or untracked paths | Nothing. It gives the count. |
+| `not-a-worktree`: a plain folder, a file, or a link | Stops before a change. |
+| `worktree-of-a-different-repository` | Stops before a change. |
+| `registered-but-missing`: git lists it, but the folder is missing | Stops, and tells the owner to run `git worktree prune`. |
+
+`apply` does not run `git worktree prune`, because prune removes each
+missing worktree, not only lanes. A second run gives `No change.` (R-5).
+`apply` never changes or deletes a folder that exists, and gives the lane of
+a removed member as `kept` (D-19). The lane steps use git 2.36 or a
+subsequent version (`worktree list -z`) [A].
+
+**Who runs each step.** An agent app can run each step that deletes
+nothing: `init`, `add`, `remove`, the guide, and an `apply` with no
+removal. An `apply` that removes a member is an owner command (8.2). Only
+the owner deletes a lane, with `git worktree remove`.
 
 ### 9.2 Owner API
 
@@ -544,18 +609,16 @@ For each route, the owner key is necessary. The controller
 `board/api/projects_controller.py` calls a new `ProjectService` with
 `plan`, `apply`, `list`, `show`, `set_state`, and `approve`.
 
-| Route | Request | Result |
-|---|---|---|
-| `PUT /api/projects/{name}?dry_run=1` | `{"file", "root", "remote", "folders", "os"}` | `200 {"changes": [...], "applied": false, "plan_sha"}` |
-| `GET /api/projects`, `GET /api/projects/{name}` | | `200` |
-| `POST /api/projects/{name}/state` | `{"state", "note", "process"}` | `200 {"state", "notices"}` |
-| `POST /api/projects/{name}/approvals` | `{"subject_kind", "item", "decision", "note", "process"}` | `201 {"approval"}` |
+- `PUT /api/projects/{name}?dry_run=1` with `{"file", "root", "remote", "folders", "os"}` gives `200 {"changes": [...], "applied": false, "plan_sha"}`.
+- `GET /api/projects`, `GET /api/projects/{name}` gives `200`.
+- `POST /api/projects/{name}/state` with `{"state", "note", "process"}` gives `200 {"state", "notices"}`.
+- `POST /api/projects/{name}/approvals` with `{"subject_kind", "item", "decision", "note", "process"}` gives `201 {"approval"}`.
 
 The errors are `400 BAD_PLAN` (with `path`), `404 AGENT_UNKNOWN`, and `409
 NAME_TAKEN`, `LABEL_TAKEN`, `FOLDER_TAKEN`, or `PLAN_STALE`. The CLI sends
-absolute folders, because the server in the container cannot read the host
-folders. After migration 101, `project seed` gives an error, because
-`app_cli.py:256` writes the column `agent` (D-10).
+absolute folders and makes the lanes, because the server in the container
+cannot read the host folders. After migration 101, `project seed` gives an
+error, because `app_cli.py:256` writes the column `agent` (D-10).
 
 ### 9.3 `mai guide --project`
 
@@ -567,32 +630,31 @@ Project shop-api: file found, not applied.
 Steps:
   1. mai agent add codex          (the agent codex does not exist)
   2. mai connect codex
-  3. mai project apply
+  3. mai project apply            (makes the lanes lane-a and lane-b)
   4. mai agent pool off cursor    (all cursor chats are members)
-  5. Open a chat in /Users/me/work/shop-api-cursor (member lane-a, Cursor).
+  5. Open a chat in /Users/me/work/shop-api/.mai/cursor/lane-a (member lane-a, Cursor).
+  6. Add .mai/*/ and !.mai/project.json to .dockerignore.
 This folder: member supervisor (claude).
 ```
 
 The code is a new `guideRun.project` step in `cmd_guide.go`, next to
-`lanes()` (`:965`).
+`lanes()` (`:965`), with `PlanLanes`.
 
 ## 10. The MCP contract
 
 Contract 3.4.0 comes with mai 3.4.0 (`json_rpc.py:16`). The tool count stays
 22.
 
-| Tool | Change |
-|---|---|
-| `whoami` | Adds `project` (name, member, role, lane, address, supervisor, folder, state), read in the call. 3.5.0 adds `bound` and `member_busy`. |
-| `list_addresses` | Adds `project` with its members and role addresses. |
-| `send_message`, `reply` | Accept member and role addresses. |
-| `list_inbox`, `wait_for_mail` | Each summary adds `project` and the member address of the sender. |
-| `get_board` | Members in place of agent lanes. 3.5.0 adds presence. |
-| `plan_item` | Inputs `key`, `title`, `spec`, `lane`, `reviewer` (a member name), `state` (G-8). |
-| `assign_item` | Inputs `item`, `lane` (necessary), `sprint`. No `agent`. |
-| `start_item` | `item` is optional, and is a ref or a key. No `lease_until` and no `moved` in the result. |
-| `report_status`, `review_item` | Inputs `item`, `text`, `state`, `cause`. A finding is a string or `{severity, text}`. |
-| All board tools | `project` is optional, and must be the project of the session. |
+- `whoami`: adds `project` (name, member, role, lane, address, supervisor, folder, state), read in the call. 3.5.0 adds `bound` and `member_busy`.
+- `list_addresses`: adds `project` with its members and role addresses.
+- `send_message`, `reply`: accept member and role addresses.
+- `list_inbox`, `wait_for_mail`: each summary adds `project` and the member address of the sender.
+- `get_board`: members in place of agent lanes. 3.5.0 adds presence.
+- `plan_item`: inputs `key`, `title`, `spec`, `lane`, `reviewer` (a member name), `state` (G-8).
+- `assign_item`: inputs `item`, `lane` (necessary), `sprint`. No `agent`.
+- `start_item`: `item` is optional, and is a ref or a key. No `lease_until` and no `moved` in the result.
+- `report_status`, `review_item`: inputs `item`, `text`, `state`, `cause`. A finding is a string or `{severity, text}`.
+- All board tools: `project` is optional, and must be the project of the session.
 
 ```python
 # ITEM accepts a ref or a key, as the board does (postgres_board_store.py:178-189).
@@ -615,24 +677,30 @@ project":
 ```
 
 The docs change in `docs/reference/`, `docs/explanation/architecture.md`,
-and a new `docs/how-to/run-a-project.md`.
+and a new `docs/how-to/run-a-project.md`, with the table of section 3.4.
 
 ## 11. Migration from the current state
 
-On 14 November 2026, the instance of the project has no agent and no project. Thus migration 101
-finds no row. The task skill of the project (version 1.5) names sessions that do not
-exist. The steps after the upgrade
-to 3.4.0:
+On 14 November 2026, the instance of the project has no agent and no
+project, thus migration 101 finds no row. The task skill (version 1.5) names
+sessions that do not exist, and the workers use sibling worktrees such as
+`../shop-api-cursor`. The steps after the upgrade to 3.4.0, in the root:
 
 1. `mai agent add` and `mai connect` for claude, cursor, and antigravity.
-2. In `/Users/me/work/shop-api`: `mai project init shop-api --supervisor claude --agents-md`.
-3. `mai project add lane-a --agent cursor --role worker --folder ../shop-api-cursor`,
-   and the same for lane-b.
-4. `mai project apply`. Commit `.mai/project.json` and `AGENTS.md` on `main`.
-5. The supervisor changes the skill to 1.6, with the member addresses. In
-   3.4.0, each chat gives its address from `AGENTS.md` as `session`.
-6. After 3.5.0, the hook line gives the address, and the supervisor chat
-   gives no session.
+2. `mai project init shop-api --supervisor claude --agents-md`, then
+   `mai project add lane-a --agent cursor --role worker`, and lane-b.
+3. `mkdir -p .mai/cursor`, then `git worktree move ../shop-api-cursor
+   .mai/cursor/lane-a`. Do the same for lane-b in `.mai/antigravity`. Git
+   does not make the parent folder (exit 128). The branch and the
+   uncommitted files stay.
+4. Commit `.mai/project.json`, `.mai/.gitignore`, and `AGENTS.md` on `main`.
+   Run `mai project apply`, which makes each missing lane, and commit the
+   `base` that it writes. In a moved lane, `git merge main` gives
+   the new commit.
+5. Open each app again in its lane. Then install the packages in the lane.
+6. The supervisor changes the skill to 1.6, with the member addresses and the
+   lanes. In 3.4.0, each chat gives its address from `AGENTS.md`. After
+   3.5.0, the hook line gives it.
 
 The sub-agents of the supervisor use the bridge of the supervisor chat. The
 skill tells them not to use the mai tools.
@@ -641,63 +709,73 @@ skill tells them not to use the mai tools.
 
 | Release | Content | Size |
 |---|---|---|
-| 3.4.0 | Sections 3, 4.1, 4.4, 5.1, 5.2, 6, 7.5, 8.2, 9.1, 9.2, and 10, with the folder pin and the docs. | L, 7 to 9 days [E] |
+| 3.4.0 | Sections 3, 4.1, 4.4, 5.1, 5.2, 6, 7.5, 8.2, 9.1, 9.2, and 10, with the lanes, the folder pin, and the docs. | L, 8 to 10 days [E] |
 | 3.5.0 | Sections 4.2, 4.3, 5.3, 7.1, 7.3, 7.4, and 9.3, with the Copilot prompt hook. | M, 4 to 5 days [E] |
 | 3.6.0 | Cursor hook guard, standby hook of Claude Code. | S, 1 to 2 days [E] |
 
-Each release is one pull request. The user merges it.
+The lanes add 1 day to 3.4.0 [E]. Each release is one pull request, and
+the user merges it.
 
 ## 13. The test plan
 
 Unit tests use the memory backend. Integration tests use PostgreSQL and
-Dovecot in a test container (`MAI_IT`). Appendix A gives the tests of the
-prototypes. With no role filter in the dispatcher, the memory world gets
-`STORE_UNAVAILABLE` from the board, not `FORBIDDEN_ROLE`.
+Dovecot in a test container (`MAI_IT`). The 12 lane tests of A.3 go into
+3.4.0. With no role filter in the dispatcher, the memory world gets
+`STORE_UNAVAILABLE` from the board, not `FORBIDDEN_ROLE`. The new tests:
 
-| Test | Proves |
-|---|---|
-| `test_a_start_item_with_no_item_gets_through_the_schema` (dispatcher) | Section 10 |
-| `test_start_item_of_a_member_with_no_queue_right` (real Dovecot) | Section 6 |
-| `test_a_second_apply_of_the_same_file_makes_no_change` | R-5 |
-| `test_apply_adds_a_removed_member_again` | Section 3.3 |
-| `test_apply_refuses_a_removal_from_a_copy_of_an_earlier_plan` | Section 3.2 |
-| `test_a_ref_of_a_named_session_with_no_session_gives_session_required` | R-6 |
-| `test_a_member_gets_no_queue_right_after_a_start_of_dovecot` | R-11 |
-| `test_a_member_cannot_send_to_a_different_project` | R-11 |
-| `test_a_reviewer_session_can_review_its_item` | Section 6 |
-| `test_the_supervisor_cannot_accept_an_item_that_it_started` | Section 6 |
-| `test_a_project_name_is_not_an_agent_name_in_each_order` | Section 3.2 |
-| `test_start_item_gives_project_paused` | R-14 |
-| `TestBridgeMapsTheMemberAddressToTheBoundLease` | Section 4.2 |
-| `TestABoundBridgeKeepsItsMemberAfterARestartOfTheLeaseStore` | Section 4.2 |
-| `TestProcChainGivesAntigravityForAgyInCode` | R-13 |
-| `TestApproveRefusesToRunInAnAgentApp` | R-10 |
-| `TestGuideProjectChangesNothing` | R-15 |
+- 3.2: `test_apply_refuses_a_removal_from_a_copy_of_an_earlier_plan`,
+  `test_a_project_name_is_not_an_agent_name_in_each_order`, and
+  `TestFindRefusesALaneWhenTheRootHasNoPlan`.
+- 3.3: `test_apply_adds_a_removed_member_again` and
+  `test_apply_refuses_a_worker_folder_that_is_not_its_lane`.
+- 4.1 and 4.2: `test_of_folder_gives_no_member_in_the_plan_folder_of_a_member`,
+  `TestBridgeMapsTheMemberAddressToTheBoundLease`, and
+  `TestABoundBridgeKeepsItsMemberAfterARestartOfTheLeaseStore`.
+- 6: `test_start_item_of_a_member_with_no_queue_right` (real
+  Dovecot), `test_a_reviewer_session_can_review_its_item`, and
+  `test_the_supervisor_cannot_accept_an_item_that_it_started`.
+- 9.1 and D-19: `TestApplyStopsBeforeAChangeWhenALaneIsNotAWorktree`
+  and `TestApplyGivesTheLaneOfARemovedMemberAsKept`.
+- 10: `test_a_start_item_with_no_item_gets_through_the_schema`.
+- R-5: `test_a_second_apply_of_the_same_file_makes_no_change`. R-6:
+  `test_a_ref_of_a_named_session_with_no_session_gives_session_required`.
+- R-10, R-13, R-14, R-15: `TestApproveRefusesToRunInAnAgentApp`,
+  `TestProcChainGivesAntigravityForAgyInCode`,
+  `test_start_item_gives_project_paused`, and `TestGuideProjectChangesNothing`.
+- R-11: `test_a_member_gets_no_queue_right_after_a_start_of_dovecot` and
+  `test_a_member_cannot_send_to_a_different_project`.
 
 An end-to-end check on a scratch instance (ports 18880 to 18889, names that
 start with `mai-wf-proj`) uses a supervisor chat in the root and two worker
-chats. It records the hook lines and the notice targets of one item, with
-one restart of the container.
+chats in lanes. It records the hook lines and the notice targets of one
+item, with one restart of the container. A test of Cursor 3.5 shows if its
+worktree cleanup deletes `.mai/cursor/lane-a`.
 
 ## 14. Decisions for the user
 
-| ID | Decision | Recommendation |
-|---|---|---|
-| D-01 | Roles are properties of sessions. Agent roles go. | Yes. Two Claude Code roles are necessary. |
-| D-02 | A session is a member of one project at most. | Yes. The other method is a `project` argument in each mail tool. |
-| D-03 | The plan is committed. The CLI reads the primary worktree, and `base` stops removals from an earlier copy. | Yes. With no file, the guide cannot find a project. |
-| D-04 | Addresses `PROJECT.MEMBER` through `mail_auth.alias`. A project name is never an agent name. | Yes. Postfix and the mail UI use that table. |
-| D-05 | No mail between projects. | Yes. |
-| D-06 | Folder binding and the folder pin for Claude Code only. | Yes. Codex goes in after a test of its threads. |
-| D-07 | No exclusive members (R-16) until they are necessary. | Yes. In 3.1.0, chats lost the handle. |
-| D-08 | No second supervisor. The owner gets one signal. | Yes. One user keeps the scope and the push. |
-| D-09 | A reviewer accept keeps the item in review. The supervisor sets done with the merge commit. | Yes. In shop-api, the supervisor merges. |
-| D-10 | `project seed` goes in 3.4.0. | Yes. No project exists. If it stays, it must write `login` and `member`. |
-| D-11 | Items use `item.holder` as the lock, not thread claims. | Yes. A member has no agent queue. |
-| D-12 | Standby of Claude Code with `asyncRewake` in 3.6.0. | Yes, after a check of `asyncRewake`. |
-| D-13 | A hard limit for a shared bridge: one agent for each app and project, for example `cursor-shop-api` [A]. | Document it, not as the default. It costs one key and one connect. |
-| D-14 | R-12: finding severities in 3.4.0. Many done rule items, a WIP limit with `in_review`, gates, and review rounds in a different proposal. | Yes. They do not change the identity of sessions. |
-| D-15 | `mai agent pool off` is an owner command, and `apply` does not set it. | Yes. Claude Code chats outside a project use the pool. |
+The recommendation of each decision is in italics.
+
+- **U-01.** Lanes are git worktrees at `<project-folder>/.mai/<agent>/<lane-id>`. *The user made this decision on 14 November 2026.*
+- **D-01.** Roles are properties of sessions. Agent roles go. *Yes. Two Claude Code roles are necessary.*
+- **D-02.** A session is a member of one project at most. *Yes. The other method is a `project` argument in each mail tool.*
+- **D-03.** The plan is committed. The CLI reads the primary worktree, also from a lane, and `base` stops removals from a copy. *Yes. With no file, the guide cannot find a project.*
+- **D-04.** Addresses `PROJECT.MEMBER` through `mail_auth.alias`. A project name is never an agent name. *Yes. Postfix and the mail UI use that table.*
+- **D-05.** No mail between projects. *Yes.*
+- **D-06.** Folder binding and the folder pin for Claude Code only. *Yes. Codex goes in after a test of its threads.*
+- **D-07.** No exclusive members (R-16) until they are necessary. *Yes. In 3.1.0, chats lost the handle.*
+- **D-08.** No second supervisor. The owner gets one signal. *Yes. One user keeps the scope and the push.*
+- **D-09.** A reviewer accept keeps the item in review. The supervisor sets done with the merge commit. *Yes. In shop-api, the supervisor merges.*
+- **D-10.** `project seed` goes in 3.4.0. *Yes. No project exists. If it stays, it must write `login` and `member`.*
+- **D-11.** Items use `item.holder` as the lock, not thread claims. *Yes. A member has no agent queue.*
+- **D-12.** Standby of Claude Code with `asyncRewake` in 3.6.0. *Yes, after a check of `asyncRewake`.*
+- **D-13.** A hard limit for a shared bridge: one agent for each app and project, for example `cursor-shop-api` [A], with lanes in `.mai/cursor-shop-api`. *Document it, not as the default. It costs one key and one connect.*
+- **D-14.** R-12: finding severities in 3.4.0. Many done rule items, a WIP limit with `in_review`, gates, and review rounds in a different proposal. *Yes. They do not change the identity of sessions.*
+- **D-15.** `mai agent pool off` is an owner command, and `apply` does not set it. *Yes. Claude Code chats outside a project use the pool.*
+- **D-16.** A new lane has a detached HEAD. The worker makes one branch for each item, with the `branch_prefix` of the lane. *Yes. Then mai makes no branch.*
+- **D-17.** A reviewer has no lane, but `"lane": true` gives it one in `.mai`. *Yes. A reviewer that checks out a branch in the root changes the checkout of the supervisor.*
+- **D-18.** mai writes only `.mai/.gitignore` and `/.mai/*/` in `.git/info/exclude`. For the files of the user, `apply` and the guide give the lines of section 3.4. *Yes. The user reviews each committed change.*
+- **D-19.** The lane of a removed member stays as `kept`. The owner removes it with `git worktree remove`. *Yes. A lane can hold uncommitted work.*
+- **D-20.** The root is the top folder of the primary worktree. *Yes for 3.4.0. A project in a subfolder of a repository can have no lanes.*
 
 ## Appendix A. Prototype evidence
 
@@ -709,30 +787,16 @@ instance.
 
 Branch `proto/projects-cli`, commit `b0abac4`. New
 `cli/internal/project/project.go` and tests. Changed
-`cli/internal/hook/format.go` and `notice.go`. Proved:
+`cli/internal/hook/format.go` and `notice.go`. 13 new tests proved `Find`
+from a subfolder and from a linked worktree (a real `git worktree add`).
+They also proved the `Load` rules (links, missing folders, 18 broken rules),
+the `MemberOf` match and case, and the hook rules. In
+`TestHookWithNoFolderKeepsEachLine`, the output of 10 format and event pairs
+is the same as in 3.3.1.
 
-- `TestFindGoesUpToTheRootOfTheProject`, and `ErrNotFound` at the root of
-  the file system.
-- `TestFindInALinkedWorktreeGivesThePrimaryWorktree`, with a real
-  `git worktree add`. The test also shows the bug of a search that stops at
-  the worktree.
-- `TestLoadResolvesARelativeFolderThroughASymbolicLink` and
-  `TestLoadResolvesTheParentOfAMissingFolder`.
-- `TestLoadRefusesTwoMembersOfOneAgentInOneFolder`,
-  `TestLoadRefusesALabelOfMoreThan32Characters`, and
-  `TestLoadRefusesEachBrokenRule` (18 cases).
-- `TestMemberOfUsesALongestFolderWithAPathBoundary` and
-  `TestMemberOfIgnoresTheCaseOfLettersOnMacOSAndWindows`.
-- `TestHookShowsOnlyTheMemberOfTheChatFolder`,
-  `TestHookReadsTheWorkspaceRootOfCursor`, and
-  `TestTheJSONOfANoticeKeepsTheMembers`.
-- `TestHookWithNoFolderKeepsEachLine`: for 10 format and event pairs, the
-  output is the same as in 3.3.1. The hook tests of 3.3.1 pass with no
-  change.
-
-Design changes from it: `Find` and the file rules (3.2), `Resolve` and the
-case rule (4.1), and the hook rules (4.3). A member with no lease showed no
-count, thus the heartbeat gives all counts.
+Design changes from it: `Find` and the file rules (3.2), `Resolve` (4.1),
+and the hook rules (4.3). A member with no lease showed no count, thus the
+heartbeat gives all counts.
 
 Commands, in `cli` of the worktree, with `HOME`, `USERPROFILE`, `AppData`,
 `XDG_CONFIG_HOME`, `MAI_HOME`, and `GOCACHE` in a scratch folder. Set
@@ -747,7 +811,7 @@ go test ./... -count=1 > all.log 2>&1; echo "exit=$?"; grep -c FAIL all.log
 
 Results: `gofmt` gave no file. The two packages gave 23 tests that pass (13
 new), 0 `FAIL`, and 0 skipped. `go vet` gave exit 0, and all 17 packages
-pass. The STE lint of the prose gave 0 errors.
+pass.
 
 ### A.2 Python server: roles and lanes of sessions
 
@@ -773,25 +837,18 @@ also pass.
 Limits: the fixture called `PostgresBoardStore.call` with a fake mailer and
 a fake claims service. Thus it did not use the tool schema or the claim
 through the agent queue, and the review found an error in each (sections 6
-and 10). The commit ran with no lefthook hooks, and the checks ran by hand.
+and 10). The checks ran by hand, with no lefthook hooks.
 
 Design changes from it: the UPDATE that adds a member again and the lane
 index (3.3), and `observer` (3.1). Also: no role filter in `tools/list`, the
 login in `_review_item` and `_get_board` (6), and D-10.
 
-Commands. `WT` is the worktree, and `PYLIB` is a copy of the pure Python
-packages of pytest. `V` is the `bin` folder of the primary venv. `HL` holds
-the locked wheels of `jsonschema` and its dependencies.
+Commands. The container `mai-wf-proj-srv` (`ghcr.io/monorithm/mai:3.3.1`,
+`--pull=never`) ran PostgreSQL, and pytest on the read-only worktree. On the
+host, `V` is the `bin` folder of the primary venv, and `HL` holds the locked
+wheels of `jsonschema`:
 
 ```sh
-docker run --rm --pull=never --name mai-wf-proj-srv --entrypoint sh \
-  -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/w/src:/pylib \
-  -v "$WT":/w:ro -v "$PYLIB":/pylib:ro ghcr.io/monorithm/mai:3.3.1 -c '
-  su postgres -c "initdb -D /tmp/pg && pg_ctl -D /tmp/pg -o \"-k /tmp -c listen_addresses=\" -w start" &&
-  cd /w && export D="host=/tmp dbname=postgres user=postgres" &&
-  MAI_PROTO_DSN="$D" /opt/mai/.venv/bin/python -m pytest -p no:cacheprovider -q tests/modules/board; echo "exit=$?";
-  MAI_TEST_DSN="$D" /opt/mai/.venv/bin/python -m pytest -p no:cacheprovider -q \
-    tests/modules/sessions/test_postgres_stores.py tests/modules/sessions/test_session_tools.py; echo "exit=$?"'
 PYTHONPATH=src:$HL $V/python -m pytest -p no:cacheprovider -q; echo "exit=$?"
 $V/ruff check --no-cache src tests; $V/ruff format --no-cache --check .; $V/ty check --python "$V/.." --extra-search-path $HL
 ```
@@ -801,8 +858,58 @@ the 8 new tests. The sessions tests gave 4 passed. The host suite gave 588
 passed and 46 skipped. `ruff`, `ruff format`, and `ty` gave exit 0. No
 container or volume with the name `mai-wf-proj` stayed.
 
-With no `HL`, the host command gives exit 2 and 3 collection errors, also on
-the base, because the primary venv has no `jsonschema` (`pyproject.toml:20`
-has it). Thus the release check uses a scratch venv from
-`uv sync --frozen`, with `UV_PROJECT_ENVIRONMENT` and `UV_CACHE_DIR` in a
-scratch folder.
+With no `HL`, the host command gives 3 collection errors, also on the base.
+This is not a defect of `main`. The primary checkout was on the earlier
+branch `feat/named-sessions` (`10beea9`), before release 3.1.1 (`99aebc1`)
+added `jsonschema` to `pyproject.toml` (`:20` at `b1880ac`). Thus its venv
+had no `jsonschema`.
+
+### A.3 Go CLI: lane worktrees in the plan folder
+
+Branch `proto/projects-cli`, commit `cba1e71` on `b0abac4`. New
+`cli/internal/project/lanes.go` (`PlanLanes`, `MakeLanes`, `EnsureIgnore`)
+and its tests. Changed `project.go` (`Load`, `LanePath`, `MemberOf`, the
+home check). Tools: git 2.54.0 (Apple Git-157) and go1.27.3 darwin/arm64.
+Each test uses `t.TempDir`, real commits, and a real `git worktree add`,
+with `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`. Proved:
+
+- `TestLoadGivesEachWorkerTheFolderOfItsLane`: rule 1 of section 3.2.
+  `TestTheNameRulesGiveSafePathParts`: the rules accept 52 of 820 short
+  names, and each is a safe path part.
+- `TestPlanLanesGivesTheStateOfEachLane`: the six states of section 9.1,
+  with no change to `git status --porcelain --ignored`.
+  `TestPlanLanesRefusesARootThatIsNotThePrimaryWorktree`.
+- `TestMakeLanesMakesOnlyTheMissingLanes`: the first run makes two detached
+  lanes, and keeps a dirty lane and a plain folder byte for byte. The second
+  run makes nothing. A bad ref writes no file.
+- `TestTheIgnoreFileKeepsTheRootClean` and `TestANestedLaneWithNoIgnoreFile`:
+  `git check-ignore -v` gives `.mai/.gitignore:3:/*/` for each lane, and
+  exit 1 for `project.json`.
+- `TestGitCleanOfTheRootAndTheLanes`, `TestGitWorktreeRemoveRefusesADirtyLane`,
+  and `TestGitWorktreeMoveOfASiblingWorktreeGivesTheLane`: section 3.4 and
+  step 3 of section 11.
+- `TestFindAndMemberOfFromInsideALane`, also through a link and in upper
+  case, and `TestTheHomeFolderIsNotARootOfAProject`.
+
+A git experiment: after `git clean -ffdx`, `git worktree add` of a
+registered path with no parent folder makes a second entry. Then `git
+worktree prune` removes the entry of the new lane, and git in the lane gives
+`fatal: not a git repository: (null)`.
+
+Mutation: the removal of each of 8 guards gives at least one `FAIL`. Results,
+with the commands of A.1: no `gofmt` file, 35 tests that pass (project 21,
+hook 14), 0 `FAIL`, 0 skipped, `go vet` exit 0, and `go test ./...` exit 0.
+
+### A.4 Tools in the root of a project with lanes
+
+The scratch repository `shop-api` had Go, Python, TypeScript, ESLint, and a
+`Dockerfile` with `COPY . /ctx/`. Two lanes came from `git worktree add
+--detach`, and lane-a got a test `.env` file and one error for each tool.
+The platform was macOS 26 (Darwin 25.6.0), arm64.
+
+The Node tools came from the read-only `node_modules` folder of a real
+NestJS project. Each Node and Python command ran in `sandbox-exec`, with no
+network and no write outside the scratch folder. The Docker builds used
+`--pull=false` and names that start with `mai-wf-lanes`. No test: ripgrep,
+Jest, watch modes, mypy, pyright, uv, package-manager workspaces, and
+Windows.
