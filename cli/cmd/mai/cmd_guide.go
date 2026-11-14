@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+
 	"github.com/monorithm/mai/cli/v3/internal/api"
 	"github.com/monorithm/mai/cli/v3/internal/config"
 	"github.com/monorithm/mai/cli/v3/internal/connect"
@@ -23,6 +25,7 @@ import (
 	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
 	"github.com/monorithm/mai/cli/v3/internal/procchain"
+	"github.com/monorithm/mai/cli/v3/internal/uninstall"
 	"github.com/monorithm/mai/cli/v3/internal/version"
 )
 
@@ -153,6 +156,9 @@ type guideStep struct {
 	Changes  string  `json:"changes"`
 	AskUser  bool    `json:"ask_user"`
 	Done     bool    `json:"done"`
+	// told is true for a step of the user with a command that the agent runs only when the
+	// user tells it to do it. The text form then also gives the approval line.
+	told bool
 }
 
 type guideLanes struct {
@@ -226,6 +232,24 @@ type guideRun struct {
 	// legacy holds each account that the manifest records as a keychain item of mai 3.0 or
 	// 3.1, when the key file has a legacy keychain.
 	legacy map[string]bool
+	// cfgErr is the error of the read of config.json, keyErr the error of the read of the
+	// key file, and ctrErr the error of the read of the container. mai start, mai agent add,
+	// and mai connect also fail with such an error.
+	cfgErr, keyErr, ctrErr error
+	// foreign is true when a container that mai 3 did not make holds the name of the
+	// instance. mai start refuses that container. of2x is true when that container is the
+	// container of a 2.x install, which mai uninstall --legacy removes.
+	foreign, of2x bool
+}
+
+// guideOf2x tells if the container is the container of a 2.x install, as mai uninstall
+// --legacy selects it: the name mai, the compose project mai, and no label of mai 3.
+func guideOf2x(c container.InspectResponse) bool {
+	if c.Config == nil || strings.TrimPrefix(c.Name, "/") != uninstall.LegacyContainer {
+		return false
+	}
+	_, managed := c.Config.Labels[uninstall.LabelManagedBy]
+	return c.Config.Labels[uninstall.LabelCompose] == uninstall.LegacyProject && !managed
 }
 
 // guideCollect reads the state. Each error of a part of the state goes into the report.
@@ -254,7 +278,8 @@ func guideCollect(ctx context.Context, appFlag, agentFlag string) *guideReport {
 func (g *guideRun) instance() {
 	s, err := lcOpen(config.Overrides{}, false)
 	if err != nil {
-		g.r.Reason = ptr("the CLI cannot read its configuration: " + err.Error())
+		g.cfgErr = err
+		g.r.Reason = ptr("the CLI cannot read its configuration: " + guideErr(err))
 		return
 	}
 	g.s, g.filePort = s, s.cfg.Port
@@ -292,14 +317,25 @@ func (g *guideRun) engine(ctx context.Context) {
 	c, ok, err := g.s.owned(ectx)
 	switch {
 	case err != nil && ok:
-		// A container that mai 3 did not make holds the name of the instance.
+		// A container that mai 3 did not make holds the name of the instance. The state gives
+		// only the facts. The step of the guide gives the choices of the user.
+		g.foreign = true
 		r.Container.Exists = ptr(true)
-		r.Container.Reason = ptr(err.Error())
+		if c.State != nil {
+			r.Container.Running = ptr(lcServes(c))
+			r.Container.State = ptr(string(c.State.Status))
+		}
+		r.Container.Reason = ptr("mai 3 did not make this container")
+		if guideOf2x(c) {
+			g.of2x = true
+			r.Container.Reason = ptr("mai 3 did not make this container. It is the container of a 2.x install")
+		}
 		r.Server.Running = ptr(false)
 		r.Server.Reason = ptr("the container is not a container of mai 3")
 		return
 	case err != nil:
-		r.Container.Reason = ptr("the CLI cannot read the container: " + err.Error())
+		g.ctrErr = err
+		r.Container.Reason = ptr("the CLI cannot read the container: " + guideErr(err))
 		r.Server.Reason = ptr("the container is not known")
 		return
 	case !ok:
@@ -333,7 +369,7 @@ func (g *guideRun) engine(ctx context.Context) {
 	var v api.VersionInfo
 	if err := lcAPIGet(g.s.cfg.Port, "/api/version", "", &v); err != nil {
 		r.Server.Running = ptr(false)
-		r.Server.Reason = ptr("the server gives no response at " + url + ": " + err.Error())
+		r.Server.Reason = ptr("the server gives no response at " + url + ": " + guideErr(err))
 		return
 	}
 	r.Server.Running = ptr(true)
@@ -350,7 +386,8 @@ func (g *guideRun) keyFile() {
 	}
 	kf, err := openKeys()
 	if err != nil {
-		r.OwnerKey.Reason = ptr("the CLI cannot open the key file: " + err.Error())
+		g.keyErr = err
+		r.OwnerKey.Reason = ptr("the CLI cannot open the key file: " + guideErr(err))
 		return
 	}
 	g.kf = kf
@@ -374,7 +411,8 @@ func (g *guideRun) keyFile() {
 	case errors.Is(err, keys.ErrNotFound):
 		r.OwnerKey.Exists = ptr(false)
 	default:
-		r.OwnerKey.Reason = ptr("the CLI cannot read the key file: " + err.Error())
+		g.keyErr = err
+		r.OwnerKey.Reason = ptr("the CLI cannot read the key file: " + guideErr(err))
 	}
 }
 
@@ -386,7 +424,7 @@ func (g *guideRun) app(appFlag, agentFlag string) {
 	default:
 		chain, err := guideChain()
 		if err != nil {
-			r.App.Reason = ptr("the CLI cannot read the chain of parent processes: " + err.Error())
+			r.App.Reason = ptr("the CLI cannot read the chain of parent processes: " + guideErr(err))
 			break
 		}
 		if a := guideAppOf(chain); a != "" {
@@ -464,8 +502,11 @@ func (g *guideRun) agent(ctx context.Context) {
 		return
 	}
 	name := *r.Agent.Name
-	if g.kf == nil {
-		r.Agent.Reason = ptr("the key file is not known")
+	if g.kf == nil || g.keyErr != nil {
+		r.Agent.Reason = ptr("the CLI cannot read the key file")
+		if g.s == nil {
+			r.Agent.Reason = ptr("the instance is not known")
+		}
 		return
 	}
 	account := keys.AgentAccount(g.s.cfg.Instance, name)
@@ -479,7 +520,7 @@ func (g *guideRun) agent(ctx context.Context) {
 	case errors.Is(err, keys.ErrNotFound):
 		r.Agent.Key = ptr(false)
 	default:
-		r.Agent.Reason = ptr("the CLI cannot read the key file: " + err.Error())
+		r.Agent.Reason = ptr("the CLI cannot read the key file: " + guideErr(err))
 		return
 	}
 	switch {
@@ -508,7 +549,7 @@ func (g *guideRun) agent(ctx context.Context) {
 		if !*r.Agent.Key {
 			r.Agent.Exists = ptr(false)
 		}
-		r.Agent.Reason = ptr("the owner API gives no list of the agents: " + err.Error())
+		r.Agent.Reason = ptr("the owner API gives no list of the agents: " + guideErr(err))
 		return
 	}
 	on := slices.ContainsFunc(agents, func(a api.Agent) bool { return a.Name == name })
@@ -524,15 +565,21 @@ func (g *guideRun) connected() {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		r.App.Reason = ptr("the CLI cannot find the home folder: " + err.Error())
+		r.App.Reason = ptr("the CLI cannot find the home folder: " + guideErr(err))
 		return
 	}
 	p, err := connect.Prepare(home, *r.App.Name, *r.Agent.Name)
 	if err != nil {
-		r.App.Reason = ptr("the CLI cannot read the files of the app: " + err.Error())
+		r.App.Reason = ptr("the CLI cannot read the files of the app: " + guideErr(err))
 		return
 	}
 	r.App.Connected = ptr(!p.Changed())
+}
+
+// guideErr gives the text of an error as a code span. The error is data from a different
+// part of the CLI or from the engine, thus the guide quotes it.
+func guideErr(err error) string {
+	return "`" + strings.ReplaceAll(err.Error(), "`", "'") + "`"
 }
 
 func firstReason(have *string, reason string) *string {
@@ -548,7 +595,10 @@ func (g *guideRun) needStart() (bool, string) {
 	switch {
 	case !r.Engine.Running:
 		return true, "the engine does not run"
-	case r.Container.Exists == nil || !*r.Container.Exists:
+	case r.Container.Exists == nil:
+		// blocked gives the step for a container that the CLI cannot read.
+		return false, ""
+	case !*r.Container.Exists:
 		return true, "the container does not exist"
 	case r.Container.Running == nil || !*r.Container.Running:
 		return true, "the container does not run"
@@ -563,8 +613,67 @@ func (g *guideRun) needStart() (bool, string) {
 	return false, ""
 }
 
+// blocked gives the step of the user for a state that mai start, mai agent add, and mai
+// connect cannot correct. Then the guide gives only that step.
+func (g *guideRun) blocked() (guideStep, bool) {
+	r := g.r
+	switch {
+	case g.cfgErr != nil:
+		return guideStep{
+			ID: "config-error", By: "user", AskUser: true,
+			Text: "The CLI cannot read its configuration file config.json. The part State gives the error. " +
+				"Tell this to the user, and stop. Do not run `mai start`, `mai agent add`, or `mai connect`. " +
+				"These commands also read config.json, thus they stop with an error. " +
+				"After the user corrects the file, run `mai guide` again.",
+			Changes: "The user corrects config.json.",
+		}, true
+	case g.foreign && g.of2x:
+		return guideStep{
+			ID: "legacy-container", By: "user", AskUser: true, told: true,
+			Command: ptr("mai uninstall --legacy"),
+			Text: "The container " + *r.Instance + " of a 2.x install exists, and mai 3 did not make it. " +
+				"Tell this to the user, and stop. Do not run `mai start`, because it refuses this container. " +
+				"The user selects one of these choices: remove the 2.x install with `mai uninstall --legacy`, " +
+				"or use a different instance with `mai start --instance NAME`. " +
+				"Run `mai uninstall --legacy` only when the user tells you to do it.",
+			Changes: "`mai uninstall --legacy` removes the container, the volumes, the images, and the folder of the 2.x install. " +
+				"The mail data of the 2.x install goes with them.",
+		}, true
+	case g.foreign:
+		return guideStep{
+			ID: "legacy-container", By: "user", AskUser: true,
+			Text: "A container with the name " + *r.Instance + " exists, but mai 3 did not make it. " +
+				"Tell this to the user, and stop. Do not run `mai start`, because it refuses this container. " +
+				"The user selects one of these choices: remove or rename this container with the engine, " +
+				"or use a different instance with `mai start --instance NAME`. " +
+				"This container is not of a 2.x install, thus `mai uninstall --legacy` does not remove it.",
+			Changes: "The user removes or renames the container, or selects a different instance.",
+		}, true
+	case g.ctrErr != nil:
+		return guideStep{
+			ID: "container-error", By: "user", AskUser: true,
+			Text: "The engine runs, but the CLI cannot read the container of the instance. The part State gives the error. " +
+				"Tell this to the user, and stop. Do not run `mai start` for this problem.",
+			Changes: "The user corrects the problem of the engine.",
+		}, true
+	case g.keyErr != nil:
+		return guideStep{
+			ID: "key-file-error", By: "user", AskUser: true,
+			Text: "The CLI cannot read the key file. The part State gives the error. Tell this to the user, and stop. " +
+				"Do not run `mai start` or `mai agent add`, because they also read the key file. " +
+				"Do not change the key file yourself. After the user corrects it, run `mai guide` again.",
+			Changes: "The user corrects the key file.",
+		}, true
+	}
+	return guideStep{}, false
+}
+
 func (g *guideRun) steps() {
 	r := g.r
+	if s, ok := g.blocked(); ok {
+		r.Steps = []guideStep{s}
+		return
+	}
 	var steps []guideStep
 	changes := false
 	if !r.Engine.Running && !r.Engine.Installed {
@@ -737,20 +846,23 @@ func guideWrite(w io.Writer, r *guideReport) {
 	p("This text is for an AI agent. To get it as one JSON object, run `mai guide --json`.")
 	p("%s", r.About)
 	p("")
+	// state writes one line of the part State. A reason can end with a period, thus the line
+	// gets its period only once.
+	state := func(name, text string) { p("- %s: %s.", name, strings.TrimRight(text, ".")) }
 	p("State:")
-	p("- CLI version: %s.", r.CLIVersion)
+	state("CLI version", r.CLIVersion)
 	if r.Instance != nil {
-		p("- Instance: %s.", *r.Instance)
+		state("Instance", *r.Instance)
 	} else {
-		p("- Instance: not known, because %s.", *r.Reason)
+		state("Instance", "not known"+reasonText(r.Reason))
 	}
-	p("- Engine: %s.", guideEngineText(r.Engine))
-	p("- Container: %s.", guideContainerText(r.Container))
-	p("- Server: %s.", guideServerText(r.Server))
-	p("- Owner key: %s.", guideOwnerKeyText(r.OwnerKey))
-	p("- App: %s.", guideAppText(r.App))
-	p("- Agent: %s.", guideAgentText(r.Agent))
-	p("- Connection: %s.", guideConnectionText(r))
+	state("Engine", guideEngineText(r.Engine))
+	state("Container", guideContainerText(r.Container))
+	state("Server", guideServerText(r.Server))
+	state("Owner key", guideOwnerKeyText(r.OwnerKey))
+	state("App", guideAppText(r.App))
+	state("Agent", guideAgentText(r.Agent))
+	state("Connection", guideConnectionText(r))
 	p("")
 	p("Next steps:")
 	p("Do the steps in this sequence. Run `mai guide` again after each step.")
@@ -767,6 +879,9 @@ func guideWrite(w io.Writer, r *guideReport) {
 		}
 		p("   Changes: %s", s.Changes)
 		switch {
+		case s.By == "user" && s.told:
+			p("   The user does this step. Tell the user about it.")
+			p("   Get the approval of the user first.")
 		case s.By == "user":
 			p("   The user does this step. Tell the user about it.")
 		case s.AskUser:
@@ -786,11 +901,12 @@ func guideWrite(w io.Writer, r *guideReport) {
 	}
 }
 
+// reasonText gives ", because REASON" with no end period, or "" for no reason.
 func reasonText(reason *string) string {
 	if reason == nil {
 		return ""
 	}
-	return ", because " + *reason
+	return ", because " + strings.TrimRight(*reason, ".")
 }
 
 func guideEngineText(e guideEngine) string {

@@ -66,6 +66,8 @@ type guideTest struct {
 	eng    *engineFake
 	keys   *testKeyFile
 	engOff bool
+	// engHandler, when it is not nil, answers each request to the fake engine in place of eng.
+	engHandler http.HandlerFunc
 }
 
 func newGuideTest(t *testing.T) *guideTest {
@@ -92,7 +94,13 @@ func newGuideTest(t *testing.T) *guideTest {
 	g.keys = useTestKeys(t)
 	fixedConnectBinary(t)
 	g.eng = &engineFake{images: map[string]string{}}
-	es := httptest.NewServer(g.eng)
+	es := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g.engHandler != nil {
+			g.engHandler(w, r)
+			return
+		}
+		g.eng.ServeHTTP(w, r)
+	}))
 	t.Cleanup(es.Close)
 	oldFind, oldChain, oldLaunchers := lcFindEngine, guideChain, guideLaunchers
 	lcFindEngine = func(context.Context) (*engine.Engine, error) {

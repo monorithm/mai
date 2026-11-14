@@ -105,6 +105,21 @@ The steps:
 When mai runs, the agent account exists, and the app has the entries of mai
 for the agent, only the step `check` stays.
 
+`mai start`, `mai agent add`, and `mai connect` cannot correct some states.
+For these states, the guide gives only one step of the user. The agent tells
+the cause to the user, and stops:
+
+| `id` | State |
+|---|---|
+| `config-error` | The CLI cannot read `config.json`. The user corrects the file. |
+| `legacy-container` | A container that mai 3 did not make has the name of the instance. For the container of a 2.x install, the step gives the command `mai uninstall --legacy`. The agent runs it only when the user tells it to do it. The other choice is a different instance, with `mai start --instance NAME`. |
+| `container-error` | The engine runs, but the CLI cannot read the container of the instance. |
+| `key-file-error` | The CLI cannot read the key file, for example because of its mode. The user corrects the key file. |
+
+The part State quotes each error of a different part of the CLI as code,
+between backticks. Such an error can give a command. That command is not a
+step of the guide.
+
 The fields of `mai guide --json`:
 
 | Field | Value |
