@@ -26,8 +26,8 @@ import (
 
 const testCursorKey = "mai1:cursor:testcursorsecret"
 
-// guideOwnerFake is a fake server of mai for mai guide: the version needs no key, and the
-// list of the agents needs the owner key. It records each request.
+// guideOwnerFake is a fake server of mai for mai guide. The version has no key. The list of
+// the agents is only for the owner key. The fake records each request.
 type guideOwnerFake struct {
 	mu     sync.Mutex
 	agents []string
@@ -56,9 +56,9 @@ func (f *guideOwnerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// guideTest is the scratch state of one test of mai guide: a temp HOME and MAI_HOME, a
-// config.json with the port of a fake server, a key file, a fake engine, and a fake chain of
-// parent processes with no app.
+// guideTest is the scratch state of one test of mai guide. It has a temp HOME and MAI_HOME, a
+// config.json with the port of a fake server, and a key file. It also has a fake engine and a
+// fake chain of parent processes with no app.
 type guideTest struct {
 	home   string
 	port   int

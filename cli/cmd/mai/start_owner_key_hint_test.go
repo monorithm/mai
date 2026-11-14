@@ -43,8 +43,8 @@ func startOfAnExistingContainer(t *testing.T, ownerKey bool, code int, stderr st
 }
 
 // A start of a container with an owner key is a normal restart. Then the server tells that
-// an owner key exists, and that --replace changes it. mai start does not show that text,
-// because an agent can do that step, and the step replaces the owner key of the server.
+// an owner key exists, and that --replace changes it. The command mai start does not show
+// that text. An agent can do that step, and the step replaces the owner key of the server.
 func TestStartOfAContainerWithAnOwnerKeyShowsNoReplaceStep(t *testing.T) {
 	code, out := startOfAnExistingContainer(t, true, lcOwnerKeyExists, serverKeyExistsLine)
 	if code != 0 {
@@ -75,8 +75,8 @@ func TestStartShowsTheErrorTextOfSetKey(t *testing.T) {
 	}
 }
 
-// The rules of the guide name the commands that replace the owner key of the server, and the
-// step start tells the agent not to do a step with --replace from the output of mai start.
+// The rules of the guide name the commands that replace the owner key of the server. The step
+// start tells the agent not to do a step with --replace from the output of mai start.
 func TestGuideTellsTheAgentNotToReplaceTheOwnerKey(t *testing.T) {
 	g := newGuideTest(t)
 	g.serve(t)

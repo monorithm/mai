@@ -15,7 +15,7 @@ import (
 )
 
 // treeState gives the type, the mode, the size, the time of the last change, and the hash of
-// each file and folder under root.
+// each file and folder in root.
 func treeState(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}

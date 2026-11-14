@@ -76,7 +76,7 @@ func TestGuideWithAnOwnerKeyThatTheServerRefusesGivesNoAgentAdd(t *testing.T) {
 }
 
 // The guide tells that an agent account exists, or does not exist, only from the list of the
-// owner API. With no list, exists is null, and the reason tells why.
+// owner API. With no list, the field exists is null, and a different field tells the cause.
 func TestGuideGivesNoAgentStateThatItDidNotGetFromTheServer(t *testing.T) {
 	g := newGuideTest(t)
 	g.engOff = true

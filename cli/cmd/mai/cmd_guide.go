@@ -32,8 +32,8 @@ import (
 
 // mai guide is the resource with which an AI agent finds mai and connects its app. It changes
 // nothing: it writes no file, starts no engine or container, pulls no image, and shows no key.
-// It only reads the state and gives the steps that are not done. The agent asks the user in
-// the chat before each step that changes something.
+// It only reads the state and gives the steps that are not done. The agent gets the approval
+// of the user in the chat before each step that changes something.
 
 func init() {
 	register("guide", "Show an AI agent the state of mai and the steps to connect its app", func(args []string) int {
@@ -81,8 +81,8 @@ var guideRules = []string{
 		"Run them only when the user tells you to do it.",
 }
 
-// The report of mai guide. The JSON form is stable: a field that the CLI cannot read is null,
-// and the field reason of its object tells why.
+// The report of mai guide. The JSON form is stable. A field that the CLI cannot read is null.
+// Then a different field of its object tells the cause.
 type guideReport struct {
 	For        string         `json:"for"`
 	About      string         `json:"about"`
@@ -243,13 +243,14 @@ type guideRun struct {
 	// legacy holds each account that the manifest records as a keychain item of mai 3.0 or
 	// 3.1, when the key file has a legacy keychain.
 	legacy map[string]bool
-	// cfgErr is the error of the read of config.json, keyErr the error of the read of the
-	// key file, and ctrErr the error of the read of the container. mai start, mai agent add,
-	// and mai connect also fail with such an error.
+	// These errors are the errors of the read of config.json, of the key file, and of the
+	// container. The commands mai start, mai agent add, and mai connect also stop with such an
+	// error.
 	cfgErr, keyErr, ctrErr error
-	// foreign is true when a container that mai 3 did not make holds the name of the
-	// instance. mai start refuses that container. of2x is true when that container is the
-	// container of a 2.x install, which mai uninstall --legacy removes.
+	// The value foreign is true when a container that mai 3 did not make holds the name of
+	// the instance. The command mai start refuses that container. The value of2x is true when
+	// that container is the container of a 2.x install. The command mai uninstall --legacy
+	// removes that container.
 	foreign, of2x bool
 	// ownerRefused is true when the owner API refuses the owner key of the key file.
 	ownerRefused bool
@@ -260,8 +261,9 @@ type guideRun struct {
 	procApp string
 }
 
-// guideOf2x tells if the container is the container of a 2.x install, as mai uninstall
-// --legacy selects it: the name mai, the compose project mai, and no label of mai 3.
+// guideOf2x tells if the container is the container of a 2.x install. The command mai
+// uninstall --legacy selects a container with the name mai, the compose project mai, and no
+// label of mai 3.
 func guideOf2x(c container.InspectResponse) bool {
 	if c.Config == nil || strings.TrimPrefix(c.Name, "/") != uninstall.LegacyContainer {
 		return false
@@ -465,8 +467,8 @@ func (g *guideRun) app(appFlag, agentFlag string) {
 	}
 }
 
-// rerun gives the command that gives the guide again: the app of this run, or APP when the
-// app is not known, and the flag --agent of this run.
+// rerun gives the command that gives the guide again. The command has the app of this run, or
+// APP when the app is not known. It also has the flag --agent of this run.
 func (g *guideRun) rerun() string {
 	app := "APP"
 	if g.r.App.Name != nil {
@@ -479,10 +481,11 @@ func (g *guideRun) rerun() string {
 	return cmd
 }
 
-// guideAppOf gives the app of the chain of parent processes: the first process, from the
-// parent to the top app, whose executable is of a known app. An app runs a command of its
-// agent in a shell, thus the nearest app is the app of the agent, also in a terminal of a
-// different app. It gives "" when no process is of a known app.
+// guideAppOf gives the app of the chain of parent processes. The CLI examines the chain from
+// the parent to the top app. The first process with the executable of a known app gives the
+// app. An app runs a command of its agent in a shell. Thus the nearest app is the app of the
+// agent, also in a terminal of a different app. The function gives "" when no process is of
+// a known app.
 func guideAppOf(chain []procchain.Proc) string {
 	for i, p := range chain {
 		if i == 0 {
@@ -558,8 +561,8 @@ func (g *guideRun) agent(ctx context.Context) {
 		r.Agent.Reason = ptr("the CLI cannot read the key file: " + guideErr(err))
 		return
 	}
-	// Only the list of the owner API tells if the agent account exists. With no list, exists
-	// stays null, and the reason tells why.
+	// Only the list of the owner API tells if the agent account exists. With no list, the
+	// field exists stays null, and a different field tells the cause.
 	unknown := func(cause string) {
 		if note != "" {
 			cause += ". " + capital(note)
@@ -733,11 +736,11 @@ func (g *guideRun) blocked() (guideStep, bool) {
 	return guideStep{}, false
 }
 
-// ownerKeyStep is the step of the user when the server runs, and the key file has no owner
-// key or the server refuses it. mai start then keeps a new owner key that the server
-// refuses, and mai agent add fails with BAD_KEY. Thus the step gives neither command. The
-// recovery replaces the owner key of the server, thus the agent runs it only when the user
-// tells it to do it.
+// ownerKeyStep is the step of the user when the server runs, but the key file has no owner
+// key or the server refuses it. In this state, the command mai start keeps a new owner key,
+// and the server refuses it. The command mai agent add stops with BAD_KEY. Thus the step
+// gives neither command. The recovery replaces the owner key of the server. Thus the agent
+// runs it only when the user tells it to do it.
 func (g *guideRun) ownerKeyStep(cause string) guideStep {
 	return guideStep{
 		ID: "owner-key", By: "user", AskUser: true, told: true,
@@ -799,8 +802,8 @@ func (g *guideRun) steps() {
 		})
 		changes = true
 	case r.Agent.Exists != nil && !*r.Agent.Exists, r.Agent.Exists == nil && (r.Agent.Key == nil || !*r.Agent.Key):
-		// With a key in the key file and no answer of the server, the agent can exist. Then
-		// mai agent add gives AGENT_EXISTS, thus it is not a step.
+		// With a key in the key file and no list of the server, the agent can exist. Then the
+		// command mai agent add gives AGENT_EXISTS, thus it is not a step.
 		steps = append(steps, guideStep{
 			ID:   "add-agent",
 			Text: "Add the agent account " + agent + ".",
@@ -846,9 +849,8 @@ func (g *guideRun) steps() {
 }
 
 // checkStep is the last step: a call of the tool whoami in the app, and a read of the
-// resource mai://guide. When the agent is in a different app, the user does the check in the
-// app of the guide, because whoami in the app of the agent gives a session of a different
-// agent.
+// resource mai://guide. The agent can be in a different app. Then the user does the check in
+// the app of the guide. In the app of the agent, whoami gives a session of a different agent.
 func (g *guideRun) checkStep(app, title, agent string, changes bool) guideStep {
 	call := "call the tool `whoami` of the MCP server mai. The result gives a session of the agent " + agent +
 		", for example `" + agent + ".s1`. Then read the resource `mai://guide`."
@@ -874,9 +876,9 @@ func (g *guideRun) checkStep(app, title, agent string, changes bool) guideStep {
 }
 
 // confirmAppStep is the first step for an app from the chain of parent processes. That app
-// can be incorrect. For example, the chain gives only the executable of each process, thus
-// an agent CLI that runs on Node.js in the terminal of a different app is not visible. Then
-// the CLI finds the app of the terminal.
+// can be incorrect. For example, the chain gives only the executable of each process. Thus
+// the CLI does not see an agent CLI that runs on Node.js in the terminal of a different app.
+// Then the CLI finds the app of the terminal.
 func (g *guideRun) confirmAppStep() guideStep {
 	app := *g.r.App.Name
 	cmd := "mai guide --app APP"
@@ -980,8 +982,9 @@ func guideWrite(w io.Writer, r *guideReport) {
 	p("This text is for an AI agent. To get it as one JSON object, run `mai guide --json`.")
 	p("%s", r.About)
 	p("")
-	// state writes one line of the part State. A reason can end with a period, thus the line
-	// gets its period only once.
+	// The function state writes one line of the part State. A cause from a different part of
+	// the CLI can end with a period. Thus the function removes that period before it adds its
+	// own period.
 	state := func(name, text string) { p("- %s: %s.", name, strings.TrimRight(text, ".")) }
 	p("State:")
 	state("CLI version", r.CLIVersion)
@@ -1035,7 +1038,7 @@ func guideWrite(w io.Writer, r *guideReport) {
 	}
 }
 
-// reasonText gives ", because REASON" with no end period, or "" for no reason.
+// reasonText gives ", because CAUSE" with no end period, or "" when the cause is nil.
 func reasonText(reason *string) string {
 	if reason == nil {
 		return ""

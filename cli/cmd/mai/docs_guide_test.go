@@ -54,8 +54,8 @@ func section(t *testing.T, doc, heading string) string {
 	return rest
 }
 
-// The reference of the CLI tells each flag, each step, and each JSON field of mai guide, and
-// the flags --dry-run and --yes of mai connect.
+// The reference of the CLI tells each flag, each step, and each JSON field of mai guide. It
+// also tells the flags --dry-run and --yes of mai connect.
 func TestTheCLIReferenceTellsEachFieldOfMaiGuide(t *testing.T) {
 	cli := readDoc(t, "docs", "reference", "cli.md")
 	guide := section(t, cli, "### mai guide")

@@ -174,8 +174,8 @@ var (
 	guideAsk         = regexp.MustCompile(`(?i)\bask(s|ed|ing)?\b`)
 )
 
-// guideSentences gives the sentences of one line of the text, with each code span and each
-// text in parentheses as one word, as the STE rules count them.
+// guideSentences gives the sentences of one line of the text. Each code span and each text in
+// parentheses is one word, as the STE rules count them.
 func guideSentences(line string) []string {
 	line = guideParens.ReplaceAllString(guideCodeSpan.ReplaceAllString(line, "CODE"), "PARENS")
 	var out []string
@@ -187,10 +187,10 @@ func guideSentences(line string) []string {
 	return out
 }
 
-// The text of mai guide is in ASD-STE100 Simplified Technical English in each state: no
-// verb "ask", no double period, no sentence of more than 25 words, and no sentence that
-// starts with a lower-case word. A sentence that starts with a lower-case word, for example
-// "mai start writes ...", joins the sentence before it for a reader and for a linter.
+// The text of mai guide is in ASD-STE100 Simplified Technical English in each state. The text
+// has no verb "ask" and no double period. It has no sentence of more than 25 words, and no
+// sentence that starts with a lower-case word. A sentence that starts with a lower-case word,
+// for example "mai start writes ...", joins the sentence before it for a reader and a linter.
 func TestGuideTextIsSimplifiedTechnicalEnglishInEachState(t *testing.T) {
 	for name, setup := range guideStates {
 		t.Run(name, func(t *testing.T) {

@@ -58,8 +58,8 @@ func wantNoStepThatFails(t *testing.T, r map[string]any, commands ...string) {
 	}
 }
 
-// A container of a 2.x install holds the name of the instance. mai start refuses it, thus the
-// guide gives no start, and only a step that names the choices of the user.
+// A container of a 2.x install holds the name of the instance. The command mai start refuses
+// it. Thus the guide gives no start. It gives only a step that names the choices of the user.
 func TestGuideForAContainerOfA2xInstallGivesTheChoicesOfTheUser(t *testing.T) {
 	g := newGuideTest(t)
 	g.eng.ctrs = []fakeCtr{{ID: "c1", Name: "mai", Image: "sha256:img", Port: g.port, Running: true,
@@ -93,8 +93,8 @@ func TestGuideForAContainerOfA2xInstallGivesTheChoicesOfTheUser(t *testing.T) {
 	}
 }
 
-// A container that mai 3 did not make, and that is not of a 2.x install, holds the name of
-// the instance. mai start refuses it, and mai uninstall --legacy does not remove it.
+// A container that mai 3 did not make holds the name of the instance, and it is not of a 2.x
+// install. The command mai start refuses it, and mai uninstall --legacy does not remove it.
 func TestGuideForADifferentContainerWithTheNameGivesNoStart(t *testing.T) {
 	g := newGuideTest(t)
 	g.eng.ctrs = []fakeCtr{{ID: "c1", Name: "mai", Image: "sha256:img", Port: g.port, Running: false}}

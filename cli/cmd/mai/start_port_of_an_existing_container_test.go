@@ -22,8 +22,8 @@ import (
 )
 
 // execFake adds the exec calls of the Engine API to engineFake. "mai health" gives exit 0,
-// and "mai owner set-key" gives exit 3: the server has an owner key. codes and stderr, when
-// they have the command, give its exit code and the text that it writes to stderr.
+// and "mai owner set-key" gives exit 3: the server has an owner key. The maps codes and
+// stderr can give the exit code of a command and the text that it writes to stderr.
 type execFake struct {
 	*engineFake
 	mu     sync.Mutex
