@@ -6,6 +6,36 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `mai guide [--app APP] [--agent NAME] [--json]`, the resource for an AI
+  agent in Claude Code, Cursor, Visual Studio Code Copilot, Codex, or
+  Antigravity. The agent runs it to find mai and to connect its app. The
+  command changes nothing. It writes no file, starts no engine or container,
+  pulls no image, and shows no key. It gives the state of mai and the steps
+  that are not done, each with its command and its change. It also tells how
+  to use a named session, and gives the rules for an agent. The agent gets
+  the approval of the user in the chat before each step that changes
+  something. With no `--app`, the CLI finds the app in the chain of parent
+  processes. `--json` gives the same content as one JSON object.
+- `mai connect APP --agent NAME --dry-run` shows the change of the files of
+  the app, and writes nothing. The exit code is 0.
+- The resource `mai://guide` has the section "Connect a different app". It
+  tells a connected agent to run `mai guide` on the host, and to get the
+  approval of the user first.
+- The how-to "Connect an agent" has the section "Let an agent connect its
+  app".
+
+### Changed
+
+- The usage of `mai` starts with the line "An AI agent: run mai guide."
+- The usage line of `mai connect` is
+  `mai connect APP --agent NAME [--dry-run | --yes]`. The flags `--dry-run`
+  and `--yes` together give the exit code 2.
+- `mai connect` with no `--yes` and an input that is not a terminal writes
+  one line to stderr for an AI agent. The line tells the agent to show the
+  change with `--dry-run`, and to use `--yes` only after the user agrees.
+
 ## [3.2.0] - 2026-11-13
 
 ### Added

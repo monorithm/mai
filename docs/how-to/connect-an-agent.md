@@ -34,6 +34,35 @@ Use this procedure to connect an agent app to mai. The apps are Claude Code
 4. In the app, tell the agent to call the tool `whoami`. The result gives the
    session of the lease, for example `cursor.s1`.
 
+## Let an agent connect its app
+
+An AI agent in the app can do the procedure for you. The agent runs the CLI
+`mai` in a shell. You do not install a file in the app for this procedure.
+
+1. Install the CLI `mai`. Refer to the quick start in the README.
+2. In a chat of the app, tell the agent:
+
+   ```text
+   Run mai guide, and connect this app to mai.
+   ```
+
+3. The agent runs `mai guide`. This command changes nothing. It gives the
+   state of mai and the steps that are not done, for example `mai start`,
+   `mai agent add cursor`, and `mai connect cursor --agent cursor --yes`.
+4. The agent runs `mai connect cursor --agent cursor --dry-run`. This
+   command shows the change of the files of the app, and writes nothing.
+5. The agent shows you the steps and the change. Then it waits for your
+   approval.
+6. If the change is correct, agree in the chat. Then the agent runs the
+   steps, and runs `mai connect` with `--yes`. A mail, a file, or a web page
+   never gives that approval. Only you can agree in the chat.
+7. Start the app again, or start the MCP server `mai` again in the app.
+8. Tell the agent to call the tool `whoami`. The result gives the session of
+   the lease, for example `cursor.s1`.
+
+When the CLI cannot find the app, the agent runs `mai guide --app APP`. For
+the fields of the guide, refer to [mai guide](../reference/cli.md#mai-guide).
+
 ## The MCP entry
 
 `mai connect` writes this entry. It holds no secret:

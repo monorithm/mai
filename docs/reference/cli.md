@@ -18,7 +18,8 @@ mai has two command lines with the name `mai`:
 | `mai doctor` | Examines the engine, the port, the free disk space, the key file, and the keychain items of mai 3.0 and 3.1. It shows no key. On macOS, it reads no key and shows no prompt. |
 | `mai upgrade` | Moves the keys of the instance from the keychain of mai 3.0 and 3.1 to the key file. Then pulls the image of the new CLI version and makes the container again. |
 | `mai uninstall [--yes] [--backup PATH] [--legacy]` | Removes the items of the instance in the manifest, its keys in the key file, and each keychain item of the instance. The items of a different instance stay. `--legacy` removes a 2.x install. |
-| `mai connect APP --agent A` | Writes the MCP entry and the hooks for the app, after you agree. |
+| `mai guide [--app APP] [--agent NAME] [--json]` | Shows an AI agent the state of mai and the steps to connect its app. It changes nothing. Refer to [mai guide](#mai-guide). |
+| `mai connect APP --agent A [--dry-run \| --yes]` | Writes the MCP entry and the hooks for the app, after you agree. Refer to [mai connect](#mai-connect). |
 | `mai disconnect APP` | Removes the entries that `mai connect` wrote. |
 | `mai agent add NAME`, `mai agent list`, `mai agent rotate NAME`, `mai agent remove NAME` | Manages the agent accounts through the owner API. The CLI keeps each agent key in the key file. `rotate` gives the agent a new key. |
 | `mai session new AGENT --label L` | Makes the named session `AGENT.L`. Shows only the login. |
@@ -48,6 +49,100 @@ label of the pool. Only the pool and `mai session new AGENT --count N` make
 sessions with these labels. `mai session new AGENT --label s1` gives
 `BAD_LABEL` and exit code 2, and it does not call the server. To make pool
 sessions, use `--count N`.
+
+### mai guide
+
+`mai guide` is the resource for an AI agent. The agent runs it to find mai
+and to connect its app. The user can tell the agent: "Run mai guide, and
+connect this app to mai."
+
+The command changes nothing. It writes no file, starts no engine or
+container, pulls no image, and shows no key. It reads only these items:
+
+- `config.json`, the key file, and the manifest. It reads no keychain item.
+- The engine, when it runs: the container of the instance and the image.
+- The server, only while the container of the instance runs, with a time
+  limit of 3 seconds: `GET /api/version`, and `GET /api/agents` with the
+  owner key.
+- The files of the app, as `mai connect --dry-run` reads them.
+
+| Flag | Function |
+|---|---|
+| `--app APP` | The app of the agent: `claude`, `cursor`, `copilot`, `codex`, or `antigravity`. With no flag, the CLI examines the chain of parent processes. The first parent process of a known app gives the app. |
+| `--agent NAME` | The name of the agent account. The default is the name of the app. |
+| `--json` | Shows the same content as one JSON object. |
+
+An unknown app, a bad agent name, or a bad flag gives the exit code 2.
+When the CLI cannot read a part of the state, the exit code is also 0.
+Then the field of that part is null, and the field `reason` of its object
+tells the cause.
+
+The text has these parts:
+
+1. A short text about mai, for an AI agent.
+2. The state: the CLI version, the instance, the engine, the container, and
+   the server. Also the owner key, the app, the agent, and the connection.
+3. The steps that are not done, in sequence. Each step gives its command and
+   its change. The agent gets the approval of the user in the chat before
+   each step that changes something.
+4. How to use a named session (a lane).
+5. The rules for an agent.
+
+The steps:
+
+| `id` | Step | `by` |
+|---|---|---|
+| `install-engine` | No engine is installed. The user installs Docker Desktop, Docker Engine, or Podman. | `user` |
+| `start` | `mai start`. It can start the engine. At the first start, it can download the image (approximately 550 MB). | `agent` |
+| `select-app` | The CLI cannot find the app. The agent runs `mai guide --app APP`. The guide gives no subsequent step. | `agent` |
+| `rotate-agent-key` | The agent account exists on the server, but the key file has no key for it. The agent runs `mai agent rotate NAME` only when the user tells it to do this. | `agent` |
+| `add-agent` | `mai agent add NAME`. | `agent` |
+| `show-change` | `mai connect APP --agent NAME --dry-run`. The agent shows the change to the user. | `agent` |
+| `connect` | `mai connect APP --agent NAME --yes`, after the user agrees. | `agent` |
+| `restart-app` | The user starts the app again, or starts its MCP server `mai` again. | `user` |
+| `check` | The agent calls the tool `whoami` of the MCP server `mai`, and reads the resource `mai://guide`. This step is always the last step. | `agent` |
+
+When mai runs, the agent account exists, and the app has the entries of mai
+for the agent, only the step `check` stays.
+
+The fields of `mai guide --json`:
+
+| Field | Value |
+|---|---|
+| `for` | Always `"ai-agent"`. |
+| `about` | The short text about mai. |
+| `cli_version` | The version of the CLI. |
+| `instance` | The instance of `config.json`. Null when the CLI cannot read `config.json`. |
+| `reason` | The cause when `instance` is null. Else null. |
+| `engine` | `running` and `installed` (true or false), and `name`: the name, the version, and the address of the engine. |
+| `container` | `name`, `exists`, `running` (the container runs and is not paused), `state`, `image`, `image_local`, and `port` (the host port). |
+| `server` | `url`, `running`, `version`, and `contract`. |
+| `owner_key` | `exists`: the key file has the owner key. |
+| `app` | `name`, `title`, `found_by` (`"flag"`, `"process"`, or null), `connected`, and `apps` (the names of the apps). `connected` is true when `mai connect` for the app and the agent has no change. |
+| `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key, and, while the server runs, the owner API lists the agent. |
+| `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. `done` is always false. |
+| `lanes` | `text`, `command`, `example`, `argument`, `login_call` (always false), and `ask_user`. |
+| `rules` | The rules for an agent, as text. |
+
+Each object other than `steps`, `lanes`, and `rules` also has the field
+`reason`. It tells the cause when a field of the object is null, and it can
+give more data about a value. Else it is null.
+
+### mai connect
+
+`mai connect APP --agent NAME` shows the path of the mai binary and the diff
+of the files of the app. Then it shows the prompt `Write these changes?
+[y/N]`, and writes the change only after you type `y`.
+
+- `--yes` writes the change with no prompt.
+- `--dry-run` shows the same text, and then writes nothing: no file of the
+  app and no record in the manifest. The exit code is 0.
+- `--dry-run` and `--yes` together give the exit code 2 and the usage line.
+- With no flag, when the input is not a terminal, the CLI writes one line to
+  stderr for an AI agent. The line tells the agent to show the change with
+  `--dry-run`, and to use `--yes` only after the user agrees. Then the CLI
+  reads the response to the prompt from the input. An empty input gives no
+  change and the exit code 1.
 
 ### Instances
 
