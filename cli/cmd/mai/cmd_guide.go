@@ -95,8 +95,11 @@ type guideReport struct {
 	App        guideApp       `json:"app"`
 	Agent      guideAgent     `json:"agent"`
 	Steps      []guideStep    `json:"steps"`
-	Lanes      guideLanes     `json:"lanes"`
-	Rules      []string       `json:"rules"`
+	// Rerun is the command that gives the guide again, with the app and the agent of this
+	// run. The agent runs it after each step.
+	Rerun string     `json:"rerun"`
+	Lanes guideLanes `json:"lanes"`
+	Rules []string   `json:"rules"`
 }
 
 type guideEngine struct {
@@ -246,6 +249,11 @@ type guideRun struct {
 	foreign, of2x bool
 	// ownerRefused is true when the owner API refuses the owner key of the key file.
 	ownerRefused bool
+	// agentFlag is the value of --agent, or "".
+	agentFlag string
+	// procApp is the app that the chain of parent processes gives, also when --app gives a
+	// different app. It is "" when no process is of a known app.
+	procApp string
 }
 
 // guideOf2x tells if the container is the container of a 2.x install, as mai uninstall
@@ -274,6 +282,7 @@ func guideCollect(ctx context.Context, appFlag, agentFlag string) *guideReport {
 	g.engine(ctx)
 	g.keyFile()
 	g.app(appFlag, agentFlag)
+	g.r.Rerun = g.rerun()
 	g.agent(ctx)
 	g.connected()
 	g.steps()
@@ -424,20 +433,20 @@ func (g *guideRun) keyFile() {
 
 func (g *guideRun) app(appFlag, agentFlag string) {
 	r := g.r
+	g.agentFlag = agentFlag
+	chain, chainErr := guideChain()
+	if chainErr == nil {
+		g.procApp = guideAppOf(chain)
+	}
 	switch {
 	case appFlag != "":
 		r.App.Name, r.App.FoundBy = ptr(appFlag), ptr("flag")
+	case chainErr != nil:
+		r.App.Reason = ptr("the CLI cannot read the chain of parent processes: " + guideErr(chainErr))
+	case g.procApp != "":
+		r.App.Name, r.App.FoundBy = ptr(g.procApp), ptr("process")
 	default:
-		chain, err := guideChain()
-		if err != nil {
-			r.App.Reason = ptr("the CLI cannot read the chain of parent processes: " + guideErr(err))
-			break
-		}
-		if a := guideAppOf(chain); a != "" {
-			r.App.Name, r.App.FoundBy = ptr(a), ptr("process")
-		} else {
-			r.App.Reason = ptr("no parent process is a known app")
-		}
+		r.App.Reason = ptr("no parent process is a known app")
 	}
 	if r.App.Name != nil {
 		r.App.Title = ptr(guideTitles[*r.App.Name])
@@ -450,6 +459,20 @@ func (g *guideRun) app(appFlag, agentFlag string) {
 	default:
 		r.Agent.Reason = ptr("the app is not known")
 	}
+}
+
+// rerun gives the command that gives the guide again: the app of this run, or APP when the
+// app is not known, and the flag --agent of this run.
+func (g *guideRun) rerun() string {
+	app := "APP"
+	if g.r.App.Name != nil {
+		app = *g.r.App.Name
+	}
+	cmd := "mai guide --app " + app
+	if g.agentFlag != "" {
+		cmd += " --agent " + g.agentFlag
+	}
+	return cmd
 }
 
 // guideAppOf gives the app of the chain of parent processes: the first process, from the
@@ -638,7 +661,7 @@ func (g *guideRun) blocked() (guideStep, bool) {
 			Text: "The CLI cannot read its configuration file config.json. The part State gives the error. " +
 				"Tell this to the user, and stop. Do not run `mai start`, `mai agent add`, or `mai connect`. " +
 				"These commands also read config.json, thus they stop with an error. " +
-				"After the user corrects the file, run `mai guide` again.",
+				"After the user corrects the file, run `" + r.Rerun + "` again.",
 			Changes: "The user corrects config.json.",
 		}, true
 	case g.foreign && g.of2x:
@@ -675,7 +698,7 @@ func (g *guideRun) blocked() (guideStep, bool) {
 			ID: "key-file-error", By: "user", AskUser: true,
 			Text: "The CLI cannot read the key file. The part State gives the error. Tell this to the user, and stop. " +
 				"Do not run `mai start` or `mai agent add`, because they also read the key file. " +
-				"Do not change the key file yourself. After the user corrects it, run `mai guide` again.",
+				"Do not change the key file yourself. After the user corrects it, run `" + r.Rerun + "` again.",
 			Changes: "The user corrects the key file.",
 		}, true
 	case r.Server.Running != nil && *r.Server.Running && r.OwnerKey.Exists != nil && !*r.OwnerKey.Exists:
@@ -723,10 +746,7 @@ func (g *guideRun) steps() {
 		changes = true
 	}
 	if r.App.Name == nil {
-		cmd := "mai guide --app APP"
-		if r.Agent.Name != nil {
-			cmd += " --agent " + *r.Agent.Name
-		}
+		cmd := r.Rerun
 		steps = append(steps, guideStep{
 			ID: "select-app",
 			Text: "The CLI cannot find your app. Run `" + cmd + "`, with the name of your app as APP. " +
@@ -794,18 +814,34 @@ func (g *guideRun) steps() {
 			AskUser: true,
 		})
 	}
-	check := "Call the tool `whoami` of the MCP server mai. The result gives your session, for example `" + agent + ".s1`. " +
-		"Then read the resource `mai://guide`."
+	steps = append(steps, g.checkStep(app, title, agent, changes))
+	r.Steps = steps
+}
+
+// checkStep is the last step: a call of the tool whoami in the app, and a read of the
+// resource mai://guide. When the agent is in a different app, the user does the check in the
+// app of the guide, because whoami in the app of the agent gives a session of a different
+// agent.
+func (g *guideRun) checkStep(app, title, agent string, changes bool) guideStep {
+	call := "call the tool `whoami` of the MCP server mai. The result gives a session of the agent " + agent +
+		", for example `" + agent + ".s1`. Then read the resource `mai://guide`."
+	s := guideStep{ID: "check", By: "agent", Tool: ptr("whoami"), Resource: ptr("mai://guide"), Changes: "Nothing."}
+	switch {
+	case g.procApp != "" && g.procApp != app:
+		s.By = "user"
+		s.Text = "You are in " + guideTitles[g.procApp] + ", not in " + title + ". Thus the user does this check in " + title +
+			". Tell the user to give this order to the agent in " + title + ": " + call
+	case g.procApp == "":
+		s.Text = "If you are in " + title + ", " + call + " If you are not in " + title +
+			", tell the user to do this check in " + title + "."
+	default:
+		s.Text = capital(call)
+	}
 	if !changes {
-		check = "The app " + app + " is connected to mai as the agent " + agent + ". " + check +
+		s.Text = "The app " + app + " is connected to mai as the agent " + agent + ". " + s.Text +
 			" If the app has no tools of mai, tell the user to start the app again."
 	}
-	steps = append(steps, guideStep{
-		ID: "check", Text: check, By: "agent",
-		Tool: ptr("whoami"), Resource: ptr("mai://guide"),
-		Changes: "Nothing.",
-	})
-	r.Steps = steps
+	return s
 }
 
 // guideInstallStep is the step of the user when no engine is installed.
@@ -908,7 +944,7 @@ func guideWrite(w io.Writer, r *guideReport) {
 	state("Connection", guideConnectionText(r))
 	p("")
 	p("Next steps:")
-	p("Do the steps in this sequence. Run `mai guide` again after each step.")
+	p("Do the steps in this sequence. Run `%s` again after each step.", r.Rerun)
 	for i, s := range r.Steps {
 		p("")
 		p("%d. %s", i+1, s.Text)

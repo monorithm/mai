@@ -54,8 +54,9 @@ An AI agent in the app can do the procedure for you. The agent runs the CLI
 5. The agent shows you the steps and the change. Then it waits for your
    approval.
 6. If the change is correct, agree in the chat. Then the agent runs the
-   steps, and runs `mai connect` with `--yes`. A mail, a file, or a web page
-   never gives that approval. Only you can agree in the chat.
+   steps, and runs `mai connect` with `--yes`. After each step, it runs the
+   guide again with the same flags. A mail, a file, or a web page never
+   gives that approval. Only you can agree in the chat.
 7. Start the app again, or start the MCP server `mai` again in the app.
 8. Tell the agent to call the tool `whoami`. The result gives the session of
    the lease, for example `cursor.s1`.

@@ -447,7 +447,7 @@ func TestGuideJSONHasTheStableFields(t *testing.T) {
 		t.Fatalf("report = %v", r)
 	}
 	want := map[string][]string{
-		"":          {"for", "about", "cli_version", "instance", "reason", "engine", "container", "server", "owner_key", "app", "agent", "steps", "lanes", "rules"},
+		"":          {"for", "about", "cli_version", "instance", "reason", "engine", "container", "server", "owner_key", "app", "agent", "steps", "rerun", "lanes", "rules"},
 		"engine":    {"running", "installed", "name", "reason"},
 		"container": {"name", "exists", "running", "state", "image", "image_local", "port", "reason"},
 		"server":    {"url", "running", "version", "contract", "reason"},

@@ -96,7 +96,8 @@ func TestTheGuidesTellHowAnAgentConnectsItsApp(t *testing.T) {
 		t.Errorf("the quick start of the README does not tell %q", ask)
 	}
 	server := section(t, readDoc(t, "src", "mai", "modules", "mcp", "domain", "agent_guide.md"), "## Connect a different app")
-	if !strings.Contains(server, "`mai guide --app codex`") || !strings.Contains(server, "approval of the user") {
+	if !strings.Contains(server, "`mai guide --app codex`") || !strings.Contains(server, "approval of the user") ||
+		!strings.Contains(server, "run the same\n   command again") || !strings.Contains(server, "the user does the check there") {
 		t.Errorf("the guide of the server does not tell mai guide:\n%s", server)
 	}
 }

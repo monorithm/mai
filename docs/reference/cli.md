@@ -100,10 +100,14 @@ The steps:
 | `show-change` | `mai connect APP --agent NAME --dry-run`. The agent shows the change to the user. | `agent` |
 | `connect` | `mai connect APP --agent NAME --yes`, after the user agrees. | `agent` |
 | `restart-app` | The user starts the app again, or starts its MCP server `mai` again. | `user` |
-| `check` | The agent calls the tool `whoami` of the MCP server `mai`, and reads the resource `mai://guide`. This step is always the last step. | `agent` |
+| `check` | The agent calls the tool `whoami` of the MCP server `mai`, and reads the resource `mai://guide`. This step is always the last step. When the chain of parent processes gives a different app, the user does this check in the app of the guide. | `agent` or `user` |
 
 When mai runs, the agent account exists, and the app has the entries of mai
 for the agent, only the step `check` stays.
+
+After each step, the agent runs the guide again with the same flags. The
+text and the field `rerun` give this command. A command with no flags can
+give the steps of a different app or agent.
 
 `mai start`, `mai agent add`, and `mai connect` cannot correct some states.
 For these states, the guide gives only one step of the user. The agent tells
@@ -136,6 +140,7 @@ The fields of `mai guide --json`:
 | `owner_key` | `exists`: the key file has the owner key. `accepted`: the owner API accepts the owner key of the key file. `accepted` is null when the CLI did not send the key, for example because the server does not run. |
 | `app` | `name`, `title`, `found_by` (`"flag"`, `"process"`, or null), `connected`, and `apps` (the names of the apps). `connected` is true when `mai connect` for the app and the agent has no change. |
 | `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key and the owner API lists the agent. `exists` is null when the CLI did not get the list of the agents from the server. Then `reason` tells the cause. |
+| `rerun` | The command that gives the guide again, with the app and the agent of this run, for example `mai guide --app cursor --agent cursor-b`. The agent runs it after each step. Add `--json` for the JSON form. |
 | `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. `done` is always false. |
 | `lanes` | `text`, `command`, `example`, `argument`, `login_call` (always false), and `ask_user`. |
 | `rules` | The rules for an agent, as text. |
