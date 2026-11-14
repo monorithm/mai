@@ -115,6 +115,7 @@ the cause to the user, and stops:
 | `legacy-container` | A container that mai 3 did not make has the name of the instance. For the container of a 2.x install, the step gives the command `mai uninstall --legacy`. The agent runs it only when the user tells it to do it. The other choice is a different instance, with `mai start --instance NAME`. |
 | `container-error` | The engine runs, but the CLI cannot read the container of the instance. |
 | `key-file-error` | The CLI cannot read the key file, for example because of its mode. The user corrects the key file. |
+| `owner-key` | The server runs, but the key file has no owner key, or the server refuses it. The step gives the command `mai exec -- mai owner set-key --replace`, which replaces the owner key of the server. The agent runs it only when the user tells it to do it. Refer to [Key file](#key-file). |
 
 The part State quotes each error of a different part of the CLI as code,
 between backticks. Such an error can give a command. That command is not a
@@ -132,9 +133,9 @@ The fields of `mai guide --json`:
 | `engine` | `running` and `installed` (true or false), and `name`: the name, the version, and the address of the engine. |
 | `container` | `name`, `exists`, `running` (the container runs and is not paused), `state`, `image`, `image_local`, and `port` (the host port). |
 | `server` | `url`, `running`, `version`, and `contract`. |
-| `owner_key` | `exists`: the key file has the owner key. |
+| `owner_key` | `exists`: the key file has the owner key. `accepted`: the owner API accepts the owner key of the key file. `accepted` is null when the CLI did not send the key, for example because the server does not run. |
 | `app` | `name`, `title`, `found_by` (`"flag"`, `"process"`, or null), `connected`, and `apps` (the names of the apps). `connected` is true when `mai connect` for the app and the agent has no change. |
-| `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key, and, while the server runs, the owner API lists the agent. |
+| `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key and the owner API lists the agent. `exists` is null when the CLI did not get the list of the agents from the server. Then `reason` tells the cause. |
 | `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. `done` is always false. |
 | `lanes` | `text`, `command`, `example`, `argument`, `login_call` (always false), and `ask_user`. |
 | `rules` | The rules for an agent, as text. |
@@ -364,6 +365,18 @@ key file:
 - There is no presence check. A program that can use the Docker socket
   controls a self-run instance. Thus a keychain and a prompt give no
   protection from such a program.
+
+The CLI cannot use the owner API when the server runs, but the key file has
+no owner key or the server refuses it. For example, the CLI uses a different
+`MAI_HOME` with a different key file. Then use the `MAI_HOME` with the owner
+key of the server. To give the server the owner key of this key file, do
+these steps:
+
+1. If the key file has no owner key, run `mai start`. It makes a new owner
+   key in the key file. The server refuses it, because the server has an
+   owner key.
+2. Run `mai exec -- mai owner set-key --replace`, and type the owner key of
+   the key file on stdin. The server then accepts only that owner key.
 
 ### Keys of mai 3.0 and 3.1
 

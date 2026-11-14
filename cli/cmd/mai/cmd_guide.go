@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -125,8 +126,11 @@ type guideServer struct {
 }
 
 type guideOwnerKey struct {
-	Exists *bool   `json:"exists"`
-	Reason *string `json:"reason"`
+	Exists *bool `json:"exists"`
+	// Accepted tells if the owner API accepts the owner key of the key file. It is null when
+	// the CLI did not send the key, for example because the server does not run.
+	Accepted *bool   `json:"accepted"`
+	Reason   *string `json:"reason"`
 }
 
 type guideApp struct {
@@ -240,6 +244,8 @@ type guideRun struct {
 	// instance. mai start refuses that container. of2x is true when that container is the
 	// container of a 2.x install, which mai uninstall --legacy removes.
 	foreign, of2x bool
+	// ownerRefused is true when the owner API refuses the owner key of the key file.
+	ownerRefused bool
 }
 
 // guideOf2x tells if the container is the container of a 2.x install, as mai uninstall
@@ -510,51 +516,61 @@ func (g *guideRun) agent(ctx context.Context) {
 		return
 	}
 	account := keys.AgentAccount(g.s.cfg.Instance, name)
+	// note tells about a key of the agent in the keychain of mai 3.0 or 3.1.
+	note := ""
 	_, err := g.kf.Peek(account)
 	switch {
 	case err == nil:
 		r.Agent.Key = ptr(true)
 	case errors.Is(err, keys.ErrNotFound) && g.legacy[account]:
 		r.Agent.Key = ptr(true)
-		r.Agent.Reason = ptr("the key is in the keychain of mai 3.0 or 3.1. The bridge moves it to the key file at its first lease")
+		note = "the key is in the keychain of mai 3.0 or 3.1. The bridge moves it to the key file at its first lease"
 	case errors.Is(err, keys.ErrNotFound):
 		r.Agent.Key = ptr(false)
 	default:
 		r.Agent.Reason = ptr("the CLI cannot read the key file: " + guideErr(err))
 		return
 	}
+	// Only the list of the owner API tells if the agent account exists. With no list, exists
+	// stays null, and the reason tells why.
+	unknown := func(cause string) {
+		if note != "" {
+			cause += ". " + capital(note)
+		}
+		r.Agent.Reason = ptr(cause)
+	}
 	switch {
 	case r.Server.Running == nil || !*r.Server.Running:
-		if *r.Agent.Key {
-			r.Agent.Exists = ptr(true)
-			if r.Agent.Reason == nil {
-				r.Agent.Reason = ptr("the key file has the key. The server does not run, thus the CLI cannot ask the server")
-			}
-		} else {
-			r.Agent.Exists = ptr(false)
-		}
+		unknown("the server does not run")
+		return
+	case r.OwnerKey.Exists == nil || !*r.OwnerKey.Exists:
+		unknown("the key file has no owner key")
 		return
 	case g.ownerKey == "":
-		r.Agent.Exists = ptr(false)
-		if *r.Agent.Key {
-			r.Agent.Exists = nil
-		}
-		r.Agent.Reason = ptr("the key file has no owner key, thus the CLI cannot ask the server")
+		unknown("the owner key is in the keychain of mai 3.0 or 3.1. The guide does not read the keychain")
 		return
 	}
 	actx, cancel := context.WithTimeout(ctx, guideTimeout)
 	defer cancel()
 	agents, err := api.New(*r.Server.URL, g.ownerKey).ListAgents(actx)
-	if err != nil {
-		if !*r.Agent.Key {
-			r.Agent.Exists = ptr(false)
-		}
-		r.Agent.Reason = ptr("the owner API gives no list of the agents: " + guideErr(err))
+	var apiErr *api.Error
+	switch {
+	case errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnauthorized || apiErr.Code == "BAD_KEY"):
+		g.ownerRefused = true
+		r.OwnerKey.Accepted = ptr(false)
+		unknown("the server refuses the owner key of the key file")
+		return
+	case err != nil:
+		unknown("the CLI cannot get the list of the agents from the server: " + guideErr(err))
 		return
 	}
+	r.OwnerKey.Accepted = ptr(true)
 	on := slices.ContainsFunc(agents, func(a api.Agent) bool { return a.Name == name })
 	r.Agent.OnServer = ptr(on)
 	r.Agent.Exists = ptr(on && *r.Agent.Key)
+	if note != "" {
+		r.Agent.Reason = ptr(note)
+	}
 }
 
 func (g *guideRun) connected() {
@@ -604,8 +620,6 @@ func (g *guideRun) needStart() (bool, string) {
 		return true, "the container does not run"
 	case r.Server.Running == nil || !*r.Server.Running:
 		return true, "the server gives no response"
-	case r.OwnerKey.Exists != nil && !*r.OwnerKey.Exists:
-		return true, "the key file has no owner key"
 	case r.Container.Port != nil && *r.Container.Port != g.filePort:
 		return true, fmt.Sprintf("config.json has the port %d, but the container has the host port %d. "+
 			"mai start writes the port of the container to config.json", g.filePort, *r.Container.Port)
@@ -664,8 +678,33 @@ func (g *guideRun) blocked() (guideStep, bool) {
 				"Do not change the key file yourself. After the user corrects it, run `mai guide` again.",
 			Changes: "The user corrects the key file.",
 		}, true
+	case r.Server.Running != nil && *r.Server.Running && r.OwnerKey.Exists != nil && !*r.OwnerKey.Exists:
+		return g.ownerKeyStep("The server of the instance " + *r.Instance + " runs, but the key file has no owner key. "), true
+	case g.ownerRefused:
+		return g.ownerKeyStep("The server of the instance " + *r.Instance + " refuses the owner key of the key file. "), true
 	}
 	return guideStep{}, false
+}
+
+// ownerKeyStep is the step of the user when the server runs, and the key file has no owner
+// key or the server refuses it. mai start then keeps a new owner key that the server
+// refuses, and mai agent add fails with BAD_KEY. Thus the step gives neither command. The
+// recovery replaces the owner key of the server, thus the agent runs it only when the user
+// tells it to do it.
+func (g *guideRun) ownerKeyStep(cause string) guideStep {
+	return guideStep{
+		ID: "owner-key", By: "user", AskUser: true, told: true,
+		Command: ptr(lcCommand(*g.r.Instance, "exec", "--", "mai", "owner", "set-key", "--replace")),
+		Text: cause + "Thus the CLI cannot use the owner API, and `mai agent add` stops with an error. " +
+			"Tell this to the user, and stop. Do not run `mai start` or `mai agent add` for this problem. " +
+			"A different key file can have the owner key of this server, for example the key file of a different MAI_HOME. " +
+			"Then the user uses that MAI_HOME. " +
+			"Else the user gives the server the owner key of this key file with the command of this step. " +
+			"The section Key file of the CLI reference gives the procedure. " +
+			"Run the command only when the user tells you to do it.",
+		Changes: "The command reads an owner key on stdin. The server replaces its owner key with that key, " +
+			"and it does not accept the owner key before it. Do not read, copy, or type a key yourself.",
+	}
 }
 
 func (g *guideRun) steps() {
@@ -809,6 +848,10 @@ func (g *guideRun) startStep(why string) guideStep {
 		b.WriteString("The CLI starts the container of mai. ")
 	}
 	b.WriteString("It makes the owner key in the key file if the key file has no owner key. ")
+	if r.OwnerKey.Exists != nil && !*r.OwnerKey.Exists && r.Container.Exists != nil && *r.Container.Exists {
+		b.WriteString("The server of this container can have a different owner key. Then it refuses the new key, " +
+			"and the guide gives a step for the user. ")
+	}
 	b.WriteString("It waits until the server is healthy, and writes config.json. It changes no file of an app.")
 	return guideStep{
 		ID:      "start",
@@ -957,8 +1000,12 @@ func guideOwnerKeyText(k guideOwnerKey) string {
 	switch {
 	case k.Exists == nil:
 		return "not known" + reasonText(k.Reason)
+	case *k.Exists && k.Accepted != nil && !*k.Accepted:
+		return "the key file has the owner key, but the server refuses it"
 	case *k.Exists && k.Reason != nil:
 		return "the owner key exists. " + capital(*k.Reason)
+	case *k.Exists && k.Accepted != nil:
+		return "the key file has the owner key, and the server accepts it"
 	case *k.Exists:
 		return "the key file has the owner key"
 	}
@@ -985,7 +1032,14 @@ func guideAgentText(a guideAgent) string {
 	name := *a.Name
 	switch {
 	case a.Exists == nil:
-		return name + ". It is not known if the agent account exists" + reasonText(a.Reason)
+		t := name + ". It is not known if the agent account exists" + reasonText(a.Reason)
+		switch {
+		case a.Key != nil && *a.Key:
+			t += ". The key file has the key of the agent"
+		case a.Key != nil:
+			t += ". The key file has no key for the agent"
+		}
+		return t
 	case *a.Exists && a.Reason != nil:
 		return name + ". The agent account exists. " + capital(*a.Reason)
 	case *a.Exists:

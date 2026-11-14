@@ -338,7 +338,8 @@ func TestGuideWithAKeyOfTheAgentAndNoServerGivesNoAgentStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := g.report(t, "--app", "cursor")
-	if field(r, "agent", "exists") != true || field(r, "agent", "on_server") != nil || field(r, "agent", "reason") == nil {
+	if field(r, "agent", "exists") != nil || field(r, "agent", "key") != true || field(r, "agent", "on_server") != nil ||
+		field(r, "agent", "reason") == nil {
 		t.Fatalf("agent = %v", r["agent"])
 	}
 	wantSteps(t, r, "start", "show-change", "connect", "restart-app", "check")
@@ -450,7 +451,7 @@ func TestGuideJSONHasTheStableFields(t *testing.T) {
 		"engine":    {"running", "installed", "name", "reason"},
 		"container": {"name", "exists", "running", "state", "image", "image_local", "port", "reason"},
 		"server":    {"url", "running", "version", "contract", "reason"},
-		"owner_key": {"exists", "reason"},
+		"owner_key": {"exists", "accepted", "reason"},
 		"app":       {"name", "title", "found_by", "connected", "reason", "apps"},
 		"agent":     {"name", "exists", "key", "on_server", "reason"},
 		"lanes":     {"text", "command", "example", "argument", "login_call", "ask_user"},

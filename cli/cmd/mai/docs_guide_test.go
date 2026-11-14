@@ -66,7 +66,7 @@ func TestTheCLIReferenceTellsEachFieldOfMaiGuide(t *testing.T) {
 	}
 	for _, s := range []string{"`--app APP`", "`--agent NAME`", "`--json`", "`install-engine`", "`start`", "`select-app`",
 		"`rotate-agent-key`", "`add-agent`", "`show-change`", "`connect`", "`restart-app`", "`check`", "`\"ai-agent\"`",
-		"`config-error`", "`legacy-container`", "`container-error`", "`key-file-error`"} {
+		"`config-error`", "`legacy-container`", "`container-error`", "`key-file-error`", "`owner-key`"} {
 		if !strings.Contains(guide, s) {
 			t.Errorf("the section mai guide of cli.md does not tell %s", s)
 		}
