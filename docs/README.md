@@ -1,6 +1,7 @@
 # mai (Mail for AI) documentation
 
-The documentation has four parts and a design.
+The documentation has four parts and a design. If you are new to mai, start
+with [mai for a new user](explanation/mai-for-a-new-user.md).
 
 | Part | Page | Use |
 |---|---|---|
@@ -13,5 +14,6 @@ The documentation has four parts and a design.
 | Reference | [Configuration](reference/configuration.md) | The environment variables of the server, and the configuration file and folders of the CLI. |
 | Reference | [Ports](reference/ports.md) | The ports of the container. |
 | Reference | [Tooling](reference/tooling.md) | Hooks, CI and checks. |
+| Explanation | [mai for a new user](explanation/mai-for-a-new-user.md) | The functions of mai and why mai is safe, in words that are not technical. |
 | Explanation | [Architecture](explanation/architecture.md) | The parts of mai and their relations. |
 | Design | [mai 3.0](design/mai-3.0.md) | The design of the host CLI, the leases, and the copies. |
