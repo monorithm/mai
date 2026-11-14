@@ -32,6 +32,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The page `docs/explanation/mai-for-a-new-user.md`. It tells the functions
   of mai and why mai is safe to a new user who is not technical. The README
   and the index of the docs link to it.
+- The page for a new user tells how an assistant connects its app with
+  `mai guide`, after the approval of the user.
 
 ### Changed
 
