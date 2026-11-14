@@ -287,11 +287,11 @@ def main():
 
 def run(one):
     init = one.request("initialize", INIT)
-    check(init["serverInfo"]["version"] == "3.2.0", f"the contract is {init['serverInfo']}")
+    check(init["serverInfo"]["version"] == "3.3.0", f"the contract is {init['serverInfo']}")
     check('session: "lane-1"' in init["instructions"], "the instructions do not tell to give the label as session")
     check("login" in init["instructions"], "the instructions do not tell about login")
     one.notify("notifications/initialized")
-    ok("initialize gives the contract 3.2.0, and the instructions tell to give the label as session")
+    ok("initialize gives the contract 3.3.0, and the instructions tell to give the label as session")
 
     guide = one.request("resources/read", {"uri": "mai://guide"})
     check("login" in guide["contents"][0]["text"], "the guide does not tell about login")
@@ -554,10 +554,10 @@ def run_pool_full():
 
     full = Bridge("full")
     init = full.request("initialize", INIT)
-    check(init["serverInfo"]["version"] == "3.2.0", f"the contract is {init['serverInfo']}")
+    check(init["serverInfo"]["version"] == "3.3.0", f"the contract is {init['serverInfo']}")
     full.notify("notifications/initialized")
     wait_until(lambda: "no free pool session" in full.text(), "the log of the bridge does not tell that no pool session is free")
-    ok("a ninth bridge starts with a pool lease with no session, and initialize gives the contract 3.2.0")
+    ok("a ninth bridge starts with a pool lease with no session, and initialize gives the contract 3.3.0")
     tools = {t["name"] for t in full.request("tools/list")["tools"]}
     check({"login", "logout", "whoami"} <= tools, f"tools/list gave {sorted(tools)}")
     ok("tools/list works on the pool lease with no session")
