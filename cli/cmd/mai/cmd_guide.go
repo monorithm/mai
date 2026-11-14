@@ -1157,7 +1157,14 @@ func guideConnectionText(r *guideReport) string {
 	case *a.Connected:
 		return "the files of " + *a.Name + " have the entries of mai for the agent " + *r.Agent.Name
 	}
-	return "the files of " + *a.Name + " do not have the entries of mai for the agent " + *r.Agent.Name
+	text := "mai connect changes the files of " + *a.Name + " for the agent " + *r.Agent.Name +
+		". Thus the files do not have the entries of mai, or their entries are different"
+	// Entries that name a different mai binary, for example after a move of the binary, are
+	// not the same. The name of this binary lets the agent tell the user the cause.
+	if bin, err := connect.BinaryPath(); err == nil {
+		text += ". For example, the entries can name a different mai binary. This mai binary is " + bin
+	}
+	return text
 }
 
 // capital gives s with an upper-case first letter.

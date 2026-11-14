@@ -18,6 +18,7 @@ import (
 
 	"github.com/moby/moby/client"
 
+	"github.com/monorithm/mai/cli/v3/internal/connect"
 	"github.com/monorithm/mai/cli/v3/internal/engine"
 	"github.com/monorithm/mai/cli/v3/internal/keys"
 	"github.com/monorithm/mai/cli/v3/internal/manifest"
@@ -597,5 +598,23 @@ func TestTheUsageStartsWithTheLineForAnAgent(t *testing.T) {
 	}
 	if !strings.Contains(rest, "  guide ") {
 		t.Fatalf("the usage has no command guide:\n%s", b.String())
+	}
+}
+
+// Entries of mai that name a different mai binary are not the same as the entries that mai
+// connect writes. The text of the connection must not tell that the files have no entries of
+// mai, and it must name this binary.
+func TestTheConnectionTextNamesTheBinaryWhenTheEntriesAreNotTheSame(t *testing.T) {
+	old := connect.Binary
+	connect.Binary = func() (string, error) { return "/opt/mai/bin/mai", nil }
+	t.Cleanup(func() { connect.Binary = old })
+	name, agent, no := "cursor", "cursor", false
+	r := &guideReport{}
+	r.App.Name, r.App.Connected, r.Agent.Name = &name, &no, &agent
+	got := guideConnectionText(r)
+	for _, want := range []string{"mai connect changes the files of cursor", "or their entries are different", "This mai binary is /opt/mai/bin/mai"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the connection text %q has no %q", got, want)
+		}
 	}
 }
