@@ -386,7 +386,7 @@ func (g *guideRun) engine(ctx context.Context) {
 	url := "http://127.0.0.1:" + strconv.Itoa(g.s.cfg.Port)
 	r.Server.URL = ptr(url)
 	var v api.VersionInfo
-	if err := lcAPIGet(g.s.cfg.Port, "/api/version", "", &v); err != nil {
+	if err := guideVersion(ctx, g.s.cfg.Port, &v); err != nil {
 		r.Server.Running = ptr(false)
 		r.Server.Reason = ptr("the server gives no response at " + url + ": " + guideErr(err))
 		return
@@ -617,6 +617,26 @@ func (g *guideRun) connected() {
 		return
 	}
 	r.App.Connected = ptr(!p.Changed())
+}
+
+// guideVersion gets the version of the server on the port, with the time limit
+// guideTimeout. The request has no key.
+func guideVersion(ctx context.Context, port int, v *api.VersionInfo) error {
+	ctx, cancel := context.WithTimeout(ctx, guideTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+"/api/version", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("/api/version gave HTTP %d", resp.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(v)
 }
 
 // guideErr gives the text of an error as a code span. The error is data from a different
