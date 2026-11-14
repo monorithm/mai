@@ -183,6 +183,10 @@ in one line.
 When a symbolic link makes the two MCP files one file, `mai connect` writes
 the entry in that file. It does not remove the entry from that file.
 
+When the earlier file is not plain JSON, `mai connect` does not change it,
+and the CLI tells you in one line. An example is a file with comments. Then
+`mai connect` writes the entries in the other files.
+
 ### Instances
 
 The lifecycle commands take `--instance NAME`. The default is the instance

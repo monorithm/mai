@@ -15,7 +15,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   version of mai: it removes the entry of mai from
   `~/.gemini/antigravity/mcp_config.json`, and the diff shows the removal.
   The other content of that file stays. An entry `mai` in that file that is
-  not an entry of mai stays, and the CLI tells you in one line.
+  not an entry of mai stays, and the CLI tells you in one line. When that
+  file is not plain JSON, `mai connect` does not change it, and the CLI tells
+  you in one line. Then `mai connect` writes the entries in the other files.
   `mai disconnect antigravity` and `mai uninstall` remove the new entry.
 - `mai uninstall --legacy` also examines
   `~/.gemini/config/mcp_config.json` for an MCP entry of mai 2.x.
