@@ -96,9 +96,12 @@ func runConnect(args []string, in io.Reader, out, errOut io.Writer) int {
 	if err != nil {
 		return fail(errOut, err)
 	}
-	p, err := connect.Prepare(home, app, *agent)
+	p, err := connect.PrepareWith(home, app, *agent, m)
 	if err != nil {
 		return fail(errOut, err)
+	}
+	for _, n := range p.Notes() {
+		fmt.Fprintln(out, n)
 	}
 	if !p.Changed() {
 		// The apply only records the entries in the manifest. A dry run writes nothing.

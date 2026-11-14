@@ -39,9 +39,17 @@ type FileChange struct {
 	After   []byte
 	Existed bool
 	Items   []manifest.Item
+	// Notes are lines for the user about the file. An example is a line about an entry that
+	// is not of mai at an earlier place of the entry of mai.
+	Notes []string
+	// Delete marks a file of earlier places that mai connect made. The file goes, because no
+	// content stays in it.
+	Delete  bool
 	records map[string]record // the record of each entry, by its pointer
 	app     string
 	changes []change
+	drop    bool            // the file holds only earlier places of entries (change.drop)
+	kept    map[string]bool // for a drop file: each pointer of an entry that is not of mai, which stays
 }
 
 // record is the local note of one entry: the text that mai wrote, the pointer of each object
@@ -119,7 +127,15 @@ func BinaryPath() (string, error) { return Binary() }
 
 // Prepare computes the changes for app and agent in the files under home. It writes nothing.
 // A file that exists keeps each byte outside the entries of mai.
-func Prepare(home, app, agent string) (*Plan, error) {
+func Prepare(home, app, agent string) (*Plan, error) { return PrepareWith(home, app, agent, nil) }
+
+// PrepareWith is Prepare with the manifest m of the instance, or nil. The plan also removes an
+// entry of mai at an earlier place. An earlier version of mai wrote the entry there, and the
+// app does not read that place. The manifest gives the record of that entry and of its file.
+// With these records, the removal is the same as at mai disconnect. The containers that mai
+// made for the entry go too. A file that mai made goes when no content stays in it.
+// PrepareWith writes nothing.
+func PrepareWith(home, app, agent string, m *manifest.Manifest) (*Plan, error) {
 	if agent == "" {
 		return nil, errors.New("connect: the agent name is empty")
 	}
@@ -147,6 +163,12 @@ func Prepare(home, app, agent string) (*Plan, error) {
 		before, existed, err := readFile(path)
 		if err != nil {
 			return nil, err
+		}
+		if byPath[path][0].drop {
+			if fc := planDrop(path, before, existed, byPath[path], app, m); fc != nil {
+				p.Files = append(p.Files, fc)
+			}
+			continue
 		}
 		fc, err := planFile(path, before, existed, byPath[path], app)
 		if err != nil {
@@ -239,6 +261,80 @@ func planFile(path string, before []byte, existed bool, cs []change, app string)
 	}
 	fc.After = text
 	return fc, nil
+}
+
+// planDrop computes the change of a file that holds only earlier places of entries
+// (change.drop). It removes each entry of mai at such a place, as mai disconnect does. Each
+// other byte of the file stays, and planDrop adds nothing. An entry that is not of mai stays,
+// and gets a note. The result is nil when the file does not change and m has no record of an
+// entry at the place.
+func planDrop(path string, before []byte, existed bool, cs []change, app string, m *manifest.Manifest) *FileChange {
+	fc := &FileChange{Path: path, Before: before, After: before, Existed: existed, app: app, changes: cs, drop: true, kept: map[string]bool{}}
+	recorded := false
+	for _, c := range cs {
+		it, ok := recordedEntry(m, app, path, c.pointer)
+		recorded = recorded || ok
+		if !existed {
+			continue
+		}
+		out, note := dropEntry(fc.After, c, it, ok)
+		fc.After = out
+		if note != "" {
+			fc.Notes = append(fc.Notes, note)
+			fc.kept[c.pointer] = true
+		}
+	}
+	if existed && m != nil && len(fc.Notes) == 0 && noContent(fc.After) {
+		for _, f := range m.Of(manifest.File) {
+			if f.Name == app && f.Path == path && madeFile(f) {
+				fc.Delete = true
+			}
+		}
+	}
+	if bytes.Equal(before, fc.After) && !fc.Delete && !recorded && len(fc.Notes) == 0 {
+		return nil
+	}
+	return fc
+}
+
+// recordedEntry returns the record in m of the entry of app at the pointer of path.
+func recordedEntry(m *manifest.Manifest, app, path, pointer string) (manifest.Item, bool) {
+	if m == nil {
+		return manifest.Item{}, false
+	}
+	for _, it := range m.Of(manifest.AppEntry) {
+		if it.Name == app && it.Path == path && it.Pointer == pointer {
+			return it, true
+		}
+	}
+	return manifest.Item{}, false
+}
+
+// dropEntry removes the entry of mai at the earlier place of c from the JSON text b. Each other
+// byte stays. When the manifest has the record it of the entry, the containers that mai made
+// for the entry go too, as at mai disconnect. A value that is not an entry of mai stays, and
+// the result has a note for the user. A text that is not plain JSON stays, with a note.
+func dropEntry(b []byte, c change, it manifest.Item, ok bool) ([]byte, string) {
+	text := bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(text)) == 0 {
+		return b, ""
+	}
+	root, err := scanJSON(text)
+	if err != nil || root.kind != '{' {
+		return b, fmt.Sprintf("mai connect cannot read the earlier file %s, because it is not plain JSON. mai connect does not change it.", c.path)
+	}
+	if v := nodeAt(root, splitPointer(c.pointer)); v != nil && !c.ownsText(text, v) {
+		return b, fmt.Sprintf("The entry %s in the earlier file %s is not an entry of mai. mai connect does not change it.", c.pointer, c.path)
+	}
+	if !ok {
+		// With no record, mai does not know the containers that it made: they stay.
+		it = manifest.Item{Type: manifest.AppEntry, Path: c.path, Pointer: c.pointer}
+	}
+	out, err := removeJSON(b, it, true)
+	if err != nil {
+		return b, ""
+	}
+	return out, ""
 }
 
 func loadDoc(path string, b []byte) (*object, error) {
@@ -581,27 +677,39 @@ func toLF(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("
 // Changed reports if the plan changes a file.
 func (p *Plan) Changed() bool {
 	for _, f := range p.Files {
-		if !bytes.Equal(f.Before, f.After) || !f.Existed {
+		if !bytes.Equal(f.Before, f.After) || f.Delete || (!f.Existed && !f.drop) {
 			return true
 		}
 	}
 	return false
 }
 
-// Diff returns a unified diff of each change of the plan.
+// Diff returns a unified diff of each change of the plan. A file that goes has the name
+// /dev/null after the change.
 func (p *Plan) Diff() string {
 	var b bytes.Buffer
 	for _, f := range p.Files {
-		if f.Existed && bytes.Equal(f.Before, f.After) {
-			continue
+		switch {
+		case f.Delete:
+			b.WriteString(unifiedDiff(f.Path, "/dev/null", string(f.Before), ""))
+		case f.drop && !f.Existed, f.Existed && bytes.Equal(f.Before, f.After):
+			// no change
+		case !f.Existed:
+			b.WriteString(unifiedDiff("/dev/null", f.Path, string(f.Before), string(f.After)))
+		default:
+			b.WriteString(unifiedDiff(f.Path, f.Path, string(f.Before), string(f.After)))
 		}
-		from := f.Path
-		if !f.Existed {
-			from = "/dev/null"
-		}
-		b.WriteString(unifiedDiff(from, f.Path, string(f.Before), string(f.After)))
 	}
 	return b.String()
+}
+
+// Notes returns the notes of each file of the plan, one line each.
+func (p *Plan) Notes() []string {
+	var out []string
+	for _, f := range p.Files {
+		out = append(out, f.Notes...)
+	}
+	return out
 }
 
 func entriesDir() (string, error) {
@@ -625,7 +733,7 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 	// app can be in one new folder.
 	dirsOf := map[string][]string{}
 	for _, f := range p.Files {
-		if _, existed, err := readFile(f.Path); err == nil && !existed {
+		if _, existed, err := readFile(f.Path); err == nil && !existed && !f.drop {
 			dirsOf[f.Path] = missingDirs(filepath.Dir(linkTarget(f.Path)))
 		}
 	}
@@ -633,6 +741,16 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 		cur, existed, err := readFile(f.Path)
 		if err != nil {
 			return err
+		}
+		if f.drop {
+			// Plan the file again, from its current text and the records of m.
+			if f = planDrop(f.Path, cur, existed, f.changes, f.app, m); f != nil {
+				p.Files[i] = f
+				if err := applyDrop(f, m); err != nil {
+					return err
+				}
+			}
+			continue
 		}
 		if existed != f.Existed || !bytes.Equal(cur, f.Before) {
 			nf, err := planFile(f.Path, cur, existed, f.changes, f.app)
@@ -741,6 +859,44 @@ func (p *Plan) Apply(m *manifest.Manifest) error {
 				return err
 			}
 			if err := m.Add(it); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// applyDrop writes a file of earlier places (planDrop). Then it removes the records of the
+// entries that went. The record of an entry that stays (not of mai) stays too. When f.Delete
+// is set, the file that mai made goes, as at mai disconnect. The folders that mai made for it
+// go too.
+func applyDrop(f *FileChange, m *manifest.Manifest) error {
+	if f.Existed && !bytes.Equal(f.Before, f.After) {
+		if err := writeFile(f.Path, f.After); err != nil {
+			return err
+		}
+	}
+	for _, c := range f.changes {
+		if it, ok := recordedEntry(m, f.app, f.Path, c.pointer); ok && !f.kept[c.pointer] {
+			forget(it)
+			if err := m.Remove(it); err != nil {
+				return err
+			}
+		}
+	}
+	if !f.Delete {
+		return nil
+	}
+	for _, it := range m.Of(manifest.File) {
+		if it.Name != f.app || it.Path != f.Path {
+			continue
+		}
+		gone, err := RemoveCreatedFile(it)
+		if err != nil {
+			return err
+		}
+		if gone {
+			if err := m.Remove(it); err != nil {
 				return err
 			}
 		}

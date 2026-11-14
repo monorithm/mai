@@ -530,25 +530,16 @@ func hasMaiHook(b []byte, n *jnode, format, event string) bool {
 // RemoveCreatedFile removes a file that mai connect made, when it holds no content now. A
 // file with content stays, and the result is false.
 func RemoveCreatedFile(it manifest.Item) (bool, error) {
-	// For a symbolic link of the user, the file that the link names is the file that mai made.
-	// When the link names a different file now (the user made the link after mai connect),
-	// that file is not of mai, and it stays.
-	path := linkTarget(it.Path)
-	if it.Target != "" && path != it.Target {
+	if !madeFile(it) {
 		return false, nil
 	}
-	if it.Target == "" {
-		if st, err := os.Lstat(it.Path); err == nil && st.Mode()&os.ModeSymlink != 0 {
-			return false, nil // a record of 3.0.0 has no target: keep the file of a link
-		}
-	}
+	path := linkTarget(it.Path)
 	b, existed, err := readFile(path)
 	if err != nil {
 		return false, err
 	}
 	if existed {
-		t := bytes.TrimSpace(b)
-		if len(t) != 0 && string(t) != "{}" {
+		if !noContent(b) {
 			return false, nil
 		}
 		if err := os.Remove(path); err != nil {
@@ -564,6 +555,26 @@ func RemoveCreatedFile(it manifest.Item) (bool, error) {
 		_ = os.Remove(d) // a folder with other files stays
 	}
 	return true, nil
+}
+
+// madeFile reports if the path of the file record it names the file that mai connect made.
+// For a symbolic link of the user, the file that the link names is the file that mai made.
+// When the user made the link after mai connect, the link names a different file, and that
+// file is not of mai.
+func madeFile(it manifest.Item) bool {
+	if it.Target != "" {
+		return linkTarget(it.Path) == it.Target
+	}
+	// A record of 3.0.0 has no target: the file of a link is not of mai.
+	st, err := os.Lstat(it.Path)
+	return err != nil || st.Mode()&os.ModeSymlink == 0
+}
+
+// noContent reports if the text b of a JSON file holds no content: only white space, or an
+// empty object.
+func noContent(b []byte) bool {
+	t := bytes.TrimSpace(b)
+	return len(t) == 0 || string(t) == "{}"
 }
 
 // entryPresent reports if the JSON text b holds the entry of the item as mai wrote it.
