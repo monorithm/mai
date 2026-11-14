@@ -17,7 +17,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to use a named session, and gives the rules for an agent. The agent gets
   the approval of the user in the chat before each step that changes
   something. With no `--app`, the CLI finds the app in the chain of parent
-  processes. `--json` gives the same content as one JSON object. Some
+  processes. Then the first step tells the agent to get a confirmation of
+  the app from the user. `--json` gives the same content as one JSON object. Some
   states stop `mai start`, for example a `config.json` that the CLI cannot
   read. For these states, the guide gives only a step of the user.
 - `mai connect APP --agent NAME --dry-run` shows the change of the files of

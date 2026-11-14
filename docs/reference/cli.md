@@ -92,6 +92,7 @@ The steps:
 
 | `id` | Step | `by` |
 |---|---|---|
+| `confirm-app` | The CLI found the app in the chain of parent processes, and that app can be incorrect. For example, the chain does not show an agent CLI that runs on Node.js in the terminal of a different app. The agent tells the app to the user, and gets a confirmation before a step for the app. This step is the first step. | `agent` |
 | `install-engine` | No engine is installed. The user installs Docker Desktop, Docker Engine, or Podman. | `user` |
 | `start` | `mai start`. It can start the engine. At the first start, it can download the image (approximately 550 MB). | `agent` |
 | `select-app` | The CLI cannot find the app. The agent runs `mai guide --app APP`. The guide gives no subsequent step. | `agent` |
@@ -141,7 +142,7 @@ The fields of `mai guide --json`:
 | `app` | `name`, `title`, `found_by` (`"flag"`, `"process"`, or null), `connected`, and `apps` (the names of the apps). `connected` is true when `mai connect` for the app and the agent has no change. |
 | `agent` | `name`, `exists`, `key` (the key file has the key of the agent), and `on_server` (the owner API lists the agent). `exists` is true when the key file has the key and the owner API lists the agent. `exists` is null when the CLI did not get the list of the agents from the server. Then `reason` tells the cause. |
 | `rerun` | The command that gives the guide again, with the app and the agent of this run, for example `mai guide --app cursor --agent cursor-b`. The agent runs it after each step. Add `--json` for the JSON form. |
-| `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. `done` is always false. |
+| `steps` | The steps that are not done, in sequence. Each step has `id`, `text`, `by` (`"agent"` or `"user"`), `command` (a command, or null), `tool` and `resource` (for the step `check`, else null), `changes`, `ask_user`, and `done`. `ask_user` is true for each step that changes something, and for `show-change`, because the diff can show lines of the files of the user. It is also true for `confirm-app`, because the user confirms the app. `done` is always false. |
 | `lanes` | `text`, `command`, `example`, `argument`, `login_call` (always false), and `ask_user`. |
 | `rules` | The rules for an agent, as text. |
 

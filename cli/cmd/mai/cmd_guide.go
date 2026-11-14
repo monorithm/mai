@@ -738,6 +738,9 @@ func (g *guideRun) steps() {
 	}
 	var steps []guideStep
 	changes := false
+	if r.App.FoundBy != nil && *r.App.FoundBy == "process" {
+		steps = append(steps, g.confirmAppStep())
+	}
 	if !r.Engine.Running && !r.Engine.Installed {
 		steps = append(steps, guideInstallStep(runtime.GOOS))
 	}
@@ -842,6 +845,26 @@ func (g *guideRun) checkStep(app, title, agent string, changes bool) guideStep {
 			" If the app has no tools of mai, tell the user to start the app again."
 	}
 	return s
+}
+
+// confirmAppStep is the first step for an app from the chain of parent processes. That app
+// can be incorrect. For example, the chain gives only the executable of each process, thus
+// an agent CLI that runs on Node.js in the terminal of a different app is not visible. Then
+// the CLI finds the app of the terminal.
+func (g *guideRun) confirmAppStep() guideStep {
+	app := *g.r.App.Name
+	cmd := "mai guide --app APP"
+	if g.agentFlag != "" {
+		cmd += " --agent " + g.agentFlag
+	}
+	return guideStep{
+		ID: "confirm-app", By: "agent", Command: ptr(cmd), AskUser: true,
+		Text: "The CLI found the app " + app + " (" + guideTitles[app] + ") in the chain of parent processes. " +
+			"This result can be incorrect, for example for an agent CLI that runs on Node.js in the terminal of a different app. " +
+			"Tell the found app to the user, and get a confirmation before you do a step for the app. " +
+			"If the user gives a different app, run `" + cmd + "` with that app as APP. Then do the steps of that guide.",
+		Changes: "Nothing.",
+	}
 }
 
 // guideInstallStep is the step of the user when no engine is installed.
@@ -1054,7 +1077,7 @@ func guideAppText(a guideApp) string {
 	}
 	t := *a.Name + " (" + *a.Title + ")"
 	if a.FoundBy != nil && *a.FoundBy == "process" {
-		t += ". The CLI found the app in the chain of parent processes. If it is not your app, run `mai guide --app APP`"
+		t += ". The CLI found the app in the chain of parent processes, thus the app can be incorrect"
 	} else {
 		t += ", from the flag --app"
 	}

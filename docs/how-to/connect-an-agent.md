@@ -61,7 +61,10 @@ An AI agent in the app can do the procedure for you. The agent runs the CLI
 8. Tell the agent to call the tool `whoami`. The result gives the session of
    the lease, for example `cursor.s1`.
 
-When the CLI cannot find the app, the agent runs `mai guide --app APP`. For
+With no `--app`, the guide finds the app in the chain of parent processes.
+That result can be incorrect. Thus the agent tells you the app, and gets
+your confirmation first. When the CLI cannot find the app, the agent runs
+`mai guide --app APP`. For
 the fields of the guide, refer to [mai guide](../reference/cli.md#mai-guide).
 
 ## The MCP entry
