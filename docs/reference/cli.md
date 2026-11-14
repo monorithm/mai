@@ -10,7 +10,7 @@ mai has two command lines with the name `mai`:
 
 | Command | Function |
 |---|---|
-| `mai start [--data-dir PATH]` | Finds the engine and starts it if it is stopped. Pulls the image of the CLI version, makes the container, starts it, and waits until it is healthy. |
+| `mai start [--data-dir PATH]` | Finds the engine and starts it if it is stopped. Pulls the image of the CLI version, makes the container, starts it, and waits until it is healthy. When the server has an owner key, `mai start` does not show the text of the server about `--replace`. |
 | `mai stop` | Stops the container. The volumes stay. |
 | `mai pause`, `mai resume` | Freezes and resumes the container. |
 | `mai status` | Shows the health, the versions of the CLI and of the image, the engine, the data location, the port, and the state of the UI. |
@@ -94,7 +94,7 @@ The steps:
 |---|---|---|
 | `confirm-app` | The CLI found the app in the chain of parent processes, and that app can be incorrect. For example, the chain does not show an agent CLI that runs on Node.js in the terminal of a different app. The agent tells the app to the user, and gets a confirmation before a step for the app. This step is the first step. | `agent` |
 | `install-engine` | No engine is installed. The user installs Docker Desktop, Docker Engine, or Podman. | `user` |
-| `start` | `mai start`. It can start the engine. At the first start, it can download the image (approximately 550 MB). | `agent` |
+| `start` | `mai start`. It can start the engine. At the first start, it can download the image (approximately 550 MB). If its output gives a step with `--replace`, the agent does not do that step. It runs the guide again. | `agent` |
 | `select-app` | The CLI cannot find the app. The agent runs `mai guide --app APP`. The guide gives no subsequent step. | `agent` |
 | `rotate-agent-key` | The agent account exists on the server, but the key file has no key for it. The agent runs `mai agent rotate NAME` only when the user tells it to do this. | `agent` |
 | `add-agent` | `mai agent add NAME`. | `agent` |

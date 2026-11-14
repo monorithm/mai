@@ -38,6 +38,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `mai connect` with no `--yes` and an input that is not a terminal writes
   one line to stderr for an AI agent. The line tells the agent to show the
   change with `--dry-run`, and to use `--yes` only after the user agrees.
+- `mai start` of a container with an owner key does not show the line of the
+  server "an owner key exists. Use --replace to change it." A normal restart
+  gives this result. The step of the line replaces the owner key of the
+  server, thus an agent must not do it.
 
 ## [3.2.0] - 2026-11-13
 
