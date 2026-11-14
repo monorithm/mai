@@ -152,6 +152,9 @@ type guideAgent struct {
 	Key      *bool   `json:"key"`
 	OnServer *bool   `json:"on_server"`
 	Reason   *string `json:"reason"`
+	// legacyKey is true when the key of the agent is in the keychain of mai 3.0 or 3.1, and
+	// not in the key file.
+	legacyKey bool
 }
 
 type guideStep struct {
@@ -312,7 +315,7 @@ func (g *guideRun) engine(ctx context.Context) {
 	if err != nil {
 		r.Engine.Installed = len(guideLaunchers(runtime.GOOS)) > 0
 		if r.Engine.Installed {
-			r.Engine.Reason = ptr("the container engine gives no response. mai start can start it")
+			r.Engine.Reason = ptr("the container engine gives no response. The command `mai start` can start it")
 		} else {
 			r.Engine.Reason = ptr("no container engine is installed")
 		}
@@ -547,8 +550,8 @@ func (g *guideRun) agent(ctx context.Context) {
 	case err == nil:
 		r.Agent.Key = ptr(true)
 	case errors.Is(err, keys.ErrNotFound) && g.legacy[account]:
-		r.Agent.Key = ptr(true)
-		note = "the key is in the keychain of mai 3.0 or 3.1. The bridge moves it to the key file at its first lease"
+		r.Agent.Key, r.Agent.legacyKey = ptr(true), true
+		note = "the agent key is in the keychain of mai 3.0 or 3.1. The bridge moves it to the key file at its first lease"
 	case errors.Is(err, keys.ErrNotFound):
 		r.Agent.Key = ptr(false)
 	default:
@@ -645,8 +648,8 @@ func (g *guideRun) needStart() (bool, string) {
 	case r.Server.Running == nil || !*r.Server.Running:
 		return true, "the server gives no response"
 	case r.Container.Port != nil && *r.Container.Port != g.filePort:
-		return true, fmt.Sprintf("config.json has the port %d, but the container has the host port %d. "+
-			"mai start writes the port of the container to config.json", g.filePort, *r.Container.Port)
+		return true, fmt.Sprintf("the port of config.json is %d, but the host port of the container is %d",
+			g.filePort, *r.Container.Port)
 	}
 	return false, ""
 }
@@ -833,8 +836,10 @@ func (g *guideRun) checkStep(app, title, agent string, changes bool) guideStep {
 	switch {
 	case g.procApp != "" && g.procApp != app:
 		s.By = "user"
-		s.Text = "You are in " + guideTitles[g.procApp] + ", not in " + title + ". Thus the user does this check in " + title +
-			". Tell the user to give this order to the agent in " + title + ": " + call
+		s.Text = "You are in " + guideTitles[g.procApp] + ", not in " + title + ". Thus the user does this check in " + title + ". " +
+			"In " + title + ", the agent calls the tool `whoami` of the MCP server mai. " +
+			"The result gives a session of the agent " + agent + ", for example `" + agent + ".s1`. " +
+			"Then that agent reads the resource `mai://guide`. Tell this to the user."
 	case g.procApp == "":
 		s.Text = "If you are in " + title + ", " + call + " If you are not in " + title +
 			", tell the user to do this check in " + title + "."
@@ -904,8 +909,13 @@ func (g *guideRun) startStep(why string) guideStep {
 			b.WriteString("The CLI downloads " + image + " (" + guideImageSize + "). ")
 		}
 		b.WriteString("The CLI makes the volumes and the container of mai. ")
+	case r.Container.Running != nil && *r.Container.Running:
+		b.WriteString("The container of mai runs, thus the CLI does not start it again. ")
 	default:
 		b.WriteString("The CLI starts the container of mai. ")
+	}
+	if r.Container.Port != nil && *r.Container.Port != g.filePort {
+		b.WriteString("The CLI writes the host port of the container to config.json. ")
 	}
 	b.WriteString("It makes the owner key in the key file if the key file has no owner key. ")
 	if r.OwnerKey.Exists != nil && !*r.OwnerKey.Exists && r.Container.Exists != nil && *r.Container.Exists {
@@ -1095,6 +1105,7 @@ func guideAgentText(a guideAgent) string {
 	case a.Exists == nil:
 		t := name + ". It is not known if the agent account exists" + reasonText(a.Reason)
 		switch {
+		case a.legacyKey:
 		case a.Key != nil && *a.Key:
 			t += ". The key file has the key of the agent"
 		case a.Key != nil:

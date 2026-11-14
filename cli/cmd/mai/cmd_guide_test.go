@@ -361,6 +361,11 @@ func TestGuideCountsAKeyInTheKeychainOfMai31(t *testing.T) {
 	if len(g.keys.legacy.Accounts()) != 1 {
 		t.Fatalf("the keychain items changed: %v", g.keys.legacy.Accounts())
 	}
+	// The key is in the keychain, thus the text does not tell that the key file has it.
+	_, out, _ := g.run(t, "--app", "cursor")
+	if strings.Contains(out, "The key file has the key of the agent") {
+		t.Fatalf("the text tells that the key file has the key of the agent:\n%s", out)
+	}
 }
 
 func TestGuideFindsTheAppInTheChainOfParentProcesses(t *testing.T) {
