@@ -19,7 +19,7 @@ mai-serve = "mai.app_main:main"
 dev = [
     "jsonschema>=4.26.0",
     "pytest>=8.3",
-    "ruff>=0.17.4",
+    "ruff>=0.17.6",
     "ty>=0.0.101",
 ]
 
